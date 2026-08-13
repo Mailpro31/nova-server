@@ -1,0 +1,45 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8080:8000"
+    environment:
+      NOVA_DOMAINS: "eleves.ipsa.fr,ipsa.fr"
+      NOVA_MAX_SEATS: "300"
+      # NOVA_SMTP_HOST: smtp.ipsa.fr        # décommenter en production
+      # NOVA_SMTP_USER: nova@ipsa.fr
+      # NOVA_SMTP_PASS: "..."
+      NOVA_WHISPER_URL: "http://whisper:8000"
+      NOVA_LLM_URL: "http://llm:8000/v1"
+    volumes:
+      - nova-data:/data
+    depends_on: [whisper, llm]
+
+  whisper:
+    image: fedirz/faster-whisper-server:latest-cuda
+    environment:
+      WHISPER__MODEL: "large-v3-turbo"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+    volumes:
+      - nova-models:/root/.cache/huggingface
+
+  llm:
+    image: vllm/vllm-openai:latest
+    command: ["--model", "Qwen/Qwen2.5-14B-Instruct-AWQ", "--max-model-len", "4096"]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+    volumes:
+      - nova-models:/root/.cache/huggingface
+
+volumes:
+  nova-data:
+  nova-models:

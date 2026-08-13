@@ -1,0 +1,20 @@
+# Fichiers de consignes internes — ne pas commiter
+CONSIGNE_KIMI_CODE.md
+PROMPT_REDESIGN_CAMPUS.md
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Base de données locale
+nova.db
+*.db
+
+# Variables d'environnement
+.env
+.env.local
+
+# Divers
+.DS_Store
