@@ -4,13 +4,29 @@ services:
     ports:
       - "8080:8000"
     environment:
-      NOVA_DOMAINS: "eleves.ipsa.fr,ipsa.fr"
-      NOVA_MAX_SEATS: "300"
-      # NOVA_SMTP_HOST: smtp.ipsa.fr        # décommenter en production
-      # NOVA_SMTP_USER: nova@ipsa.fr
-      # NOVA_SMTP_PASS: "..."
+      NOVA_DOMAINS: "${NOVA_DOMAINS:-eleves.ipsa.fr,ipsa.fr}"
+      NOVA_MAX_SEATS: "${NOVA_MAX_SEATS:-300}"
+      NOVA_MAX_MACHINES: "${NOVA_MAX_MACHINES:-3}"
+      NOVA_REQUIRE_AUTH: "${NOVA_REQUIRE_AUTH:-true}"
+      NOVA_ADMIN_TOKEN: "${NOVA_ADMIN_TOKEN:-nova-admin-local}"
+      NOVA_TOKEN_TTL_SECONDS: "${NOVA_TOKEN_TTL_SECONDS:-2592000}"
+      NOVA_ORGANIZATION_ID: "${NOVA_ORGANIZATION_ID:-ipsa}"
+      NOVA_ORGANIZATION_NAME: "${NOVA_ORGANIZATION_NAME:-IPSA}"
+      NOVA_ORGANIZATION_SHORT_NAME: "${NOVA_ORGANIZATION_SHORT_NAME:-IPSA}"
+      NOVA_ORGANIZATION_CAMPUS: "${NOVA_ORGANIZATION_CAMPUS:-Paris}"
+      NOVA_EDUCATION_MODE: "${NOVA_EDUCATION_MODE:-normal}"
+      NOVA_AI_SKILLS_REQUIRED: "${NOVA_AI_SKILLS_REQUIRED:-false}"
+      NOVA_AI_SKILLS_TRACK_PROGRESS: "${NOVA_AI_SKILLS_TRACK_PROGRESS:-true}"
+      NOVA_ENTRA_TENANT_ID: "${NOVA_ENTRA_TENANT_ID:-organizations}"
+      NOVA_ENTRA_CLIENT_ID: "${NOVA_ENTRA_CLIENT_ID:-}"
+      NOVA_SMTP_HOST: "${NOVA_SMTP_HOST:-}"
+      NOVA_SMTP_PORT: "${NOVA_SMTP_PORT:-587}"
+      NOVA_SMTP_USER: "${NOVA_SMTP_USER:-}"
+      NOVA_SMTP_PASS: "${NOVA_SMTP_PASS:-}"
+      NOVA_SMTP_FROM: "${NOVA_SMTP_FROM:-nova@ipsa.fr}"
       NOVA_WHISPER_URL: "http://whisper:8000"
       NOVA_LLM_URL: "http://llm:8000/v1"
+      NOVA_LLM_MODEL: "${NOVA_LLM_MODEL:-Qwen/Qwen2.5-14B-Instruct}"
     volumes:
       - nova-data:/data
     depends_on: [whisper, llm]

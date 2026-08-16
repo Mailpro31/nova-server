@@ -1,69 +1,104 @@
-# Nova Server — MVP
+# Nova Server — Campus
 
-Serveur on-premise de transcription + reformulation pour établissements (écoles, entreprises).
-Auth par email académique + code à 6 chiffres. Aucune donnée conservée : les audios et textes sont traités en mémoire puis oubliés.
+Serveur on-premise de transcription et de reformulation pour établissements.
+Il fournit l'authentification Campus, les préférences d'écriture, le parcours
+Compétences IA et le panneau d'administration. Les audios et textes sont
+traités en mémoire ; seuls des comptes, préférences et compteurs sont stockés.
 
 ## Architecture
 
-```
-App Nova Desktop ──HTTPS──> nova-server (ce dépôt, FastAPI)
-                              ├──> whisper  (faster-whisper, GPU, transcription)
-                              └──> llm      (vLLM, GPU, reformulation)
-```
-
-## Lancement (serveur avec GPU NVIDIA + Docker)
-
-```bash
-docker compose up -d
+```text
+Nova Desktop ──HTTPS──> nova-server (FastAPI)
+                         ├──> Whisper (transcription)
+                         └──> LLM OpenAI-compatible (reformulation)
 ```
 
-Sans SMTP configuré, le serveur tourne en **mode dev** : les codes à 6 chiffres
-sont affichés dans les logs (`docker compose logs -f api`) au lieu d'être envoyés par email.
+## Démarrage local
 
-## Configuration (variables d'environnement)
+Copier la configuration d'exemple et choisir un jeton administrateur :
 
-| Variable | Défaut | Rôle |
+```powershell
+Copy-Item .env.example .env
+notepad .env
+```
+
+Pour tester l'authentification, l'admin et les préférences sans moteurs GPU :
+
+```powershell
+docker compose up -d --build --no-deps api
+```
+
+Pour tester la transcription et la reformulation avec un GPU NVIDIA :
+
+```powershell
+docker compose up -d --build
+```
+
+Sans SMTP, les codes à six chiffres sont affichés par
+`docker compose logs -f api` au lieu d'être envoyés par email.
+
+## Configuration principale
+
+| Variable | Défaut Compose | Rôle |
 |---|---|---|
 | `NOVA_DOMAINS` | `eleves.ipsa.fr,ipsa.fr` | domaines email autorisés |
-| `NOVA_MAX_SEATS` | `300` | nombre max d'utilisateurs actifs (licence) |
-| `NOVA_MAX_MACHINES` | `3` | appareils max par email |
-| `NOVA_SMTP_HOST/PORT/USER/PASS/FROM` | — | envoi des codes (sinon : mode dev) |
-| `NOVA_ADMIN_TOKEN` | généré au démarrage | clé admin (voir `/admin`) |
+| `NOVA_MAX_SEATS` | `300` | nombre maximal d'utilisateurs actifs |
+| `NOVA_MAX_MACHINES` | `3` | appareils actifs par compte |
+| `NOVA_ADMIN_TOKEN` | `nova-admin-local` | clé admin locale, à remplacer avant déploiement |
+| `NOVA_TOKEN_TTL_SECONDS` | `2592000` | durée d'une session en secondes |
+| `NOVA_SMTP_HOST/PORT/USER/PASS/FROM` | — | envoi des codes email |
+| `NOVA_ENTRA_TENANT_ID` | `organizations` | tenant Microsoft Entra ID |
+| `NOVA_ENTRA_CLIENT_ID` | — | application publique Entra ; active le bouton Microsoft |
 
-## API
+## API principale
 
 | Route | Rôle |
 |---|---|
-| `POST /api/auth/request` | envoie un code à 6 chiffres si le domaine email est autorisé |
-| `POST /api/auth/verify` | échange email + code contre un token durable |
-| `POST /api/transcribe` | audio (multipart) → texte (Bearer token requis) |
-| `POST /api/reformulate` | texte + consigne de style → texte reformulé |
-| `GET /api/me` | profil de l'utilisateur connecté |
-| `GET /api/admin/overview` | tableau de bord : sièges, stats du jour, tous les utilisateurs |
-| `GET /api/admin/user/{email}` | profil complet : infos, appareils, usage 30 jours (compteurs) |
-| `POST /api/admin/user/{email}` | modifier rôle / cohorte / note / suspension |
-| `POST /api/admin/user/{email}/revoke-machines` | déconnecter tous les appareils |
-| `DELETE /api/admin/user/{email}` | supprimer l'utilisateur (profil, tokens, compteurs) |
-| `POST /api/admin/cohort/{cohort}/disable` | suspendre toute une cohorte (fin d'année) |
-| `GET /admin` | **panneau d'administration web** (token admin requis) |
+| `GET /api/health` | santé du serveur |
+| `GET /api/config` | configuration Campus publique et capacités |
+| `POST /api/auth/request` | envoie ou journalise un code email |
+| `POST /api/auth/verify` | échange le code contre une session |
+| `POST /api/auth/entra/start` | démarre la connexion Microsoft Device Code |
+| `POST /api/auth/entra/poll` | finalise Microsoft et crée la session Nova |
+| `POST /api/auth/logout` | révoque la session active |
+| `GET /api/me` | profil connecté |
+| `POST /api/transcribe` | audio vers texte |
+| `POST /api/reformulate` | texte et Style vers texte reformulé |
+| `GET /api/vocabulary` | dictionnaires et snippets |
+| `POST /api/dictionary` | ajoute un terme personnel |
+| `POST /api/snippets` | ajoute un snippet vocal |
+| `GET/POST /api/formatting-rules` | règles d'écriture |
+| `POST /api/command` | transforme un texte selon une instruction |
+| `POST /api/engineering-notes` | structure une note technique |
+| `GET /api/ai-skills` | six modules étudiants d'usage responsable de l'IA |
+| `GET /admin` | panneau d'administration web |
 
-## Panneau admin
+## Administration
 
-Ouvrir `http://serveur:8080/admin`, entrer le `NOVA_ADMIN_TOKEN`.
-L'admin peut : voir chaque étudiant (email, rôle, cohorte, appareils, dernière
-activité, compteurs d'usage), modifier son rôle/cohorte/note, suspendre ou
-réactiver un compte, déconnecter ses appareils, le supprimer, et suspendre une
-cohorte entière en fin d'année. **Confidentialité : seuls des compteurs sont
-stockés — jamais le contenu des dictées.**
+Ouvrir `http://localhost:8080/admin`, puis entrer la valeur
+`NOVA_ADMIN_TOKEN` du fichier `.env`. Pour un test local avec la configuration
+d'exemple, utiliser `nova-admin-local`.
 
-## Sécurité (à faire avant la production)
+L'admin peut consulter les sièges et compteurs, gérer rôles et cohortes,
+suspendre un compte et révoquer des appareils. Il n'accède pas au contenu des
+dictées.
 
-- [ ] Mettre du HTTPS devant (reverse proxy Caddy/nginx avec le certificat de l'établissement)
-- [ ] Configurer le SMTP de l'établissement
-- [ ] Définir `NOVA_ADMIN_TOKEN` manuellement et le garder secret
-- [ ] Ne jamais exposer le port 8080 sur Internet : réseau interne ou VPN uniquement
+## Validation et déploiement
 
-## Matériel conseillé
+Le guide complet est dans [`TESTING_CAMPUS.md`](TESTING_CAMPUS.md).
 
-- 1 GPU 24 Go (RTX 3090/4090) → ~30-50 dictées simultanées, largement suffisant pour un pilote
-- Sans GPU : retirer les services `whisper`/`llm`, brancher `NOVA_WHISPER_URL`/`NOVA_LLM_URL` sur des services externes — ou laisser l'app en mode local (fallback)
+```powershell
+python -m unittest -v test_main.py
+```
+
+Avant la production : placer l'API derrière HTTPS, configurer le SMTP, choisir
+un secret admin long, restreindre l'accès réseau et sauvegarder le volume de
+données.
+
+Matériel pilote conseillé : un GPU NVIDIA de 24 Go pour les services Whisper et
+LLM. Sans GPU, ils peuvent être hébergés ailleurs via `NOVA_WHISPER_URL` et
+`NOVA_LLM_URL`, ou Nova peut conserver son traitement local de secours.
+
+Le parcours AI Skills est activé avec `NOVA_AI_SKILLS_TRACK_PROGRESS=true`.
+`NOVA_AI_SKILLS_REQUIRED=false` conserve le parcours entièrement facultatif ;
+si l'établissement le rend obligatoire, Nova l'indique explicitement.

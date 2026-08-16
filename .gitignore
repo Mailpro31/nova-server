@@ -6,6 +6,7 @@ PROMPT_REDESIGN_CAMPUS.md
 __pycache__/
 *.py[cod]
 *.egg-info/
+.venv/
 .pytest_cache/
 
 # Base de données locale
