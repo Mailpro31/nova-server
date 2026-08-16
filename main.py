@@ -564,6 +564,55 @@ def apply_snippets(text: str, snippets: list[sqlite3.Row]) -> str:
         )
     return result
 
+def vocabulary_context(user: str) -> str:
+    """Vocabulary alone: shared dictionary + the user's personal entries.
+
+    `writing_context` is the dictation context — vocabulary *and* writing rules,
+    with snippets applied to the text. An AI Skill needs neither: see
+    `command_prompt`.
+    """
+    with db() as conn:
+        shared = conn.execute(
+            "SELECT term,replacement FROM shared_dictionary ORDER BY term LIMIT 200"
+        ).fetchall()
+        personal = conn.execute(
+            "SELECT term,replacement FROM personal_dictionary WHERE email=? "
+            "ORDER BY term LIMIT 200", (user,)
+        ).fetchall()
+    return "\n".join(
+        f"- {row['term']} -> {row['replacement']}" if row["replacement"]
+        else f"- {row['term']}"
+        for row in [*shared, *personal]
+    )
+
+def command_prompt(instruction: str, vocabulary: str) -> str:
+    """System prompt of an AI Skill.
+
+    The vocabulary is injected as CONTEXT, never by preprocessing `text`: the
+    text the user selected is forwarded as-is. Without it, "Improve" or
+    "Translate" respelled the school's acronyms and proper nouns the way the
+    model saw fit.
+
+    Deliberately ABSENT, both meaningless on already-written text:
+
+    * voice shortcuts — they replace a SPOKEN phrase; expanding them here would
+      rewrite wording the user typed on purpose;
+    * formatting rules — meant for shaping a dictation. The server only receives
+      a free-form instruction and cannot tell which Skill is running: forcing
+      "always sign with your full name" onto an explanation would corrupt it.
+      To be revisited once the Skill type is part of the request.
+    """
+    prompt = (
+        "Execute the user's editing instruction. Return only the transformed text. "
+        "Preserve facts and the original language.\n\nInstruction: " + instruction
+    )
+    if vocabulary:
+        prompt += (
+            "\n\nPreferred vocabulary, to spell exactly this way if these terms "
+            "appear in the result:\n" + vocabulary
+        )
+    return prompt
+
 @app.get("/api/vocabulary")
 def vocabulary(user: str = Depends(current_user)):
     with db() as conn:
@@ -778,15 +827,8 @@ async def reformulate(body: ReformulateRequest, user: str = Depends(current_user
 @app.post("/api/command")
 async def command(body: CommandRequest, user: str = Depends(current_user)):
     instruction = clean_required(body.instruction, "instruction", 2000)
-    context, snippets = writing_context(user)
-    source_text = apply_snippets(body.text, snippets)
-    system_prompt = (
-        "Execute the user's editing instruction. Return only the transformed text. "
-        "Preserve facts and the original language.\n\nInstruction: " + instruction
-    )
-    if context:
-        system_prompt += f"\n\n{context}"
-    return {"text": await llm_complete(system_prompt, source_text)}
+    system_prompt = command_prompt(instruction, vocabulary_context(user))
+    return {"text": await llm_complete(system_prompt, body.text)}
 
 @app.post("/api/engineering-notes")
 async def engineering_notes(body: CommandRequest, user: str = Depends(current_user)):

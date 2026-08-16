@@ -184,5 +184,154 @@ class NovaServerTests(unittest.TestCase):
             self.assertEqual(profile.json()["email"], "student@example.com")
 
 
+class CommandContextTests(unittest.TestCase):
+    """What an AI Skill (`/api/command`) receives — and what it never receives.
+
+    `command_prompt` is pure and `vocabulary_context` only reads the database,
+    so nothing here reaches the language engine: the proxy is not this server's
+    responsibility. These tests cover what would break silently — school
+    vocabulary never reaching the engine, or one account's context leaking into
+    another's.
+    """
+
+    def setUp(self):
+        with main.db() as conn:
+            for table in (
+                "shared_dictionary",
+                "personal_dictionary",
+                "snippets",
+                "formatting_rules",
+            ):
+                conn.execute(f"DELETE FROM {table}")
+
+    def add_shared_term(self, term, replacement=""):
+        with main.db() as conn:
+            conn.execute(
+                "INSERT INTO shared_dictionary(term,replacement) VALUES (?,?)",
+                (term, replacement),
+            )
+
+    def add_personal_term(self, email, term, replacement=""):
+        with main.db() as conn:
+            conn.execute(
+                "INSERT INTO personal_dictionary(email,term,replacement,source) "
+                "VALUES (?,?,?,'personal')",
+                (email, term, replacement),
+            )
+
+    def add_snippet(self, email, trigger, content):
+        with main.db() as conn:
+            conn.execute(
+                "INSERT INTO snippets(email,trigger,content) VALUES (?,?,?)",
+                (email, trigger, content),
+            )
+
+    def add_shared_rule(self, rule):
+        with main.db() as conn:
+            conn.execute(
+                "INSERT INTO formatting_rules(email,rule,shared) VALUES ('',?,1)",
+                (rule,),
+            )
+
+    # -- what the Skill receives ------------------------------------------
+    def test_shared_and_personal_vocabulary_reach_the_skill(self):
+        self.add_shared_term("IPSA")
+        self.add_personal_term("etu@example.com", "aeroelasticite", "aéroélasticité")
+
+        prompt = main.command_prompt(
+            "Improve this text", main.vocabulary_context("etu@example.com")
+        )
+
+        self.assertIn("IPSA", prompt)
+        self.assertIn("aéroélasticité", prompt)
+
+    def test_no_vocabulary_leaves_the_prompt_untouched(self):
+        bare = main.command_prompt("Summarise this text", "")
+        self.assertNotIn("vocabulary", bare.split("Instruction:")[0])
+        # An account without vocabulary must not end up with a different prompt
+        # from everyone else.
+        self.assertTrue(bare.rstrip().endswith("Instruction: Summarise this text"))
+
+    def test_free_instruction_is_always_honoured(self):
+        self.add_shared_term("IPSA")
+        prompt = main.command_prompt(
+            "Translate to English", main.vocabulary_context("etu@example.com")
+        )
+        # Vocabulary is added, it never replaces what the user asked for.
+        self.assertIn("Translate to English", prompt)
+
+    # -- isolation between accounts ---------------------------------------
+    def test_another_students_vocabulary_never_leaks(self):
+        self.add_personal_term("alice@example.com", "MonProjetSecret")
+        self.add_personal_term("bob@example.com", "TermeDeBob")
+
+        prompt = main.command_prompt(
+            "Improve", main.vocabulary_context("bob@example.com")
+        )
+
+        self.assertIn("TermeDeBob", prompt)
+        self.assertNotIn("MonProjetSecret", prompt)
+
+    def test_shared_vocabulary_reaches_everyone(self):
+        self.add_shared_term("IPSA")
+        for email in ("alice@example.com", "bob@example.com"):
+            self.assertIn("IPSA", main.vocabulary_context(email))
+
+    # -- what the Skill deliberately does not receive ----------------------
+    def test_voice_shortcuts_are_not_expanded_on_selected_text(self):
+        # A voice shortcut replaces a SPOKEN phrase. A Skill's text was typed on
+        # purpose: expanding it would be a destructive surprise.
+        self.add_snippet("etu@example.com", "mon adresse", "12 rue des Lilas")
+
+        prompt = main.command_prompt(
+            "Improve", main.vocabulary_context("etu@example.com")
+        )
+
+        self.assertNotIn("12 rue des Lilas", prompt)
+
+    def test_formatting_rules_do_not_reshape_a_skill_result(self):
+        # Rules target the shaping of a dictation. The server cannot tell which
+        # Skill is running: forcing them onto an explanation would corrupt it.
+        self.add_shared_rule("Always sign with your full name")
+
+        prompt = main.command_prompt(
+            "Explain", main.vocabulary_context("etu@example.com")
+        )
+
+        self.assertNotIn("Always sign", prompt)
+
+    def test_selected_text_is_never_preprocessed(self):
+        # Vocabulary is CONTEXT. The user's text never goes through
+        # `command_prompt`: it travels as-is in the `user` message.
+        self.add_shared_term("IPSA", "I.P.S.A.")
+        prompt = main.command_prompt(
+            "Improve", main.vocabulary_context("etu@example.com")
+        )
+        self.assertNotIn("{text}", prompt)
+        self.assertIn("transformed text", prompt)
+
+    # -- API contract ------------------------------------------------------
+    def test_request_contract_is_unchanged(self):
+        self.assertEqual(
+            set(main.CommandRequest.model_fields), {"instruction", "text"}
+        )
+
+    def test_dictation_still_receives_every_context(self):
+        # Guard-rail the other way round: dictation rewriting must keep
+        # receiving everything.
+        self.add_shared_term("IPSA")
+        self.add_snippet("etu@example.com", "mon adresse", "12 rue des Lilas")
+        self.add_shared_rule("Always use vous")
+
+        context, snippets = main.writing_context("etu@example.com")
+
+        self.assertIn("IPSA", context)
+        self.assertIn("Always use vous", context)
+        self.assertEqual(
+            main.apply_snippets("Voici mon adresse", snippets),
+            "Voici 12 rue des Lilas",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
