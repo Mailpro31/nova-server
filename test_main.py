@@ -112,6 +112,10 @@ class NovaServerTests(unittest.TestCase):
         self.assertEqual(self.client.get("/api/me", headers=headers).status_code, 401)
 
     def test_admin_requires_the_configured_token(self):
+        page = self.client.get("/admin")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("Nova — Administration", page.text)
+
         self.assertEqual(self.client.get("/api/admin/overview").status_code, 403)
         response = self.client.get(
             "/api/admin/overview",
