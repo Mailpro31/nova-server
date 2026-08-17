@@ -31,6 +31,41 @@ from pathlib import Path
 import main
 
 
+def ensure_provider_config(provider_type, **fields):
+    """Déclare (ou remplace) la configuration d'un fournisseur pour
+    l'organisation active. Les tests décrivent ainsi l'état voulu sans toucher
+    au schéma."""
+    organization_id = main.nova_organization_id()
+    now = time.time()
+    with main.db() as conn:
+        conn.execute(
+            "DELETE FROM organization_provider_configs "
+            "WHERE organization_id=? AND provider_type=?",
+            (organization_id, provider_type),
+        )
+        columns = {
+            "id": str(uuid.uuid4()),
+            "organization_id": organization_id,
+            "provider_type": provider_type,
+            "enabled": 1,
+            "created_at": now,
+            "updated_at": now,
+            **fields,
+        }
+        names = ",".join(columns)
+        placeholders = ",".join("?" for _ in columns)
+        conn.execute(
+            f"INSERT INTO organization_provider_configs({names}) VALUES ({placeholders})",
+            tuple(columns.values()),
+        )
+        return columns["id"]
+
+
+def clear_provider_configs():
+    with main.db() as conn:
+        conn.execute("DELETE FROM organization_provider_configs")
+
+
 def fresh_instance_organization_id(slug: str) -> str:
     """Identifiant attribué par une instance neuve servant `slug`.
 
@@ -1039,7 +1074,6 @@ class EntraPkceTests(unittest.TestCase):
             for table in ("auth_codes", "tokens", "users", "federated_identities"):
                 conn.execute(f"DELETE FROM {table}")
             conn.execute("DELETE FROM organizations WHERE id=?", (self.ORGANIZATION_B,))
-            # Le tenant A est rattaché à l'organisation servie par l'instance.
             conn.execute(
                 "UPDATE organizations SET entra_tenant_id=? WHERE id=?",
                 (self.TENANT_A, main.nova_organization_id()),
@@ -1053,6 +1087,9 @@ class EntraPkceTests(unittest.TestCase):
             )
         main.SSO_FLOWS.clear()
         main.JWKS_CACHE.clear()
+        clear_provider_configs()
+        ensure_provider_config("microsoft_entra", display_name="Microsoft",
+                               entra_tenant_id=self.TENANT_A)
         self.seed_jwks(self.TENANT_A)
         self.seed_jwks(self.TENANT_B)
 
@@ -1066,7 +1103,7 @@ class EntraPkceTests(unittest.TestCase):
         return jwk
 
     def seed_jwks(self, tenant_id: str, kid: str = "test-key-1", key=None):
-        uri = main.PROVIDERS["microsoft_entra"]["jwks_uri"]({"tid": tenant_id})
+        uri = main.ADAPTERS["microsoft_entra"]["jwks_uri"]({"tid": tenant_id})
         main.JWKS_CACHE[uri] = {
             "jwks": {"keys": [self.jwk_for(key or self.private_key, kid)]},
             "fetched_at": time.time(),
@@ -1216,7 +1253,7 @@ class EntraPkceTests(unittest.TestCase):
     def test_the_key_location_never_comes_from_the_token(self):
         # `jku` est un champ d'en-tête que l'attaquant contrôle : il ne doit
         # jouer aucun rôle. L'URL est dérivée du tenant, point.
-        uri = main.PROVIDERS["microsoft_entra"]["jwks_uri"]({"tid": self.TENANT_A})
+        uri = main.ADAPTERS["microsoft_entra"]["jwks_uri"]({"tid": self.TENANT_A})
         self.assertIn(self.TENANT_A, uri)
         self.assertTrue(uri.startswith("https://login.microsoftonline.com/"))
 
@@ -1276,11 +1313,8 @@ class EntraPkceTests(unittest.TestCase):
         # Le mode hérité reste toujours proposé.
         self.assertIn("legacy_email_code", body["providers"])
 
-        with main.db() as conn:
-            conn.execute(
-                "UPDATE organizations SET entra_tenant_id=NULL WHERE id=?",
-                (main.nova_organization_id(),),
-            )
+        # Sans configuration de fournisseur, plus rien n'est annoncé.
+        clear_provider_configs()
         with patch.object(main, "ENTRA_CLIENT_ID", self.CLIENT_ID):
             body = self.client.get("/api/auth/entra/pkce/available").json()
         self.assertFalse(body["available"])
@@ -1290,7 +1324,7 @@ class EntraPkceTests(unittest.TestCase):
 
     def exchange(self, flow_id, token=None, redirect_uri="http://127.0.0.1:53125/callback",
                  code="code-microsoft"):
-        async def fake_redeem(provider, body):
+        async def fake_redeem(config, body):
             return {"id_token": token if token is not None else self.id_token()}
 
         with patch.object(main, "ENTRA_CLIENT_ID", self.CLIENT_ID), patch.object(
@@ -1382,7 +1416,7 @@ class EntraPkceTests(unittest.TestCase):
     def test_a_failed_token_exchange_is_reported_without_detail(self):
         flow_id = self.start_flow().json()["flow_id"]
 
-        async def failing(provider, body):
+        async def failing(config, body):
             raise main.auth_error(400, "TOKEN_EXCHANGE_FAILED")
 
         with patch.object(main, "ENTRA_CLIENT_ID", self.CLIENT_ID), patch.object(
@@ -1449,7 +1483,7 @@ class EntraPkceTests(unittest.TestCase):
     def test_a_client_supplied_organization_is_ignored(self):
         flow_id = self.start_flow().json()["flow_id"]
 
-        async def fake_redeem(provider, body):
+        async def fake_redeem(config, body):
             return {"id_token": self.id_token()}
 
         with patch.object(main, "ENTRA_CLIENT_ID", self.CLIENT_ID), patch.object(
@@ -1641,7 +1675,8 @@ class EntraPkceTests(unittest.TestCase):
         with patch.object(main, "ENTRA_CLIENT_ID", self.CLIENT_ID), patch.object(
             main.httpx, "AsyncClient", lambda **kwargs: FakeClient()
         ):
-            asyncio.run(main.redeem_authorization_code("microsoft_entra", body))
+            asyncio.run(main.redeem_authorization_code(
+                {"provider_type": "microsoft_entra"}, body))
 
         self.assertNotIn("client_secret", captured["data"])
         self.assertEqual(captured["data"]["code_verifier"], "v" * 64)
@@ -1685,6 +1720,9 @@ class GoogleWorkspaceTests(unittest.TestCase):
             )
         main.SSO_FLOWS.clear()
         main.JWKS_CACHE.clear()
+        clear_provider_configs()
+        ensure_provider_config("google_workspace", display_name="Google",
+                               google_hosted_domain=self.HOSTED_DOMAIN)
         self.seed_jwks()
 
     def jwk_for(self, key, kid):
@@ -1693,7 +1731,7 @@ class GoogleWorkspaceTests(unittest.TestCase):
         return jwk
 
     def seed_jwks(self, kid="google-key-1", key=None):
-        uri = main.PROVIDERS["google_workspace"]["jwks_uri"]({})
+        uri = main.ADAPTERS["google_workspace"]["jwks_uri"]({})
         main.JWKS_CACHE[uri] = {
             "jwks": {"keys": [self.jwk_for(key or self.private_key, kid)]},
             "fetched_at": time.time(),
@@ -1726,7 +1764,8 @@ class GoogleWorkspaceTests(unittest.TestCase):
     def validate(self, token, nonce="nonce-google-0123456789"):
         a, b = self.google_config()
         with a, b:
-            return asyncio.run(main.validate_id_token("google_workspace", token, nonce))
+            return asyncio.run(main.validate_id_token(
+                {"provider_type": "google_workspace"}, token, nonce))
 
     def start_flow(self, redirect_uri="http://127.0.0.1:53200/callback"):
         a, b = self.google_config()
@@ -1744,7 +1783,7 @@ class GoogleWorkspaceTests(unittest.TestCase):
     def exchange(self, flow_id, token=None,
                  redirect_uri="http://127.0.0.1:53200/callback",
                  provider="google_workspace"):
-        async def fake_redeem(prov, body):
+        async def fake_redeem(config, body):
             return {"id_token": token if token is not None else self.id_token()}
 
         a, b = self.google_config()
@@ -1831,7 +1870,7 @@ class GoogleWorkspaceTests(unittest.TestCase):
         self.assertIn("googleapis.com", calls[0])
 
     def test_the_key_location_comes_from_the_provider_not_the_token(self):
-        uri = main.PROVIDERS["google_workspace"]["jwks_uri"]({"jku": "https://evil.test/keys"})
+        uri = main.ADAPTERS["google_workspace"]["jwks_uri"]({"jku": "https://evil.test/keys"})
         self.assertTrue(uri.startswith("https://www.googleapis.com/"))
 
     def test_a_personal_gmail_account_is_refused(self):
@@ -1888,7 +1927,7 @@ class GoogleWorkspaceTests(unittest.TestCase):
     def test_a_client_supplied_organization_or_role_is_ignored(self):
         flow_id = self.start_flow().json()["flow_id"]
 
-        async def fake_redeem(prov, body):
+        async def fake_redeem(config, body):
             return {"id_token": self.id_token()}
 
         a, b = self.google_config()
@@ -1932,14 +1971,27 @@ class GoogleWorkspaceTests(unittest.TestCase):
         self.assertEqual(response.json()["detail"], "PROVIDER_NOT_CONFIGURED")
 
     def test_google_is_unavailable_without_a_mapped_domain(self):
+        # La configuration existe mais ne déclare aucun domaine : elle est
+        # invalide, donc jamais annoncée.
         with main.db() as conn:
             conn.execute(
-                "UPDATE organizations SET google_hosted_domain=NULL WHERE id=?",
-                (main.nova_organization_id(),))
+                "UPDATE organization_provider_configs SET google_hosted_domain=NULL "
+                "WHERE provider_type='google_workspace'")
         a, b = self.google_config()
         with a, b:
             providers = self.client.get("/api/auth/providers").json()["providers"]
         self.assertNotIn("google_workspace", providers)
+
+    def test_a_disabled_config_is_never_announced(self):
+        with main.db() as conn:
+            conn.execute(
+                "UPDATE organization_provider_configs SET enabled=0 "
+                "WHERE provider_type='google_workspace'")
+        a, b = self.google_config()
+        with a, b:
+            body = self.client.get("/api/auth/providers").json()
+        self.assertNotIn("google_workspace", body["providers"])
+        self.assertEqual(body["provider_configs"], [])
 
     def test_the_exchange_sends_the_google_client_secret_server_side(self):
         """Google exige le secret de son client Desktop a l'echange. Il ne
@@ -1970,7 +2022,8 @@ class GoogleWorkspaceTests(unittest.TestCase):
             redirect_uri="http://127.0.0.1:53200/callback")
         a, b = self.google_config()
         with a, b, patch.object(main.httpx, "AsyncClient", lambda **k: FakeClient()):
-            asyncio.run(main.redeem_authorization_code("google_workspace", body))
+            asyncio.run(main.redeem_authorization_code(
+                {"provider_type": "google_workspace"}, body))
 
         self.assertEqual(captured["data"]["client_secret"], self.CLIENT_SECRET)
         self.assertEqual(captured["data"]["code_verifier"], "v" * 64)
@@ -2002,7 +2055,8 @@ class GoogleWorkspaceTests(unittest.TestCase):
         with patch.object(main, "ENTRA_CLIENT_ID", "app-microsoft"), patch.object(
             main.httpx, "AsyncClient", lambda **k: FakeClient()
         ):
-            asyncio.run(main.redeem_authorization_code("microsoft_entra", body))
+            asyncio.run(main.redeem_authorization_code(
+                {"provider_type": "microsoft_entra"}, body))
         self.assertNotIn("client_secret", captured["data"])
 
 
@@ -2030,9 +2084,14 @@ class MultiProviderTests(unittest.TestCase):
                 (self.TENANT, self.DOMAIN, main.nova_organization_id()))
         main.SSO_FLOWS.clear()
         main.JWKS_CACHE.clear()
+        clear_provider_configs()
+        ensure_provider_config("microsoft_entra", display_name="Microsoft",
+                               entra_tenant_id=self.TENANT)
+        ensure_provider_config("google_workspace", display_name="Google",
+                               google_hosted_domain=self.DOMAIN)
         for provider, seed in (("microsoft_entra", {"tid": self.TENANT}),
                                ("google_workspace", {})):
-            uri = main.PROVIDERS[provider]["jwks_uri"](seed)
+            uri = main.ADAPTERS[provider]["jwks_uri"](seed)
             jwk = json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(self.key.public_key()))
             jwk.update({"kid": "k1", "use": "sig", "alg": "RS256"})
             main.JWKS_CACHE[uri] = {"jwks": {"keys": [jwk]}, "fetched_at": time.time()}
@@ -2066,7 +2125,7 @@ class MultiProviderTests(unittest.TestCase):
                       "redirect_uri": f"http://127.0.0.1:{port}/callback",
                       "machine": "poste"}).json()
 
-            async def fake_redeem(prov, body):
+            async def fake_redeem(config, body):
                 return {"id_token": self.token(provider, subject, email, nonce)}
 
             with patch.object(main, "redeem_authorization_code", fake_redeem):
@@ -2119,7 +2178,7 @@ class MultiProviderTests(unittest.TestCase):
                 json={"code_challenge": "x" * 43, "nonce": "n" * 20,
                       "redirect_uri": "http://127.0.0.1:53310/callback"}).json()
 
-            async def fake_redeem(prov, body):
+            async def fake_redeem(config, body):
                 return {"id_token": "peu-importe"}
 
             with patch.object(main, "redeem_authorization_code", fake_redeem):
@@ -2139,7 +2198,7 @@ class MultiProviderTests(unittest.TestCase):
                 json={"code_challenge": "x" * 43, "nonce": "n" * 20,
                       "redirect_uri": "http://127.0.0.1:53311/callback"}).json()
 
-            async def fake_redeem(prov, body):
+            async def fake_redeem(config, body):
                 return {"id_token": "peu-importe"}
 
             with patch.object(main, "redeem_authorization_code", fake_redeem):
@@ -2368,7 +2427,7 @@ class OidcDiscoveryTests(unittest.TestCase):
     def test_the_document_is_cached(self):
         calls = []
 
-        async def fake_fetch(issuer):
+        async def fake_fetch(issuer, allow_private=None):
             calls.append(issuer)
             return self.metadata()
 
@@ -2402,6 +2461,11 @@ class OidcSignInTests(unittest.TestCase):
         main.SSO_FLOWS.clear()
         main.JWKS_CACHE.clear()
         main.OIDC_METADATA_CACHE.clear()
+        clear_provider_configs()
+        ensure_provider_config("oidc", display_name="Company SSO",
+                               oidc_issuer=self.ISSUER,
+                               oidc_client_id=self.CLIENT_ID,
+                               oidc_client_auth_method="none")
         self.seed_metadata(self.ISSUER)
         self.seed_jwks(self.ISSUER)
 
@@ -2450,20 +2514,21 @@ class OidcSignInTests(unittest.TestCase):
             patches.append(patch.object(main, key, value))
         return patches
 
-    def start_flow(self, issuer=None, port=54000, **extra):
+    def start_flow(self, issuer=None, port=54000, config_id=None, **extra):
         patches = self.oidc_config(issuer, **extra)
+        payload = {"code_challenge": "o" * 43,
+                   "nonce": "nonce-oidc-0123456789",
+                   "redirect_uri": f"http://127.0.0.1:{port}/callback",
+                   "machine": "poste"}
+        if config_id:
+            payload["provider_config_id"] = config_id
         with contextlib.ExitStack() as stack:
             for item in patches:
                 stack.enter_context(item)
-            return self.client.post(
-                "/api/auth/sso/oidc/start",
-                json={"code_challenge": "o" * 43,
-                      "nonce": "nonce-oidc-0123456789",
-                      "redirect_uri": f"http://127.0.0.1:{port}/callback",
-                      "machine": "poste"})
+            return self.client.post("/api/auth/sso/oidc/start", json=payload)
 
     def exchange(self, flow_id, token=None, issuer=None, port=54000, **extra):
-        async def fake_redeem(provider, body):
+        async def fake_redeem(config, body):
             return {"id_token": token if token is not None else self.id_token()}
 
         patches = self.oidc_config(issuer, **extra)
@@ -2499,22 +2564,35 @@ class OidcSignInTests(unittest.TestCase):
         self.assertEqual(row["external_subject"], "utilisateur-42")
         self.assertEqual(row["verification"], "verified")
 
-    def test_two_issuers_with_the_same_subject_are_two_identities(self):
-        """Le point le plus important de l'adaptateur : un `sub` n'est unique
-        que dans le périmètre de son émetteur."""
-        flow_id = self.start_flow().json()["flow_id"]
-        self.assertEqual(self.exchange(flow_id).status_code, 200)
+    def test_two_oidc_configs_coexist_in_one_organization(self):
+        """Une organisation peut avoir deux IdP — un Okta de production et un
+        Keycloak de laboratoire, par exemple. Chaque configuration a son
+        identifiant, et un `sub` identique chez les deux reste deux identités.
+        """
+        first_config = main.default_provider_config("oidc", main.nova_organization_id())
+        first_flow = self.start_flow().json()
+        self.assertEqual(first_flow["provider_config_id"], first_config["id"])
+        self.assertEqual(self.exchange(first_flow["flow_id"]).status_code, 200)
 
-        # Seconde organisation OIDC : autre émetteur, même sujet.
+        # Seconde configuration OIDC, même organisation, autre émetteur.
+        second_id = str(uuid.uuid4())
+        now = time.time()
+        with main.db() as conn:
+            conn.execute(
+                "INSERT INTO organization_provider_configs(id, organization_id, "
+                "provider_type, display_name, enabled, oidc_issuer, oidc_client_id, "
+                "oidc_client_auth_method, created_at, updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (second_id, main.nova_organization_id(), "oidc", "Lab SSO", 1,
+                 self.OTHER_ISSUER, self.CLIENT_ID, "none", now, now))
         self.seed_metadata(self.OTHER_ISSUER)
         self.seed_jwks(self.OTHER_ISSUER)
-        with main.db() as conn:
-            conn.execute("UPDATE organizations SET oidc_issuer=? WHERE id=?",
-                         (self.OTHER_ISSUER, main.nova_organization_id()))
-        second = self.start_flow(issuer=self.OTHER_ISSUER, port=54001).json()["flow_id"]
+
+        second_flow = self.start_flow(port=54001, config_id=second_id).json()
+        self.assertEqual(second_flow["provider_config_id"], second_id)
         response = self.exchange(
-            second, token=self.id_token(issuer=self.OTHER_ISSUER),
-            issuer=self.OTHER_ISSUER, port=54001)
+            second_flow["flow_id"], token=self.id_token(issuer=self.OTHER_ISSUER),
+            port=54001)
         self.assertEqual(response.status_code, 200, response.text)
 
         with main.db() as conn:
@@ -2524,6 +2602,50 @@ class OidcSignInTests(unittest.TestCase):
         self.assertEqual(len(rows), 2)
         self.assertEqual({r["external_issuer"] for r in rows},
                          {self.ISSUER, self.OTHER_ISSUER})
+
+        # Les deux sont annoncées, chacune avec son libellé.
+        body = self.client.get("/api/auth/providers").json()
+        oidc_views = [c for c in body["provider_configs"] if c["type"] == "oidc"]
+        self.assertEqual(len(oidc_views), 2)
+        self.assertIn("Lab SSO", [v["display_name"] for v in oidc_views])
+
+    def test_a_flow_cannot_be_exchanged_against_another_config(self):
+        """Un retour ouvert avec une configuration ne complète pas l'autre."""
+        second_id = str(uuid.uuid4())
+        now = time.time()
+        with main.db() as conn:
+            conn.execute(
+                "INSERT INTO organization_provider_configs(id, organization_id, "
+                "provider_type, display_name, enabled, oidc_issuer, oidc_client_id, "
+                "oidc_client_auth_method, created_at, updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (second_id, main.nova_organization_id(), "oidc", "Lab SSO", 1,
+                 self.OTHER_ISSUER, self.CLIENT_ID, "none", now, now))
+        self.seed_metadata(self.OTHER_ISSUER)
+        self.seed_jwks(self.OTHER_ISSUER)
+
+        # Flux ouvert sur la seconde configuration, jeton de la première.
+        flow = self.start_flow(port=54005, config_id=second_id).json()
+        response = self.exchange(
+            flow["flow_id"], token=self.id_token(issuer=self.ISSUER), port=54005)
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.json()["detail"], "ID_TOKEN_INVALID")
+
+    def test_a_config_of_another_organization_is_invisible(self):
+        foreign_id = str(uuid.uuid4())
+        now = time.time()
+        with main.db() as conn:
+            conn.execute(
+                "INSERT INTO organization_provider_configs(id, organization_id, "
+                "provider_type, enabled, oidc_issuer, oidc_client_id, created_at, "
+                "updated_at) VALUES (?,?,?,?,?,?,?,?)",
+                (foreign_id, "organisation-etrangere", "oidc", 1,
+                 "https://idp-etranger.example.com", "x", now, now))
+        self.assertIsNone(
+            main.provider_config_by_id(foreign_id, main.nova_organization_id()))
+        response = self.start_flow(port=54006, config_id=foreign_id)
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["detail"], "PROVIDER_CONFIG_NOT_FOUND")
 
     def test_an_unconfigured_issuer_is_refused(self):
         flow_id = self.start_flow().json()["flow_id"]
@@ -2597,7 +2719,7 @@ class OidcSignInTests(unittest.TestCase):
     def test_a_client_supplied_organization_is_ignored(self):
         flow_id = self.start_flow().json()["flow_id"]
 
-        async def fake_redeem(provider, body):
+        async def fake_redeem(config, body):
             return {"id_token": self.id_token()}
 
         with contextlib.ExitStack() as stack:
@@ -2618,23 +2740,20 @@ class OidcSignInTests(unittest.TestCase):
         self.assertEqual(me["membership"]["security_role"], "member")
 
     def test_a_required_claim_is_compared_exactly(self):
-        flow_id = self.start_flow(
-            OIDC_REQUIRED_CLAIM="department",
-            OIDC_REQUIRED_CLAIM_VALUE="Engineering").json()["flow_id"]
-        refused = self.exchange(
-            flow_id, token=self.id_token(department="Sales"),
-            OIDC_REQUIRED_CLAIM="department",
-            OIDC_REQUIRED_CLAIM_VALUE="Engineering")
+        with main.db() as conn:
+            conn.execute(
+                "UPDATE organization_provider_configs SET oidc_required_claim=?, "
+                "oidc_required_claim_value=? WHERE provider_type='oidc'",
+                ("department", "Engineering"))
+
+        flow_id = self.start_flow().json()["flow_id"]
+        refused = self.exchange(flow_id, token=self.id_token(department="Sales"))
         self.assertEqual(refused.status_code, 403)
         self.assertEqual(refused.json()["detail"], "MEMBERSHIP_NOT_FOUND")
 
-        flow_id = self.start_flow(
-            OIDC_REQUIRED_CLAIM="department",
-            OIDC_REQUIRED_CLAIM_VALUE="Engineering", port=54002).json()["flow_id"]
+        flow_id = self.start_flow(port=54002).json()["flow_id"]
         accepted = self.exchange(
-            flow_id, token=self.id_token(department="Engineering"), port=54002,
-            OIDC_REQUIRED_CLAIM="department",
-            OIDC_REQUIRED_CLAIM_VALUE="Engineering")
+            flow_id, token=self.id_token(department="Engineering"), port=54002)
         self.assertEqual(accepted.status_code, 200, accepted.text)
 
     def test_the_client_secret_never_appears_in_public_responses(self):
@@ -2652,24 +2771,34 @@ class OidcSignInTests(unittest.TestCase):
         self.assertNotIn(secret, start.text)
 
     def test_the_provider_is_announced_with_its_display_label(self):
-        with contextlib.ExitStack() as stack:
-            for item in self.oidc_config():
-                stack.enter_context(item)
-            stack.enter_context(patch.object(main, "OIDC_DISPLAY_NAME", "IPSA SSO"))
-            body = self.client.get("/api/auth/providers").json()
+        with main.db() as conn:
+            conn.execute(
+                "UPDATE organization_provider_configs SET display_name=? "
+                "WHERE provider_type='oidc'", ("IPSA SSO",))
+        body = self.client.get("/api/auth/providers").json()
         self.assertIn("oidc", body["providers"])
         self.assertEqual(body["display_names"]["oidc"], "IPSA SSO")
+        # Forme détaillée : identifiant, type, libellé — et rien d'autre.
+        view = next(c for c in body["provider_configs"] if c["type"] == "oidc")
+        self.assertEqual(set(view), {"id", "type", "display_name"})
+        self.assertEqual(view["display_name"], "IPSA SSO")
 
     def test_no_provider_without_configuration(self):
-        with patch.object(main, "OIDC_CLIENT_ID", ""):
-            providers = self.client.get("/api/auth/providers").json()["providers"]
+        clear_provider_configs()
+        providers = self.client.get("/api/auth/providers").json()["providers"]
         self.assertNotIn("oidc", providers)
 
     def test_an_invalid_client_auth_method_is_refused(self):
-        response = self.start_flow(
-            OIDC_CLIENT_AUTH_METHOD="private_key_jwt", port=54004)
-        self.assertEqual(response.status_code, 500)
-        self.assertEqual(response.json()["detail"], "PROVIDER_CONFIG_INVALID")
+        # Une méthode d'authentification inconnue rend la configuration
+        # invalide : elle n'est plus annoncée, donc plus utilisable.
+        with main.db() as conn:
+            conn.execute(
+                "UPDATE organization_provider_configs SET oidc_client_auth_method=? "
+                "WHERE provider_type='oidc'", ("private_key_jwt",))
+        response = self.start_flow(port=54004)
+        self.assertEqual(response.status_code, 503)
+        providers = self.client.get("/api/auth/providers").json()["providers"]
+        self.assertNotIn("oidc", providers)
 
 
 class CrossProviderIdentityTests(unittest.TestCase):
@@ -2783,6 +2912,285 @@ class FederatedIdentityMigrationTests(unittest.TestCase):
         self.assertEqual(row["external_tenant_id"], "tenant-1")
         self.assertEqual(row["verification"], "verified")
         self.assertEqual(row["external_issuer"], "")
+
+
+class ProviderConfigLifecycleTests(unittest.TestCase):
+    """Configurations de fournisseur : import hérité, validation, cycle de vie."""
+
+    ADMIN = {"X-Admin-Token": "test-admin-token"}
+
+    @classmethod
+    def setUpClass(cls):
+        cls.client = TestClient(main.app)
+
+    def setUp(self):
+        clear_provider_configs()
+
+    def fresh_instance(self, **env):
+        """Instance neuve : base vierge, configuration héritée en environnement."""
+        path = os.path.join(TEST_DIRECTORY.name, f"configs-{uuid.uuid4().hex}.db")
+        patches = [patch.object(main, "DB_PATH", path)]
+        for key, value in env.items():
+            patches.append(patch.object(main, key, value))
+        return path, patches
+
+    # -- import de la configuration héritée --------------------------------
+
+    def test_legacy_microsoft_env_becomes_a_config(self):
+        path, patches = self.fresh_instance(
+            ENTRA_ALLOWED_TENANT_ID="tenant-legacy",
+            ENTRA_CLIENT_ID="app-microsoft")
+        with contextlib.ExitStack() as stack:
+            for item in patches:
+                stack.enter_context(item)
+            main.init_db()
+            configs = main.provider_configs_for_organization(
+                main.nova_organization_id())
+        self.assertEqual(len(configs), 1)
+        self.assertEqual(configs[0]["provider_type"], "microsoft_entra")
+        self.assertEqual(configs[0]["entra_tenant_id"], "tenant-legacy")
+        self.assertTrue(configs[0]["id"])
+
+    def test_legacy_google_env_becomes_a_config(self):
+        path, patches = self.fresh_instance(
+            GOOGLE_ALLOWED_HOSTED_DOMAIN="example.com",
+            GOOGLE_CLIENT_ID="client-google",
+            GOOGLE_CLIENT_SECRET="secret-google")
+        with contextlib.ExitStack() as stack:
+            for item in patches:
+                stack.enter_context(item)
+            main.init_db()
+            configs = main.provider_configs_for_organization(
+                main.nova_organization_id())
+        self.assertEqual([c["provider_type"] for c in configs], ["google_workspace"])
+        self.assertEqual(configs[0]["google_hosted_domain"], "example.com")
+
+    def test_legacy_oidc_env_becomes_a_config(self):
+        path, patches = self.fresh_instance(
+            OIDC_ISSUER="https://idp.example.com",
+            OIDC_CLIENT_ID="nova",
+            OIDC_DISPLAY_NAME="Company SSO")
+        with contextlib.ExitStack() as stack:
+            for item in patches:
+                stack.enter_context(item)
+            main.init_db()
+            configs = main.provider_configs_for_organization(
+                main.nova_organization_id())
+        self.assertEqual([c["provider_type"] for c in configs], ["oidc"])
+        self.assertEqual(configs[0]["oidc_issuer"], "https://idp.example.com")
+        self.assertEqual(configs[0]["display_name"], "Company SSO")
+
+    def test_a_restart_never_duplicates_a_config(self):
+        path, patches = self.fresh_instance(
+            ENTRA_ALLOWED_TENANT_ID="tenant-legacy",
+            ENTRA_CLIENT_ID="app-microsoft")
+        with contextlib.ExitStack() as stack:
+            for item in patches:
+                stack.enter_context(item)
+            main.init_db()
+            first = main.provider_configs_for_organization(
+                main.nova_organization_id())[0]["id"]
+            main.init_db()
+            main.init_db()
+            configs = main.provider_configs_for_organization(
+                main.nova_organization_id())
+        self.assertEqual(len(configs), 1)
+        # Même identifiant : importer n'est pas recréer.
+        self.assertEqual(configs[0]["id"], first)
+
+    def test_the_database_wins_over_the_legacy_environment(self):
+        """Une configuration modifiée en base n'est pas écrasée au démarrage."""
+        path, patches = self.fresh_instance(
+            ENTRA_ALLOWED_TENANT_ID="tenant-legacy",
+            ENTRA_CLIENT_ID="app-microsoft")
+        with contextlib.ExitStack() as stack:
+            for item in patches:
+                stack.enter_context(item)
+            main.init_db()
+            with main.db() as conn:
+                conn.execute(
+                    "UPDATE organization_provider_configs SET entra_tenant_id=?",
+                    ("tenant-corrige",))
+            main.init_db()
+            configs = main.provider_configs_for_organization(
+                main.nova_organization_id())
+        self.assertEqual(len(configs), 1)
+        self.assertEqual(configs[0]["entra_tenant_id"], "tenant-corrige")
+
+    def test_no_config_without_legacy_environment(self):
+        path, patches = self.fresh_instance(
+            ENTRA_ALLOWED_TENANT_ID="", GOOGLE_ALLOWED_HOSTED_DOMAIN="",
+            OIDC_ISSUER="")
+        with contextlib.ExitStack() as stack:
+            for item in patches:
+                stack.enter_context(item)
+            main.init_db()
+            configs = main.provider_configs_for_organization(
+                main.nova_organization_id(), only_usable=False)
+        self.assertEqual(configs, [])
+
+    # -- validation --------------------------------------------------------
+
+    def test_an_invalid_config_is_never_announced(self):
+        cases = [
+            ("microsoft_entra", {}, "missing_tenant"),
+            ("google_workspace", {}, "missing_hosted_domain"),
+            ("oidc", {}, "missing_issuer"),
+            ("oidc", {"oidc_issuer": "https://idp.example.com"}, "missing_client_id"),
+            ("oidc", {"oidc_issuer": "https://idp.example.com",
+                      "oidc_client_id": "x",
+                      "oidc_client_auth_method": "private_key_jwt"},
+             "unsupported_client_auth_method"),
+            ("oidc", {"oidc_issuer": "https://idp.example.com",
+                      "oidc_client_id": "x",
+                      "oidc_client_auth_method": "client_secret_post"},
+             "missing_client_secret"),
+        ]
+        for provider_type, fields, expected in cases:
+            config = {"provider_type": provider_type, **fields}
+            with patch.object(main, "ENTRA_CLIENT_ID", "app"), patch.object(
+                main, "GOOGLE_CLIENT_ID", "client"
+            ), patch.object(main, "GOOGLE_CLIENT_SECRET", "secret"):
+                self.assertEqual(
+                    main.validate_provider_config(config), expected, provider_type)
+
+    def test_a_valid_config_reports_no_error(self):
+        with patch.object(main, "ENTRA_CLIENT_ID", "app"):
+            self.assertIsNone(main.validate_provider_config(
+                {"provider_type": "microsoft_entra", "entra_tenant_id": "t"}))
+
+    # -- administration ----------------------------------------------------
+
+    def test_admin_can_create_list_and_disable(self):
+        created = self.client.post(
+            "/api/admin/provider-configs", headers=self.ADMIN,
+            json={"provider_type": "oidc", "display_name": "Okta",
+                  "oidc_issuer": "https://okta.example.com/",
+                  "oidc_client_id": "nova-client",
+                  "oidc_client_auth_method": "client_secret_post",
+                  "oidc_client_secret": "secret-okta"}).json()
+        self.assertEqual(created["display_name"], "Okta")
+        # L'émetteur est normalisé, sans barre finale.
+        self.assertEqual(created["oidc_issuer"], "https://okta.example.com")
+        self.assertTrue(created["has_secret"])
+        self.assertIsNone(created["validation_error"])
+
+        listed = self.client.get(
+            "/api/admin/provider-configs", headers=self.ADMIN).json()["configs"]
+        self.assertEqual(len(listed), 1)
+
+        disabled = self.client.post(
+            f"/api/admin/provider-configs/{created['id']}/disable",
+            headers=self.ADMIN).json()
+        self.assertFalse(disabled["enabled"])
+        # Désactivée, elle disparaît de l'annonce publique mais reste lisible.
+        self.assertNotIn(
+            "oidc", self.client.get("/api/auth/providers").json()["providers"])
+        self.assertEqual(len(self.client.get(
+            "/api/admin/provider-configs", headers=self.ADMIN).json()["configs"]), 1)
+
+    def test_the_secret_is_never_returned(self):
+        secret = "secret-tres-confidentiel"
+        created = self.client.post(
+            "/api/admin/provider-configs", headers=self.ADMIN,
+            json={"provider_type": "oidc", "oidc_issuer": "https://idp.example.com",
+                  "oidc_client_id": "c", "oidc_client_auth_method": "client_secret_post",
+                  "oidc_client_secret": secret})
+        self.assertNotIn(secret, created.text)
+        listed = self.client.get("/api/admin/provider-configs", headers=self.ADMIN)
+        self.assertNotIn(secret, listed.text)
+        self.assertTrue(listed.json()["configs"][0]["has_secret"])
+        # Ni dans les réponses publiques.
+        for path in ("/api/auth/providers", "/api/config", "/api/health"):
+            self.assertNotIn(secret, self.client.get(path).text)
+
+    def test_an_update_without_a_secret_keeps_the_previous_one(self):
+        """Une mise à jour de libellé ne doit pas couper toute une
+        organisation en effaçant son secret."""
+        secret = "secret-a-conserver"
+        created = self.client.post(
+            "/api/admin/provider-configs", headers=self.ADMIN,
+            json={"provider_type": "oidc", "oidc_issuer": "https://idp.example.com",
+                  "oidc_client_id": "c", "oidc_client_auth_method": "client_secret_post",
+                  "oidc_client_secret": secret}).json()
+
+        updated = self.client.post(
+            f"/api/admin/provider-configs/{created['id']}", headers=self.ADMIN,
+            json={"provider_type": "oidc", "display_name": "Nouveau nom",
+                  "oidc_issuer": "https://idp.example.com",
+                  "oidc_client_id": "c",
+                  "oidc_client_auth_method": "client_secret_post"}).json()
+        self.assertEqual(updated["display_name"], "Nouveau nom")
+        self.assertTrue(updated["has_secret"])
+
+        config = main.provider_config_by_id(
+            created["id"], main.nova_organization_id())
+        self.assertEqual(config["oidc_client_secret"], secret)
+
+    def test_a_duplicate_issuer_is_refused(self):
+        payload = {"provider_type": "oidc", "oidc_issuer": "https://idp.example.com",
+                   "oidc_client_id": "c"}
+        self.assertEqual(self.client.post(
+            "/api/admin/provider-configs", headers=self.ADMIN, json=payload
+        ).status_code, 200)
+        duplicate = self.client.post(
+            "/api/admin/provider-configs", headers=self.ADMIN, json=payload)
+        self.assertEqual(duplicate.status_code, 409)
+        self.assertEqual(duplicate.json()["detail"], "PROVIDER_CONFIG_DUPLICATE")
+
+    def test_the_admin_api_requires_the_admin_token(self):
+        self.assertEqual(
+            self.client.get("/api/admin/provider-configs").status_code, 403)
+        self.assertEqual(
+            self.client.post("/api/admin/provider-configs",
+                             json={"provider_type": "oidc"}).status_code, 403)
+        self.assertEqual(
+            self.client.post("/api/admin/provider-configs",
+                             headers={"X-Admin-Token": "mauvais-jeton"},
+                             json={"provider_type": "oidc"}).status_code, 403)
+
+    def test_an_unknown_provider_type_is_refused(self):
+        response = self.client.post(
+            "/api/admin/provider-configs", headers=self.ADMIN,
+            json={"provider_type": "saml"})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"], "PROVIDER_UNKNOWN")
+
+    def test_an_unknown_config_cannot_be_updated_or_disabled(self):
+        unknown = str(uuid.uuid4())
+        self.assertEqual(self.client.post(
+            f"/api/admin/provider-configs/{unknown}/disable", headers=self.ADMIN
+        ).status_code, 404)
+        self.assertEqual(self.client.post(
+            f"/api/admin/provider-configs/{unknown}", headers=self.ADMIN,
+            json={"provider_type": "oidc"}).status_code, 404)
+
+    def test_admin_only_ever_sees_the_active_organization(self):
+        foreign = str(uuid.uuid4())
+        now = time.time()
+        with main.db() as conn:
+            conn.execute(
+                "INSERT INTO organization_provider_configs(id, organization_id, "
+                "provider_type, enabled, entra_tenant_id, created_at, updated_at) "
+                "VALUES (?,?,?,?,?,?,?)",
+                (foreign, "organisation-etrangere", "microsoft_entra", 1, "t", now, now))
+        listed = self.client.get(
+            "/api/admin/provider-configs", headers=self.ADMIN).json()["configs"]
+        self.assertNotIn(foreign, [c["id"] for c in listed])
+
+    def test_the_public_view_exposes_the_strict_minimum(self):
+        self.client.post(
+            "/api/admin/provider-configs", headers=self.ADMIN,
+            json={"provider_type": "oidc", "display_name": "Company SSO",
+                  "oidc_issuer": "https://idp-interne.example.com",
+                  "oidc_client_id": "identifiant-client-interne"})
+        body = self.client.get("/api/auth/providers")
+        view = body.json()["provider_configs"][0]
+        self.assertEqual(set(view), {"id", "type", "display_name"})
+        # Ni émetteur, ni identifiant client : rien de tout cela n'aide à
+        # dessiner un bouton, et tout cela renseigne sur l'infrastructure.
+        self.assertNotIn("idp-interne", body.text)
+        self.assertNotIn("identifiant-client-interne", body.text)
 
 
 if __name__ == "__main__":

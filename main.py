@@ -235,6 +235,41 @@ def init_db():
             oidc_issuer TEXT,
             created_at REAL
         );
+        -- Configurations de fournisseur, rattachées à une organisation. Ce qui
+        -- était global à l'instance devient une ligne par organisation, avec
+        -- son propre identifiant immuable — condition pour que plusieurs IdP
+        -- OIDC coexistent, et pour le futur Control Plane.
+        CREATE TABLE IF NOT EXISTS organization_provider_configs(
+            id TEXT PRIMARY KEY,               -- UUID Nova, immuable
+            organization_id TEXT NOT NULL,
+            provider_type TEXT NOT NULL,       -- microsoft_entra | google_workspace | oidc
+            display_name TEXT,                 -- libellé du bouton, affichage seul
+            enabled INTEGER NOT NULL DEFAULT 1,
+            -- Rattachement, par type. Structuré plutôt qu'un JSON opaque :
+            -- une colonne se valide, s'indexe et se lit.
+            entra_tenant_id TEXT,
+            google_hosted_domain TEXT,
+            oidc_issuer TEXT,
+            oidc_client_id TEXT,
+            -- Secret côté serveur uniquement : jamais renvoyé par une API.
+            oidc_client_secret TEXT,
+            oidc_client_auth_method TEXT DEFAULT 'none',
+            oidc_allow_private_issuer INTEGER NOT NULL DEFAULT 0,
+            oidc_required_claim TEXT,
+            oidc_required_claim_value TEXT,
+            created_at REAL,
+            updated_at REAL,
+            -- Nullables : Nova Admin les remplira, il n'existe pas encore.
+            created_by TEXT,
+            updated_by TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_provider_configs_org
+            ON organization_provider_configs(organization_id, provider_type);
+        -- Un même émetteur ne peut pas être déclaré deux fois pour une
+        -- organisation : ce serait deux chemins vers la même identité.
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_provider_configs_issuer
+            ON organization_provider_configs(organization_id, provider_type, oidc_issuer);
+
         -- Identités fédérées. Une identité n'est pas une permission : cette
         -- table dit QUI se connecte, jamais ce qu'il a le droit de faire.
         CREATE TABLE IF NOT EXISTS federated_identities(
@@ -353,6 +388,8 @@ def migrate_schema(conn):
     )
     # `status` suit `disabled` pour les comptes déjà suspendus.
     conn.execute("UPDATE users SET status='disabled' WHERE disabled=1 AND status='active'")
+
+    bootstrap_provider_configs(conn, organization_id)
 
 
 ORGANIZATION_ID_STATE_KEY = "organization_id"
@@ -496,6 +533,274 @@ def migrate_tokens_to_hashes(conn):
             "UPDATE tokens SET token_hash=?, token=? WHERE token=?",
             (digest, f"{TOKEN_HASH_MARKER}{digest}", stored),
         )
+
+
+# ------------------------------------- Configurations de fournisseur par organisation
+#
+# ## Ce qui change, et pourquoi
+#
+# Jusqu'ici, un fournisseur était configuré par des variables d'environnement
+# globales à l'instance : une seule organisation Google, un seul émetteur OIDC.
+# Cela suffisait pour un serveur d'établissement dédié, mais interdisait deux
+# choses que la suite exige — plusieurs organisations sur un même plan de
+# contrôle, et plusieurs IdP OIDC pour une même organisation.
+#
+# La configuration vit donc désormais en base, rattachée à une organisation, et
+# porte son propre identifiant immuable.
+#
+# ## Global contre par-organisation
+#
+# La distinction n'est pas cosmétique.
+#
+# - **Application Microsoft** : une seule, multi-tenant, appartenant à Nova. Ce
+#   qui varie d'une organisation à l'autre est le `tid` autorisé, pas
+#   l'application. Dupliquer l'App Registration par client n'apporterait rien et
+#   multiplierait les consentements à obtenir.
+# - **Client OAuth Google** : même raisonnement. Un seul client Nova, un domaine
+#   hébergé par organisation.
+# - **OIDC** : là, tout est propre à l'organisation — émetteur, identifiant
+#   client, secret éventuel. C'est le cas qui justifie `provider_config_id`.
+#
+# Autrement dit : l'identité **de Nova auprès du fournisseur** est globale ; le
+# **rattachement d'une organisation** est per-organisation.
+
+PROVIDER_TYPES = ("microsoft_entra", "google_workspace", "oidc")
+
+
+def provider_config_columns(row) -> dict:
+    return dict(row) if row is not None else {}
+
+
+def bootstrap_provider_configs(conn, organization_id: str):
+    """Reprend la configuration héritée des variables d'environnement.
+
+    Écrit **une fois**, puis jamais réécrit : un redémarrage ne recrée pas de
+    ligne, et une configuration modifiée en base n'est pas écrasée au prochain
+    démarrage. C'est la différence entre importer et imposer.
+    """
+    now = time.time()
+
+    def existing(provider_type: str, issuer: str | None = None):
+        if issuer:
+            return conn.execute(
+                "SELECT id FROM organization_provider_configs "
+                "WHERE organization_id=? AND provider_type=? AND oidc_issuer=?",
+                (organization_id, provider_type, issuer),
+            ).fetchone()
+        return conn.execute(
+            "SELECT id FROM organization_provider_configs "
+            "WHERE organization_id=? AND provider_type=?",
+            (organization_id, provider_type),
+        ).fetchone()
+
+    def insert(provider_type: str, **fields):
+        columns = {
+            "id": str(uuid.uuid4()),
+            "organization_id": organization_id,
+            "provider_type": provider_type,
+            "enabled": 1,
+            "created_at": now,
+            "updated_at": now,
+            **fields,
+        }
+        names = ",".join(columns)
+        placeholders = ",".join("?" for _ in columns)
+        conn.execute(
+            f"INSERT INTO organization_provider_configs({names}) VALUES ({placeholders})",
+            tuple(columns.values()),
+        )
+
+    if ENTRA_ALLOWED_TENANT_ID and not existing("microsoft_entra"):
+        insert(
+            "microsoft_entra",
+            display_name="Microsoft",
+            entra_tenant_id=ENTRA_ALLOWED_TENANT_ID,
+        )
+
+    if GOOGLE_ALLOWED_HOSTED_DOMAIN and not existing("google_workspace"):
+        insert(
+            "google_workspace",
+            display_name="Google",
+            google_hosted_domain=GOOGLE_ALLOWED_HOSTED_DOMAIN,
+        )
+
+    if OIDC_ISSUER and OIDC_CLIENT_ID and not existing("oidc", OIDC_ISSUER):
+        insert(
+            "oidc",
+            display_name=OIDC_DISPLAY_NAME,
+            oidc_issuer=OIDC_ISSUER,
+            oidc_client_id=OIDC_CLIENT_ID,
+            oidc_client_secret=OIDC_CLIENT_SECRET or None,
+            oidc_client_auth_method=OIDC_CLIENT_AUTH_METHOD,
+            oidc_allow_private_issuer=1 if OIDC_ALLOW_PRIVATE_ISSUER else 0,
+            oidc_required_claim=OIDC_REQUIRED_CLAIM or None,
+            oidc_required_claim_value=OIDC_REQUIRED_CLAIM_VALUE or None,
+        )
+
+
+def validate_provider_config(config: dict) -> str | None:
+    """Motif d'invalidité, ou `None` si la configuration tient debout.
+
+    Une configuration invalide n'est **jamais** annoncée au poste : mieux vaut
+    aucun bouton qu'un bouton qui mène à une erreur incompréhensible.
+    """
+    provider_type = config.get("provider_type")
+    if provider_type not in PROVIDER_TYPES:
+        return "unknown_provider_type"
+
+    if provider_type == "microsoft_entra":
+        if not config.get("entra_tenant_id"):
+            return "missing_tenant"
+        if not ENTRA_CLIENT_ID:
+            return "missing_global_client_id"
+    elif provider_type == "google_workspace":
+        if not config.get("google_hosted_domain"):
+            return "missing_hosted_domain"
+        if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
+            return "missing_global_client"
+    elif provider_type == "oidc":
+        if not config.get("oidc_issuer"):
+            return "missing_issuer"
+        if not config.get("oidc_client_id"):
+            return "missing_client_id"
+        method = config.get("oidc_client_auth_method") or "none"
+        if method not in {"none", "client_secret_post", "client_secret_basic"}:
+            return "unsupported_client_auth_method"
+        if method != "none" and not config.get("oidc_client_secret"):
+            return "missing_client_secret"
+    return None
+
+
+def provider_configs_for_organization(
+    organization_id: str, only_usable: bool = True
+) -> list[dict]:
+    """Configurations d'une organisation.
+
+    `only_usable` écarte ce qui est désactivé ou invalide — c'est ce que voit le
+    poste. L'administration, elle, a besoin de tout voir, y compris le cassé.
+    """
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM organization_provider_configs WHERE organization_id=? "
+            "ORDER BY created_at",
+            (organization_id,),
+        ).fetchall()
+    configs = [dict(row) for row in rows]
+    if not only_usable:
+        return configs
+    return [
+        config
+        for config in configs
+        if config["enabled"] and validate_provider_config(config) is None
+    ]
+
+
+def provider_config_by_id(config_id: str, organization_id: str) -> dict | None:
+    """Configuration par identifiant, **cadrée par l'organisation**.
+
+    L'organisation fait partie de la requête, pas d'un contrôle qui suivrait :
+    un identifiant appartenant à une autre organisation ne renvoie rien, quelle
+    que soit la manière dont il a été obtenu.
+    """
+    if not config_id:
+        return None
+    with db() as conn:
+        row = conn.execute(
+            "SELECT * FROM organization_provider_configs WHERE id=? AND organization_id=?",
+            (config_id, organization_id),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def default_provider_config(provider_type: str, organization_id: str) -> dict | None:
+    """Première configuration utilisable d'un type donné.
+
+    Chemin de compatibilité : les postes déployés désignent un fournisseur par
+    son type, pas encore par son identifiant de configuration.
+    """
+    for config in provider_configs_for_organization(organization_id):
+        if config["provider_type"] == provider_type:
+            return config
+    return None
+
+
+# --- ce que la configuration donne au moteur -------------------------------
+
+
+def config_client_id(config: dict) -> str:
+    """Identifiant d'application.
+
+    Global chez Microsoft et Google — c'est Nova qui se présente au
+    fournisseur. Propre à la configuration en OIDC, où l'application appartient
+    à l'organisation.
+    """
+    return {
+        "microsoft_entra": ENTRA_CLIENT_ID,
+        "google_workspace": GOOGLE_CLIENT_ID,
+        "oidc": config.get("oidc_client_id") or "",
+    }[config["provider_type"]]
+
+
+def config_client_secret(config: dict) -> str:
+    return {
+        "microsoft_entra": "",
+        "google_workspace": GOOGLE_CLIENT_SECRET,
+        "oidc": config.get("oidc_client_secret") or "",
+    }[config["provider_type"]]
+
+
+def config_scopes(config: dict) -> str:
+    return {
+        "microsoft_entra": ENTRA_PKCE_SCOPES,
+        "google_workspace": GOOGLE_SCOPES,
+        "oidc": OIDC_SCOPES,
+    }[config["provider_type"]]
+
+
+def config_requires_secret(config: dict) -> bool:
+    if config["provider_type"] == "oidc":
+        return (config.get("oidc_client_auth_method") or "none") in {
+            "client_secret_post",
+            "client_secret_basic",
+        }
+    return ADAPTERS[config["provider_type"]]["uses_client_secret"]
+
+
+def config_tenant_value(config: dict) -> str:
+    """Valeur qui rattache une identité vérifiée à cette organisation."""
+    return {
+        "microsoft_entra": config.get("entra_tenant_id") or "",
+        "google_workspace": config.get("google_hosted_domain") or "",
+        "oidc": config.get("oidc_issuer") or "",
+    }[config["provider_type"]]
+
+
+def config_display_name(config: dict) -> str:
+    """Libellé du bouton. **Affichage uniquement.**"""
+    label = (config.get("display_name") or "").strip()
+    if label:
+        return label
+    return {
+        "microsoft_entra": "Microsoft",
+        "google_workspace": "Google",
+        "oidc": "Company SSO",
+    }[config["provider_type"]]
+
+
+def public_provider_view(config: dict) -> dict:
+    """Ce que le poste a le droit de voir.
+
+    Le strict minimum pour dessiner un bouton : un identifiant, un type, un
+    libellé. Ni secret, ni identifiant client, ni tenant, ni émetteur — rien de
+    tout cela n'aide à afficher un bouton, et tout cela renseignerait un
+    attaquant sur l'infrastructure de l'organisation.
+    """
+    return {
+        "id": config["id"],
+        "type": config["provider_type"],
+        "display_name": config_display_name(config),
+    }
+
 
 
 init_db()
@@ -1059,7 +1364,7 @@ async def entra_poll(body: EntraPollRequest):
 # où échanger le code, quel émetteur attendre, où trouver les clés publiques, et
 # quelle revendication rattache l'utilisateur à une organisation.
 #
-# Ces différences vivent dans `PROVIDERS`. Tout le reste — état des tentatives,
+# Ces différences vivent dans `ADAPTERS`. Tout le reste — état des tentatives,
 # validation cryptographique, cache JWKS, rattachement de compte, émission de
 # session — est commun et n'a été écrit qu'une fois. Ajouter un OIDC générique
 # reviendra à ajouter une entrée, pas un second moteur.
@@ -1092,6 +1397,9 @@ class SsoStartRequest(BaseModel):
     nonce: str
     redirect_uri: str
     machine: str = "poste inconnu"
+    # Désigne une configuration précise. Facultatif : les postes déployés
+    # raisonnent encore par type de fournisseur.
+    provider_config_id: str | None = None
 
 
 class SsoExchangeRequest(BaseModel):
@@ -1118,43 +1426,44 @@ def auth_error(status: int, code: str) -> HTTPException:
 # ------------------------------------------------------------ fournisseurs
 
 
-def entra_issuer(claims: dict) -> str:
+def entra_issuer(claims: dict, _config: dict | None = None) -> str:
     """Émetteur attendu chez Microsoft : il dépend du tenant."""
     return f"https://login.microsoftonline.com/{claims.get('tid', '')}/v2.0"
 
 
-def entra_jwks_uri(claims: dict) -> str:
+def entra_jwks_uri(claims: dict, _config: dict | None = None) -> str:
     """Clés publiques du tenant. Dérivée du `tid`, **jamais** d'un champ
     d'en-tête du jeton : un `jku` hostile ne joue aucun rôle."""
     return f"https://login.microsoftonline.com/{claims.get('tid', '')}/discovery/v2.0/keys"
 
 
-def google_issuer(_claims: dict) -> str:
+def google_issuer(_claims: dict, _config: dict | None = None) -> str:
     # Google accepte deux formes ; la variante avec schéma est celle que
     # renvoient les jetons du point de terminaison v2.
     return "https://accounts.google.com"
 
 
-def google_jwks_uri(_claims: dict) -> str:
+def google_jwks_uri(_claims: dict, _config: dict | None = None) -> str:
     return "https://www.googleapis.com/oauth2/v3/certs"
 
 
-def oidc_issuer_claim(_claims: dict) -> str:
-    """Emetteur attendu : celui configure, exactement."""
-    return OIDC_ISSUER
+def oidc_issuer_claim(_claims: dict, config: dict | None = None) -> str:
+    """Émetteur attendu : celui de **cette** configuration, exactement."""
+    return (config or {}).get("oidc_issuer") or ""
 
 
-def oidc_jwks_uri(_claims: dict) -> str:
+def oidc_jwks_uri(_claims: dict, config: dict | None = None) -> str:
     """Clés publiques, telles que la découverte les a annoncées.
 
     Le cache de métadonnées est déjà rempli au moment de la validation : la
     tentative a commencé par la découverte.
     """
-    cached = OIDC_METADATA_CACHE.get(OIDC_ISSUER)
+    issuer = (config or {}).get("oidc_issuer") or ""
+    cached = OIDC_METADATA_CACHE.get(issuer)
     return cached["metadata"]["jwks_uri"] if cached else ""
 
 
-PROVIDERS: dict[str, dict] = {
+ADAPTERS: dict[str, dict] = {
     "microsoft_entra": {
         # Autorité `organizations` : comptes professionnels et scolaires
         # uniquement, jamais de compte Microsoft personnel. Le point d'entrée
@@ -1250,7 +1559,7 @@ def provider_requires_secret(provider: str) -> bool:
     """
     if provider == "oidc":
         return OIDC_CLIENT_AUTH_METHOD in {"client_secret_post", "client_secret_basic"}
-    return PROVIDERS[provider]["uses_client_secret"]
+    return ADAPTERS[provider]["uses_client_secret"]
 
 
 def provider_display_name(provider: str) -> str:
@@ -1263,7 +1572,7 @@ def provider_display_name(provider: str) -> str:
 
 
 def require_provider(provider: str) -> dict:
-    config = PROVIDERS.get(provider)
+    config = ADAPTERS.get(provider)
     if config is None:
         raise auth_error(404, "PROVIDER_UNKNOWN")
     if not provider_client_id(provider):
@@ -1288,7 +1597,7 @@ def organization_for_provider(provider: str) -> sqlite3.Row | None:
     Le rattachement est **déclaré**, jamais déduit : sans valeur dans la colonne
     correspondante, le fournisseur reste indisponible.
     """
-    column = PROVIDERS[provider]["organization_column"]
+    column = ADAPTERS[provider]["organization_column"]
     with db() as conn:
         organization = conn.execute(
             "SELECT * FROM organizations WHERE id=?", (nova_organization_id(),)
@@ -1298,27 +1607,27 @@ def organization_for_provider(provider: str) -> sqlite3.Row | None:
     return None
 
 
-def configured_providers() -> list[str]:
-    """Fournisseurs réellement utilisables sur ce serveur.
+def usable_provider_configs() -> list[dict]:
+    """Configurations utilisables de l'organisation active.
 
-    Un fournisseur n'est annoncé que si son identifiant d'application **et** son
-    rattachement d'organisation existent. Le poste n'a donc jamais à deviner, et
-    aucun bouton inopérant ne peut s'afficher.
+    Une configuration désactivée ou invalide n'apparaît pas : mieux vaut aucun
+    bouton qu'un bouton qui mène à une erreur incompréhensible.
     """
-    available = []
-    for provider in PROVIDERS:
-        config = PROVIDERS[provider]
-        if not provider_client_id(provider):
-            continue
-        if provider_requires_secret(provider) and not provider_client_secret(provider):
-            continue
-        if provider == "oidc" and not OIDC_ISSUER:
-            continue
-        if organization_for_provider(provider) is None:
-            continue
-        available.append(provider)
-    available.append("legacy_email_code")
-    return available
+    return provider_configs_for_organization(nova_organization_id())
+
+
+def configured_providers() -> list[str]:
+    """Types de fournisseurs annoncés, forme historique.
+
+    Conservée telle quelle pour les postes déployés, qui raisonnent encore par
+    type. La liste détaillée vit dans `/api/auth/providers`.
+    """
+    types = []
+    for config in usable_provider_configs():
+        if config["provider_type"] not in types:
+            types.append(config["provider_type"])
+    types.append("legacy_email_code")
+    return types
 
 
 # ------------------------------------------------------------ OIDC générique
@@ -1411,13 +1720,15 @@ def issuer_url_is_allowed(issuer: str, allow_private: bool) -> tuple[bool, str]:
     return True, "ok"
 
 
-async def fetch_oidc_metadata(issuer: str) -> dict:
+async def fetch_oidc_metadata(issuer: str, allow_private: bool | None = None) -> dict:
     """Lit le document de découverte de l'émetteur.
 
     Les redirections ne sont **pas** suivies : une redirection vers une adresse
     interne contournerait le contrôle fait avant l'appel.
     """
-    allowed, reason = issuer_url_is_allowed(issuer, OIDC_ALLOW_PRIVATE_ISSUER)
+    if allow_private is None:
+        allow_private = OIDC_ALLOW_PRIVATE_ISSUER
+    allowed, reason = issuer_url_is_allowed(issuer, allow_private)
     if not allowed:
         print(f"[auth] provider=oidc result=failure reason=issuer_rejected:{reason}")
         raise auth_error(400, "PROVIDER_CONFIG_INVALID")
@@ -1449,29 +1760,34 @@ async def fetch_oidc_metadata(issuer: str) -> dict:
     return metadata
 
 
-async def oidc_metadata(issuer: str, force_refresh: bool = False) -> dict:
+async def oidc_metadata(
+    issuer: str, force_refresh: bool = False, allow_private: bool | None = None
+) -> dict:
     cached = OIDC_METADATA_CACHE.get(issuer)
     fresh = cached and cached["fetched_at"] + OIDC_METADATA_TTL_SECONDS > time.time()
     if cached and fresh and not force_refresh:
         return cached["metadata"]
-    metadata = await fetch_oidc_metadata(issuer)
+    metadata = await fetch_oidc_metadata(issuer, allow_private)
     OIDC_METADATA_CACHE[issuer] = {"metadata": metadata, "fetched_at": time.time()}
     return metadata
 
 
-async def provider_endpoints(provider: str) -> dict:
-    """Points de terminaison effectifs d'un fournisseur.
+async def provider_endpoints(config: dict) -> dict:
+    """Points de terminaison effectifs d'une configuration.
 
     Statiques pour Microsoft et Google, découverts pour l'OIDC générique. Le
     reste du moteur n'a pas à savoir lequel des deux cas s'applique.
     """
-    config = PROVIDERS[provider]
-    if provider != "oidc":
+    adapter = ADAPTERS[config["provider_type"]]
+    if config["provider_type"] != "oidc":
         return {
-            "authorization_endpoint": config["authorization_endpoint"],
-            "token_endpoint": config["token_endpoint"],
+            "authorization_endpoint": adapter["authorization_endpoint"],
+            "token_endpoint": adapter["token_endpoint"],
         }
-    metadata = await oidc_metadata(OIDC_ISSUER)
+    metadata = await oidc_metadata(
+        config["oidc_issuer"],
+        allow_private=bool(config.get("oidc_allow_private_issuer")),
+    )
     return {
         "authorization_endpoint": metadata["authorization_endpoint"],
         "token_endpoint": metadata["token_endpoint"],
@@ -1535,7 +1851,7 @@ def signing_key_from_jwks(jwks: dict, kid: str):
     return None
 
 
-async def validate_id_token(provider: str, id_token: str, expected_nonce: str) -> dict:
+async def validate_id_token(config: dict, id_token: str, expected_nonce: str) -> dict:
     """Valide complètement un jeton d'identité, quel que soit le fournisseur.
 
     Rien n'est cru avant cette fonction, et tout est vérifié : signature contre
@@ -1547,13 +1863,14 @@ async def validate_id_token(provider: str, id_token: str, expected_nonce: str) -
     Le `kid` sert à choisir la clé, jamais l'URL : celle-ci vient de la
     configuration du fournisseur, pas d'un champ du jeton.
     """
-    config = PROVIDERS[provider]
+    provider = config["provider_type"]
+    adapter = ADAPTERS[provider]
     try:
         header = jwt.get_unverified_header(id_token)
     except Exception:
         raise auth_error(401, "ID_TOKEN_INVALID")
 
-    if header.get("alg") not in config["algorithms"]:
+    if header.get("alg") not in adapter["algorithms"]:
         raise auth_error(401, "ID_TOKEN_INVALID")
     kid = header.get("kid")
     if not kid:
@@ -1565,8 +1882,8 @@ async def validate_id_token(provider: str, id_token: str, expected_nonce: str) -
     # falsifié ne peut pas produire une signature valide pour l'émetteur
     # correspondant.
     unverified = decode_jwt_claims(id_token)
-    jwks_uri = config["jwks_uri"](unverified)
-    expected_issuer = config["issuer"](unverified)
+    jwks_uri = adapter["jwks_uri"](unverified, config)
+    expected_issuer = adapter["issuer"](unverified, config)
     if not jwks_uri or not expected_issuer.strip("/").endswith("v2.0") and provider == "microsoft_entra":
         # Chez Microsoft, un `tid` absent produit une URL et un émetteur
         # tronqués : on refuse avant même de contacter quoi que ce soit.
@@ -1585,8 +1902,8 @@ async def validate_id_token(provider: str, id_token: str, expected_nonce: str) -
         claims = jwt.decode(
             id_token,
             key=key,
-            algorithms=config["algorithms"],
-            audience=provider_client_id(provider),
+            algorithms=adapter["algorithms"],
+            audience=config_client_id(config),
             issuer=expected_issuer,
             leeway=SSO_CLOCK_SKEW_SECONDS,
             options={
@@ -1608,7 +1925,7 @@ async def validate_id_token(provider: str, id_token: str, expected_nonce: str) -
         raise auth_error(401, "ID_TOKEN_INVALID")
 
     # Sujet immuable : `oid` chez Microsoft, `sub` chez Google.
-    if not claims.get(config["subject_claim"]):
+    if not claims.get(adapter["subject_claim"]):
         raise auth_error(401, "ID_TOKEN_INVALID")
 
     return claims
@@ -1616,10 +1933,14 @@ async def validate_id_token(provider: str, id_token: str, expected_nonce: str) -
 
 async def validate_entra_id_token(id_token: str, expected_nonce: str) -> dict:
     """Conservé pour les tests et appels existants."""
-    return await validate_id_token("microsoft_entra", id_token, expected_nonce)
+    config = default_provider_config("microsoft_entra", nova_organization_id()) or {
+        "provider_type": "microsoft_entra",
+        "entra_tenant_id": ENTRA_ALLOWED_TENANT_ID,
+    }
+    return await validate_id_token(config, id_token, expected_nonce)
 
 
-def organization_for_tenant(provider: str, tenant_value: str) -> sqlite3.Row | None:
+def organization_for_tenant_legacy(provider: str, tenant_value: str) -> sqlite3.Row | None:
     """Organisation Nova rattachée à un tenant externe.
 
     Mapping **explicite** uniquement. Il n'existe pas de variante prenant un
@@ -1635,7 +1956,7 @@ def organization_for_tenant(provider: str, tenant_value: str) -> sqlite3.Row | N
     """
     if not tenant_value:
         return None
-    column = PROVIDERS[provider]["organization_column"]
+    column = ADAPTERS[provider]["organization_column"]
     with db() as conn:
         return conn.execute(
             f"SELECT * FROM organizations WHERE {column}=?", (tenant_value,)
@@ -1725,13 +2046,15 @@ def auth_providers():
     utilisateur, « Continue with Company SSO » si. Il n'entre dans aucune
     décision de sécurité, et aucun secret ne figure ici.
     """
+    configs = usable_provider_configs()
     providers = configured_providers()
     return {
+        # Forme détaillée : ce que le poste dessine réellement.
+        "provider_configs": [public_provider_view(config) for config in configs],
+        # Formes historiques, conservées pour les postes déployés.
         "providers": providers,
         "display_names": {
-            provider: provider_display_name(provider)
-            for provider in providers
-            if provider != "legacy_email_code"
+            config["provider_type"]: config_display_name(config) for config in configs
         },
     }
 
@@ -1758,15 +2081,33 @@ async def start_sso_flow(provider: str, body: SsoStartRequest) -> dict:
     jeton d'identité. Le `code_verifier`, lui, ne quitte jamais le poste avant
     l'échange — c'est tout l'intérêt de PKCE.
     """
-    config = require_provider(provider)
     if not is_loopback_redirect(body.redirect_uri):
         raise auth_error(400, "REDIRECT_URI_INVALID")
     if len(body.code_challenge) < 43 or len(body.nonce) < 16:
         raise auth_error(400, "PKCE_INVALID")
-    if organization_for_provider(provider) is None:
-        raise auth_error(503, "PROVIDER_NOT_CONFIGURED")
 
-    endpoints = await provider_endpoints(provider)
+    organization_id = nova_organization_id()
+    # Le poste peut désigner une configuration précise ; sinon on prend la
+    # première utilisable de ce type. Dans les deux cas, la configuration est
+    # cherchée **dans l'organisation active** : un identifiant venu d'ailleurs
+    # ne renvoie rien.
+    if body.provider_config_id:
+        config = provider_config_by_id(body.provider_config_id, organization_id)
+        if config is None or not config["enabled"]:
+            raise auth_error(404, "PROVIDER_CONFIG_NOT_FOUND")
+        if provider and config["provider_type"] != provider:
+            raise auth_error(400, "PROVIDER_CONFIG_MISMATCH")
+        if validate_provider_config(config) is not None:
+            raise auth_error(503, "PROVIDER_CONFIG_INVALID")
+    else:
+        if provider not in ADAPTERS:
+            raise auth_error(404, "PROVIDER_UNKNOWN")
+        config = default_provider_config(provider, organization_id)
+        if config is None:
+            raise auth_error(503, "PROVIDER_NOT_CONFIGURED")
+
+    endpoints = await provider_endpoints(config)
+    adapter = ADAPTERS[config["provider_type"]]
     flow_id = secrets.token_urlsafe(24)
     now = time.time()
     # Ménage des tentatives expirées : pas de flux zombie qui s'accumule.
@@ -1774,8 +2115,13 @@ async def start_sso_flow(provider: str, body: SsoStartRequest) -> dict:
         if flow["expires_at"] < now:
             SSO_FLOWS.pop(stale, None)
 
+    # Le flux retient sa configuration, son type et son organisation : un
+    # retour ne peut compléter ni un autre fournisseur, ni une autre
+    # configuration du même fournisseur.
     SSO_FLOWS[flow_id] = {
-        "provider": provider,
+        "provider": config["provider_type"],
+        "provider_config_id": config["id"],
+        "organization_id": organization_id,
         "nonce": body.nonce,
         "redirect_uri": body.redirect_uri,
         "machine": body.machine,
@@ -1783,50 +2129,54 @@ async def start_sso_flow(provider: str, body: SsoStartRequest) -> dict:
     }
 
     parameters = {
-        "client_id": provider_client_id(provider),
+        "client_id": config_client_id(config),
         "response_type": "code",
         "redirect_uri": body.redirect_uri,
-        "scope": provider_scopes(provider),
+        "scope": config_scopes(config),
         "code_challenge": body.code_challenge,
         "code_challenge_method": "S256",
         "nonce": body.nonce,
-        **config["extra_authorize_params"],
+        **adapter["extra_authorize_params"],
     }
-    if provider == "microsoft_entra":
+    if config["provider_type"] == "microsoft_entra":
         parameters["response_mode"] = "query"
 
     return {
         "flow_id": flow_id,
+        "provider_config_id": config["id"],
         "authorization_url": f"{endpoints['authorization_endpoint']}?{urlencode(parameters)}",
         "expires_in": SSO_FLOW_TTL_SECONDS,
     }
 
 
-async def redeem_authorization_code(provider: str, body: SsoExchangeRequest) -> dict:
+async def redeem_authorization_code(config: dict, body: SsoExchangeRequest) -> dict:
     """Échange le code d'autorisation contre les jetons du fournisseur.
 
     Ce qui prouve que le code revient à celui qui l'a demandé, c'est le
     `code_verifier`. Google exige en plus le secret de son client « Desktop » ;
     il ne quitte pas le serveur, et le poste n'en a jamais connaissance.
     """
-    endpoints = await provider_endpoints(provider)
+    endpoints = await provider_endpoints(config)
     data = {
-        "client_id": provider_client_id(provider),
+        "client_id": config_client_id(config),
         "grant_type": "authorization_code",
         "code": body.code,
         "redirect_uri": body.redirect_uri,
         "code_verifier": body.code_verifier,
     }
     auth = None
-    if provider_requires_secret(provider):
+    if config_requires_secret(config):
         # `client_secret_basic` place l'identifiant dans l'en-tête plutôt que
         # dans le corps : les deux méthodes sont standard, l'IdP choisit.
-        if provider == "oidc" and OIDC_CLIENT_AUTH_METHOD == "client_secret_basic":
-            auth = (provider_client_id(provider), provider_client_secret(provider))
+        if (
+            config["provider_type"] == "oidc"
+            and config.get("oidc_client_auth_method") == "client_secret_basic"
+        ):
+            auth = (config_client_id(config), config_client_secret(config))
         else:
-            data["client_secret"] = provider_client_secret(provider)
+            data["client_secret"] = config_client_secret(config)
     else:
-        data["scope"] = provider_scopes(provider)
+        data["scope"] = config_scopes(config)
 
     async with httpx.AsyncClient(timeout=20) as client:
         response = await client.post(
@@ -1848,47 +2198,59 @@ async def exchange_sso_code(provider: str, body: SsoExchangeRequest) -> dict:
     rafraîchissement externe n'est conservé — le fournisseur a prouvé
     l'identité, son rôle s'arrête là.
     """
-    config = require_provider(provider)
     flow = SSO_FLOWS.pop(body.flow_id, None)  # usage unique
     if not flow or flow["expires_at"] < time.time():
         raise auth_error(400, "AUTH_TIMEOUT")
-    # Un flux appartient à son fournisseur : un retour Google ne peut pas
-    # satisfaire une tentative Microsoft, ni l'inverse.
-    if flow["provider"] != provider:
+    # Un flux appartient à son fournisseur **et** à sa configuration : ni un
+    # retour Google ne satisfait une tentative Microsoft, ni un retour d'un IdP
+    # OIDC n'en satisfait un autre.
+    if provider and flow["provider"] != provider:
+        raise auth_error(400, "STATE_MISMATCH")
+    if flow["organization_id"] != nova_organization_id():
         raise auth_error(400, "STATE_MISMATCH")
     if flow["redirect_uri"] != body.redirect_uri:
         raise auth_error(400, "REDIRECT_URI_INVALID")
 
-    tokens = await redeem_authorization_code(provider, body)
+    config = provider_config_by_id(flow["provider_config_id"], flow["organization_id"])
+    if config is None or not config["enabled"]:
+        raise auth_error(503, "PROVIDER_NOT_CONFIGURED")
+    adapter = ADAPTERS[config["provider_type"]]
+
+    tokens = await redeem_authorization_code(config, body)
     id_token = tokens.get("id_token")
     if not id_token:
         raise auth_error(401, "ID_TOKEN_INVALID")
 
-    claims = await validate_id_token(provider, id_token, flow["nonce"])
-    external_subject = claims[config["subject_claim"]]
+    claims = await validate_id_token(config, id_token, flow["nonce"])
+    external_subject = claims[adapter["subject_claim"]]
 
-    if provider == "oidc":
+    if config["provider_type"] == "oidc":
         # Pas de devinette de tenant : la configuration OIDC **appartient** à
         # une organisation, et l'émetteur vérifié est ce qui la désigne.
-        external_issuer = OIDC_ISSUER
-        tenant_value = OIDC_ISSUER
-        # Contrainte facultative, comparée à l'identique. Ni expression, ni
-        # moteur de règles : une égalité, ou rien.
-        if OIDC_REQUIRED_CLAIM:
-            if str(claims.get(OIDC_REQUIRED_CLAIM, "")) != OIDC_REQUIRED_CLAIM_VALUE:
+        external_issuer = config["oidc_issuer"]
+        claimed_tenant = external_issuer
+        required_claim = config.get("oidc_required_claim")
+        if required_claim:
+            expected = config.get("oidc_required_claim_value") or ""
+            if str(claims.get(required_claim, "")) != expected:
                 raise auth_error(403, "MEMBERSHIP_NOT_FOUND")
     else:
         external_issuer = ""
-        tenant_value = claims.get(config["tenant_claim"], "")
+        claimed_tenant = claims.get(adapter["tenant_claim"], "")
 
-    # Un compte sans rattachement d'organisation — typiquement un compte Google
-    # personnel, qui ne porte aucun `hd` — n'entre pas dans une organisation.
-    organization = organization_for_tenant(provider, tenant_value)
-    if organization is None:
+    # Le rattachement vient de la configuration, pas d'une recherche globale :
+    # la valeur portée par le jeton doit être exactement celle que
+    # l'organisation a déclarée. Un compte Google personnel, qui ne porte aucun
+    # `hd`, ne correspond à rien et n'entre nulle part.
+    expected_tenant = config_tenant_value(config)
+    if not claimed_tenant or claimed_tenant != expected_tenant:
         raise auth_error(403, "TENANT_NOT_ALLOWED")
-    # Cette instance sert **une** organisation. Un tenant que Nova connaît, mais
-    # qui appartient à une autre organisation, n'obtient pas de session ici.
-    if organization["id"] != nova_organization_id():
+    tenant_value = claimed_tenant
+    with db() as conn:
+        organization = conn.execute(
+            "SELECT * FROM organizations WHERE id=?", (config["organization_id"],)
+        ).fetchone()
+    if organization is None or organization["id"] != nova_organization_id():
         raise auth_error(403, "TENANT_NOT_ALLOWED")
 
     email = (claims.get("preferred_username") or claims.get("email") or "").lower()
@@ -1896,7 +2258,11 @@ async def exchange_sso_code(provider: str, body: SsoExchangeRequest) -> dict:
         raise auth_error(401, "ID_TOKEN_INVALID")
 
     resolved_email = resolve_member_for_identity(
-        email, organization["id"], external_subject, provider, external_issuer
+        email,
+        organization["id"],
+        external_subject,
+        config["provider_type"],
+        external_issuer,
     )
 
     with db() as conn:
@@ -1912,15 +2278,15 @@ async def exchange_sso_code(provider: str, body: SsoExchangeRequest) -> dict:
     # Device Code hérité, qui reste `transport_only`.
     record_federated_identity(
         resolved_email,
-        provider,
+        config["provider_type"],
         external_subject,
         tenant_value or None,
         verification="verified",
         external_issuer=external_issuer,
     )
     print(
-        f"[auth] provider={provider} organization={organization['id']} "
-        f"result=success flow={body.flow_id[:8]}"
+        f"[auth] provider={config['provider_type']} config={config['id'][:8]} "
+        f"organization={organization['id']} result=success flow={body.flow_id[:8]}"
     )
     return {"status": "complete", "email": resolved_email, **session}
 
@@ -1946,6 +2312,168 @@ async def entra_pkce_start(body: SsoStartRequest):
 @app.post("/api/auth/entra/pkce/exchange")
 async def entra_pkce_exchange(body: SsoExchangeRequest):
     return await exchange_sso_code("microsoft_entra", body)
+
+
+
+
+# ----------------------------- administration des configurations (interne)
+#
+# Le strict nécessaire pour éviter de manipuler SQLite à la main. Ce n'est pas
+# Nova Admin : pas d'interface, pas de gestion d'utilisateurs, pas de journal
+# d'audit. L'authentification est celle qui existe déjà — `X-Admin-Token` — et
+# la portée est l'organisation servie par cette instance, jamais une autre.
+
+
+class ProviderConfigRequest(BaseModel):
+    provider_type: str
+    display_name: str | None = None
+    enabled: bool = True
+    entra_tenant_id: str | None = None
+    google_hosted_domain: str | None = None
+    oidc_issuer: str | None = None
+    oidc_client_id: str | None = None
+    # Vide ou absent à la mise à jour = « ne change pas ». Effacer un secret
+    # demande un geste explicite, pas un champ oublié.
+    oidc_client_secret: str | None = None
+    oidc_client_auth_method: str | None = None
+    oidc_allow_private_issuer: bool | None = None
+    oidc_required_claim: str | None = None
+    oidc_required_claim_value: str | None = None
+
+
+def admin_provider_view(config: dict) -> dict:
+    """Vue d'administration.
+
+    Elle montre l'état réel — désactivé, invalide et pourquoi — mais **jamais**
+    un secret : `has_secret` dit qu'il existe, pas ce qu'il vaut. Un secret
+    qu'une API peut relire finit par être relu.
+    """
+    return {
+        "id": config["id"],
+        "organization_id": config["organization_id"],
+        "provider_type": config["provider_type"],
+        "display_name": config_display_name(config),
+        "enabled": bool(config["enabled"]),
+        "entra_tenant_id": config.get("entra_tenant_id"),
+        "google_hosted_domain": config.get("google_hosted_domain"),
+        "oidc_issuer": config.get("oidc_issuer"),
+        "oidc_client_id": config.get("oidc_client_id"),
+        "oidc_client_auth_method": config.get("oidc_client_auth_method"),
+        "oidc_allow_private_issuer": bool(config.get("oidc_allow_private_issuer")),
+        "oidc_required_claim": config.get("oidc_required_claim"),
+        "has_secret": bool(config.get("oidc_client_secret")),
+        "validation_error": validate_provider_config(config),
+        "created_at": config.get("created_at"),
+        "updated_at": config.get("updated_at"),
+    }
+
+
+@app.get("/api/admin/provider-configs")
+def admin_list_provider_configs(_: bool = Depends(require_admin)):
+    """Toutes les configurations de l'organisation active, cassées comprises."""
+    configs = provider_configs_for_organization(
+        nova_organization_id(), only_usable=False
+    )
+    return {"configs": [admin_provider_view(config) for config in configs]}
+
+
+@app.post("/api/admin/provider-configs")
+def admin_create_provider_config(
+    body: ProviderConfigRequest, _: bool = Depends(require_admin)
+):
+    if body.provider_type not in PROVIDER_TYPES:
+        raise auth_error(400, "PROVIDER_UNKNOWN")
+    now = time.time()
+    config_id = str(uuid.uuid4())
+    fields = {
+        "id": config_id,
+        "organization_id": nova_organization_id(),
+        "provider_type": body.provider_type,
+        "display_name": body.display_name,
+        "enabled": 1 if body.enabled else 0,
+        "entra_tenant_id": body.entra_tenant_id,
+        "google_hosted_domain": body.google_hosted_domain,
+        "oidc_issuer": (body.oidc_issuer or "").rstrip("/") or None,
+        "oidc_client_id": body.oidc_client_id,
+        "oidc_client_secret": body.oidc_client_secret or None,
+        "oidc_client_auth_method": body.oidc_client_auth_method or "none",
+        "oidc_allow_private_issuer": 1 if body.oidc_allow_private_issuer else 0,
+        "oidc_required_claim": body.oidc_required_claim,
+        "oidc_required_claim_value": body.oidc_required_claim_value,
+        "created_at": now,
+        "updated_at": now,
+    }
+    names = ",".join(fields)
+    placeholders = ",".join("?" for _ in fields)
+    with db() as conn:
+        try:
+            conn.execute(
+                f"INSERT INTO organization_provider_configs({names}) "
+                f"VALUES ({placeholders})",
+                tuple(fields.values()),
+            )
+        except sqlite3.IntegrityError:
+            raise auth_error(409, "PROVIDER_CONFIG_DUPLICATE")
+    created = provider_config_by_id(config_id, nova_organization_id())
+    return admin_provider_view(created)
+
+
+@app.post("/api/admin/provider-configs/{config_id}")
+def admin_update_provider_config(
+    config_id: str, body: ProviderConfigRequest, _: bool = Depends(require_admin)
+):
+    organization_id = nova_organization_id()
+    existing = provider_config_by_id(config_id, organization_id)
+    if existing is None:
+        raise auth_error(404, "PROVIDER_CONFIG_NOT_FOUND")
+
+    updates = {
+        "display_name": body.display_name,
+        "enabled": 1 if body.enabled else 0,
+        "entra_tenant_id": body.entra_tenant_id,
+        "google_hosted_domain": body.google_hosted_domain,
+        "oidc_issuer": (body.oidc_issuer or "").rstrip("/") or None,
+        "oidc_client_id": body.oidc_client_id,
+        "oidc_client_auth_method": body.oidc_client_auth_method or "none",
+        "oidc_allow_private_issuer": 1 if body.oidc_allow_private_issuer else 0,
+        "oidc_required_claim": body.oidc_required_claim,
+        "oidc_required_claim_value": body.oidc_required_claim_value,
+        "updated_at": time.time(),
+    }
+    # Un secret absent du corps **conserve** l'ancien. Sans cette règle, une
+    # mise à jour de libellé effacerait silencieusement le secret et couperait
+    # la connexion de toute une organisation.
+    if body.oidc_client_secret:
+        updates["oidc_client_secret"] = body.oidc_client_secret
+
+    assignments = ", ".join(f"{name}=?" for name in updates)
+    with db() as conn:
+        conn.execute(
+            f"UPDATE organization_provider_configs SET {assignments} "
+            f"WHERE id=? AND organization_id=?",
+            (*updates.values(), config_id, organization_id),
+        )
+    return admin_provider_view(provider_config_by_id(config_id, organization_id))
+
+
+@app.post("/api/admin/provider-configs/{config_id}/disable")
+def admin_disable_provider_config(config_id: str, _: bool = Depends(require_admin)):
+    """Désactive plutôt que supprime.
+
+    Une configuration désactivée cesse d'être annoncée et de servir, mais reste
+    lisible : les identités fédérées qu'elle a créées gardent ainsi leur
+    contexte, et un retour arrière ne demande pas de tout ressaisir.
+    """
+    organization_id = nova_organization_id()
+    if provider_config_by_id(config_id, organization_id) is None:
+        raise auth_error(404, "PROVIDER_CONFIG_NOT_FOUND")
+    with db() as conn:
+        conn.execute(
+            "UPDATE organization_provider_configs SET enabled=0, updated_at=? "
+            "WHERE id=? AND organization_id=?",
+            (time.time(), config_id, organization_id),
+        )
+    return admin_provider_view(provider_config_by_id(config_id, organization_id))
 
 
 # --- profil de l'utilisateur connecté (pour l'app)
