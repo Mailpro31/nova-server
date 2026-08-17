@@ -7,6 +7,7 @@ import json
 import os
 import sqlite3
 import tempfile
+import threading
 import time
 import unittest
 import uuid
@@ -59,6 +60,29 @@ def ensure_provider_config(provider_type, **fields):
             tuple(columns.values()),
         )
         return columns["id"]
+
+
+def clear_sso_flows():
+    with main.db() as conn:
+        conn.execute("DELETE FROM sso_flows")
+
+
+def expire_sso_flow(flow_id):
+    """Fait expirer une tentative sans attendre son délai."""
+    with main.db() as conn:
+        conn.execute(
+            "UPDATE sso_flows SET expires_at=? WHERE flow_id_hash=?",
+            (time.time() - 1, main.hash_token(flow_id)),
+        )
+
+
+def read_sso_flow(flow_id):
+    with main.db() as conn:
+        row = conn.execute(
+            "SELECT * FROM sso_flows WHERE flow_id_hash=?",
+            (main.hash_token(flow_id),),
+        ).fetchone()
+    return dict(row) if row else None
 
 
 def clear_provider_configs():
@@ -1085,7 +1109,7 @@ class EntraPkceTests(unittest.TestCase):
                 (self.ORGANIZATION_B, "org-b", "Organisation B", "business",
                  self.TENANT_B, time.time()),
             )
-        main.SSO_FLOWS.clear()
+        clear_sso_flows()
         main.JWKS_CACHE.clear()
         clear_provider_configs()
         ensure_provider_config("microsoft_entra", display_name="Microsoft",
@@ -1383,7 +1407,7 @@ class EntraPkceTests(unittest.TestCase):
 
     def test_an_expired_flow_is_refused(self):
         flow_id = self.start_flow().json()["flow_id"]
-        main.SSO_FLOWS[flow_id]["expires_at"] = time.time() - 1
+        expire_sso_flow(flow_id)
         response = self.exchange(flow_id)
         self.assertEqual(response.json()["detail"], "AUTH_TIMEOUT")
 
@@ -1718,7 +1742,7 @@ class GoogleWorkspaceTests(unittest.TestCase):
                 (self.ORGANIZATION_OTHER, "org-google-b", "Organisation B", "business",
                  self.OTHER_DOMAIN, time.time()),
             )
-        main.SSO_FLOWS.clear()
+        clear_sso_flows()
         main.JWKS_CACHE.clear()
         clear_provider_configs()
         ensure_provider_config("google_workspace", display_name="Google",
@@ -1764,8 +1788,11 @@ class GoogleWorkspaceTests(unittest.TestCase):
     def validate(self, token, nonce="nonce-google-0123456789"):
         a, b = self.google_config()
         with a, b:
+            # La validation compare des empreintes : le `nonce` n'est jamais
+            # relu en clair, donc jamais stocké en clair.
             return asyncio.run(main.validate_id_token(
-                {"provider_type": "google_workspace"}, token, nonce))
+                {"provider_type": "google_workspace"}, token,
+                main.hash_token(nonce)))
 
     def start_flow(self, redirect_uri="http://127.0.0.1:53200/callback"):
         a, b = self.google_config()
@@ -2082,7 +2109,7 @@ class MultiProviderTests(unittest.TestCase):
                 "UPDATE organizations SET entra_tenant_id=?, google_hosted_domain=? "
                 "WHERE id=?",
                 (self.TENANT, self.DOMAIN, main.nova_organization_id()))
-        main.SSO_FLOWS.clear()
+        clear_sso_flows()
         main.JWKS_CACHE.clear()
         clear_provider_configs()
         ensure_provider_config("microsoft_entra", display_name="Microsoft",
@@ -2458,7 +2485,7 @@ class OidcSignInTests(unittest.TestCase):
                 "UPDATE organizations SET oidc_issuer=? WHERE id=?",
                 (self.ISSUER, main.nova_organization_id()),
             )
-        main.SSO_FLOWS.clear()
+        clear_sso_flows()
         main.JWKS_CACHE.clear()
         main.OIDC_METADATA_CACHE.clear()
         clear_provider_configs()
@@ -3191,6 +3218,304 @@ class ProviderConfigLifecycleTests(unittest.TestCase):
         # dessiner un bouton, et tout cela renseigne sur l'infrastructure.
         self.assertNotIn("idp-interne", body.text)
         self.assertNotIn("identifiant-client-interne", body.text)
+
+
+class SsoFlowStoreTests(unittest.TestCase):
+    """L'état des tentatives, hors du processus.
+
+    Ces tests portent sur la propriété qui débloque le déploiement horizontal :
+    deux instances de store, la même base, et un échange qui ne peut réussir
+    qu'une fois.
+    """
+
+    def setUp(self):
+        clear_sso_flows()
+        self.store = main.DatabaseSsoFlowStore()
+
+    def create(self, store=None, **overrides):
+        fields = {
+            "provider_type": "oidc",
+            "provider_config_id": "config-1",
+            "organization_id": "org-1",
+            "nonce": "nonce-de-test-0123456789",
+            "redirect_uri": "http://127.0.0.1:53000/callback",
+            "machine": "poste-1",
+        }
+        fields.update(overrides)
+        return (store or self.store).create(**fields)
+
+    # -- ce qui est écrit, et ce qui ne l'est jamais -----------------------
+
+    def test_the_flow_id_is_never_stored_in_clear(self):
+        flow_id = self.create()
+        row = read_sso_flow(flow_id)
+        self.assertIsNotNone(row)
+        # Présenter l'identifiant suffit à réclamer la tentative : c'est un
+        # secret porteur, traité comme un jeton de session.
+        self.assertNotIn(flow_id, json.dumps(row))
+        self.assertEqual(row["flow_id_hash"], main.hash_token(flow_id))
+        self.assertEqual(len(row["flow_id_hash"]), 64)
+
+    def test_the_nonce_is_never_stored_in_clear(self):
+        flow_id = self.create(nonce="nonce-tres-secret-9876")
+        row = read_sso_flow(flow_id)
+        self.assertNotIn("nonce-tres-secret-9876", json.dumps(row))
+        self.assertEqual(row["nonce_hash"], main.hash_token("nonce-tres-secret-9876"))
+
+    def test_no_sensitive_material_is_persisted(self):
+        flow_id = self.create()
+        row = read_sso_flow(flow_id)
+        serialized = json.dumps(row).lower()
+        for forbidden in ("code_verifier", "authorization_code", "access_token",
+                          "refresh_token", "id_token", "client_secret"):
+            self.assertNotIn(forbidden, serialized)
+        # Les colonnes elles-mêmes ne prévoient rien de tel.
+        self.assertEqual(
+            set(row) - {"flow_id_hash", "provider_type", "provider_config_id",
+                        "organization_id", "nonce_hash", "redirect_uri", "machine",
+                        "status", "created_at", "expires_at", "exchanging_at",
+                        "consumed_at"},
+            set())
+
+    # -- machine à états ----------------------------------------------------
+
+    def test_a_new_flow_is_pending(self):
+        flow_id = self.create()
+        self.assertEqual(read_sso_flow(flow_id)["status"], "pending")
+
+    def test_begin_exchange_reserves_the_flow(self):
+        flow_id = self.create()
+        reserved = self.store.begin_exchange(flow_id)
+        self.assertIsNotNone(reserved)
+        self.assertEqual(reserved["provider_type"], "oidc")
+        self.assertEqual(reserved["provider_config_id"], "config-1")
+        self.assertEqual(read_sso_flow(flow_id)["status"], "exchanging")
+        self.assertIsNotNone(read_sso_flow(flow_id)["exchanging_at"])
+
+    def test_a_flow_can_only_be_reserved_once(self):
+        """Le cœur du sujet : deux réservations, une seule réussit."""
+        flow_id = self.create()
+        self.assertIsNotNone(self.store.begin_exchange(flow_id))
+        self.assertIsNone(self.store.begin_exchange(flow_id))
+
+    def test_a_consumed_flow_cannot_be_reserved(self):
+        flow_id = self.create()
+        self.store.begin_exchange(flow_id)
+        self.store.mark_consumed(flow_id)
+        self.assertEqual(read_sso_flow(flow_id)["status"], "consumed")
+        self.assertIsNone(self.store.begin_exchange(flow_id))
+
+    def test_an_unknown_flow_is_refused(self):
+        self.assertIsNone(self.store.begin_exchange("identifiant-inexistant"))
+        self.assertIsNone(self.store.begin_exchange(""))
+
+    def test_an_expired_flow_is_refused(self):
+        flow_id = self.create()
+        expire_sso_flow(flow_id)
+        self.assertIsNone(self.store.begin_exchange(flow_id))
+
+    # -- multi-worker -------------------------------------------------------
+
+    def test_two_store_instances_share_the_same_state(self):
+        """Ce que la mémoire de processus interdisait : `start` sur un worker,
+        `exchange` sur un autre."""
+        worker_a = main.DatabaseSsoFlowStore()
+        worker_b = main.DatabaseSsoFlowStore()
+
+        flow_id = self.create(store=worker_a)
+        # Le worker B, qui n'a rien en mémoire, retrouve la tentative.
+        reserved = worker_b.begin_exchange(flow_id)
+        self.assertIsNotNone(reserved)
+        self.assertEqual(reserved["organization_id"], "org-1")
+        # Et le worker A ne peut plus la réserver.
+        self.assertIsNone(worker_a.begin_exchange(flow_id))
+
+    def test_a_restart_does_not_lose_a_pending_flow(self):
+        flow_id = self.create()
+        # Un processus neuf : aucun état hérité en mémoire.
+        fresh = main.DatabaseSsoFlowStore()
+        self.assertIsNotNone(fresh.begin_exchange(flow_id))
+
+    def test_concurrent_reservations_elect_exactly_one_winner(self):
+        flow_id = self.create()
+        results = []
+        barrier = threading.Barrier(8)
+
+        def attempt():
+            store = main.DatabaseSsoFlowStore()
+            barrier.wait()
+            for _ in range(5):
+                try:
+                    results.append(store.begin_exchange(flow_id))
+                    return
+                except sqlite3.OperationalError:
+                    # Verrou d'écriture SQLite : on retente, ce que ferait un
+                    # vrai worker. Ce qui compte est qu'aucun doublon ne passe.
+                    time.sleep(0.05)
+            results.append(None)
+
+        threads = [threading.Thread(target=attempt) for _ in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        winners = [r for r in results if r is not None]
+        self.assertEqual(len(winners), 1, "un seul échange doit être autorisé")
+
+    # -- nettoyage ----------------------------------------------------------
+
+    def test_cleanup_removes_only_what_is_long_gone(self):
+        recent = self.create()
+        old = self.create(redirect_uri="http://127.0.0.1:53001/callback")
+        with main.db() as conn:
+            conn.execute(
+                "UPDATE sso_flows SET expires_at=? WHERE flow_id_hash=?",
+                (time.time() - main.SSO_FLOW_RETENTION_SECONDS - 60,
+                 main.hash_token(old)))
+
+        removed = self.store.cleanup()
+        self.assertEqual(removed, 1)
+        self.assertIsNotNone(read_sso_flow(recent))
+        self.assertIsNone(read_sso_flow(old))
+
+    def test_creating_a_flow_cleans_up_opportunistically(self):
+        old = self.create()
+        with main.db() as conn:
+            conn.execute(
+                "UPDATE sso_flows SET expires_at=?",
+                (time.time() - main.SSO_FLOW_RETENTION_SECONDS - 60,))
+        self.create(redirect_uri="http://127.0.0.1:53002/callback")
+        self.assertIsNone(read_sso_flow(old))
+
+    def test_the_store_honours_its_interface(self):
+        # Le moteur parle au contrat, pas à SQLite : le stockage changera.
+        self.assertIsInstance(main.SSO_FLOW_STORE, main.SsoFlowStore)
+        for method in ("create", "begin_exchange", "mark_consumed", "cleanup"):
+            self.assertTrue(callable(getattr(main.SSO_FLOW_STORE, method)))
+
+
+class SsoFlowBindingTests(unittest.TestCase):
+    """Ce à quoi une tentative reste liée, du début à la fin."""
+
+    ISSUER = "https://idp.example.com"
+    CLIENT_ID = "nova-organization"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.client = TestClient(main.app)
+        cls.key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+
+    def setUp(self):
+        with main.db() as conn:
+            for table in ("tokens", "users", "federated_identities"):
+                conn.execute(f"DELETE FROM {table}")
+        clear_sso_flows()
+        clear_provider_configs()
+        self.config_id = ensure_provider_config(
+            "oidc", display_name="Company SSO", oidc_issuer=self.ISSUER,
+            oidc_client_id=self.CLIENT_ID, oidc_client_auth_method="none")
+        main.JWKS_CACHE.clear()
+        main.OIDC_METADATA_CACHE.clear()
+        main.OIDC_METADATA_CACHE[self.ISSUER] = {
+            "metadata": {"issuer": self.ISSUER,
+                         "authorization_endpoint": f"{self.ISSUER}/authorize",
+                         "token_endpoint": f"{self.ISSUER}/token",
+                         "jwks_uri": f"{self.ISSUER}/jwks"},
+            "fetched_at": time.time()}
+        jwk = json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(self.key.public_key()))
+        jwk.update({"kid": "k1", "use": "sig", "alg": "RS256"})
+        main.JWKS_CACHE[f"{self.ISSUER}/jwks"] = {
+            "jwks": {"keys": [jwk]}, "fetched_at": time.time()}
+
+    def token(self, **overrides):
+        now = int(time.time())
+        claims = {"iss": self.ISSUER, "aud": self.CLIENT_ID, "exp": now + 600,
+                  "iat": now, "sub": "utilisateur-1", "email": "personne@example.com",
+                  "nonce": "nonce-oidc-0123456789"}
+        claims.update(overrides)
+        return jwt.encode(claims, self.key, algorithm="RS256", headers={"kid": "k1"})
+
+    def start(self, port=53500):
+        return self.client.post(
+            "/api/auth/sso/oidc/start",
+            json={"code_challenge": "o" * 43, "nonce": "nonce-oidc-0123456789",
+                  "redirect_uri": f"http://127.0.0.1:{port}/callback",
+                  "machine": "poste"}).json()
+
+    def exchange(self, flow_id, port=53500, token=None):
+        async def fake_redeem(config, body):
+            return {"id_token": token if token is not None else self.token()}
+
+        with patch.object(main, "redeem_authorization_code", fake_redeem):
+            return self.client.post(
+                "/api/auth/sso/oidc/exchange",
+                json={"flow_id": flow_id, "code": "c", "code_verifier": "v" * 64,
+                      "redirect_uri": f"http://127.0.0.1:{port}/callback"})
+
+    def test_a_complete_flow_ends_consumed(self):
+        flow = self.start()
+        self.assertEqual(self.exchange(flow["flow_id"]).status_code, 200)
+        self.assertEqual(read_sso_flow(flow["flow_id"])["status"], "consumed")
+
+    def test_a_replayed_callback_is_refused(self):
+        flow = self.start()
+        self.assertEqual(self.exchange(flow["flow_id"]).status_code, 200)
+        replay = self.exchange(flow["flow_id"])
+        self.assertEqual(replay.status_code, 400)
+        self.assertEqual(replay.json()["detail"], "AUTH_TIMEOUT")
+
+    def test_a_changed_redirect_is_refused(self):
+        flow = self.start()
+        response = self.exchange(flow["flow_id"], port=53599)
+        self.assertEqual(response.json()["detail"], "REDIRECT_URI_INVALID")
+
+    def test_the_nonce_comes_from_the_flow_not_the_request(self):
+        """Le poste ne « rappelle » pas son nonce à l'échange : le serveur
+        utilise celui qu'il a retenu."""
+        flow = self.start()
+        response = self.exchange(
+            flow["flow_id"], token=self.token(nonce="un-autre-nonce"))
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.json()["detail"], "ID_TOKEN_INVALID")
+
+    def test_a_provider_disabled_mid_flow_stops_the_exchange(self):
+        """Une désactivation administrative ne se contourne pas avec une
+        tentative déjà ouverte."""
+        flow = self.start()
+        with main.db() as conn:
+            conn.execute("UPDATE organization_provider_configs SET enabled=0")
+        response = self.exchange(flow["flow_id"])
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["detail"], "PROVIDER_NOT_CONFIGURED")
+
+    def test_an_account_disabled_mid_flow_gets_no_session(self):
+        # Première connexion pour créer le compte.
+        first = self.start()
+        self.assertEqual(self.exchange(first["flow_id"]).status_code, 200)
+        with main.db() as conn:
+            conn.execute("UPDATE users SET disabled=1")
+
+        second = self.start(port=53501)
+        response = self.exchange(second["flow_id"], port=53501)
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["detail"], "ACCOUNT_DISABLED")
+
+    def test_the_flow_carries_its_config_and_organization(self):
+        flow = self.start()
+        row = read_sso_flow(flow["flow_id"])
+        self.assertEqual(row["provider_config_id"], self.config_id)
+        self.assertEqual(row["organization_id"], main.nova_organization_id())
+        self.assertEqual(row["provider_type"], "oidc")
+
+    def test_a_flow_started_on_one_worker_completes_on_another(self):
+        """La propriété qui débloque le déploiement horizontal, vue depuis
+        l'API : rien en mémoire n'est nécessaire entre les deux appels."""
+        flow = self.start()
+        # On simule un autre worker : aucun état local, seulement la base.
+        main.SSO_FLOW_STORE.cleanup()
+        response = self.exchange(flow["flow_id"])
+        self.assertEqual(response.status_code, 200, response.text)
 
 
 if __name__ == "__main__":

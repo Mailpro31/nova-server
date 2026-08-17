@@ -235,6 +235,26 @@ def init_db():
             oidc_issuer TEXT,
             created_at REAL
         );
+        -- Tentatives de connexion SSO. En base plutôt qu'en mémoire de
+        -- processus : `start` et `exchange` sont deux appels séparés par un
+        -- aller-retour dans le navigateur, et rien ne garantit qu'ils
+        -- atterrissent sur le même worker.
+        CREATE TABLE IF NOT EXISTS sso_flows(
+            flow_id_hash TEXT PRIMARY KEY,     -- empreinte, jamais l'identifiant
+            provider_type TEXT NOT NULL,
+            provider_config_id TEXT NOT NULL,
+            organization_id TEXT NOT NULL,
+            nonce_hash TEXT NOT NULL,          -- empreinte : jamais relu en clair
+            redirect_uri TEXT NOT NULL,
+            machine TEXT,
+            status TEXT NOT NULL DEFAULT 'pending',
+            created_at REAL NOT NULL,
+            expires_at REAL NOT NULL,
+            exchanging_at REAL,
+            consumed_at REAL
+        );
+        CREATE INDEX IF NOT EXISTS idx_sso_flows_expiry ON sso_flows(expires_at);
+
         -- Configurations de fournisseur, rattachées à une organisation. Ce qui
         -- était global à l'instance devient une ligne par organisation, avec
         -- son propre identifiant immuable — condition pour que plusieurs IdP
@@ -390,6 +410,15 @@ def migrate_schema(conn):
     conn.execute("UPDATE users SET status='disabled' WHERE disabled=1 AND status='active'")
 
     bootstrap_provider_configs(conn, organization_id)
+
+    # Tentatives d'authentification périmées, laissées par une exécution
+    # précédente : elles n'ont plus aucune utilité et ne doivent pas
+    # s'accumuler. Un simple ménage au démarrage suffit ; le reste se fait à la
+    # création de chaque nouvelle tentative.
+    conn.execute(
+        "DELETE FROM sso_flows WHERE expires_at < ?",
+        (time.time() - SSO_FLOW_RETENTION_SECONDS,),
+    )
 
 
 ORGANIZATION_ID_STATE_KEY = "organization_id"
@@ -801,6 +830,173 @@ def public_provider_view(config: dict) -> dict:
         "display_name": config_display_name(config),
     }
 
+
+
+# ------------------------------------------------ État des tentatives SSO
+#
+# ## Pourquoi la mémoire du processus ne suffisait pas
+#
+# Une connexion SSO se déroule en deux appels séparés par un aller-retour dans
+# le navigateur : `start` puis `exchange`. Tant que l'état vivait dans un
+# dictionnaire du processus, ces deux appels devaient atterrir sur **le même**
+# worker. Un répartiteur de charge, un redémarrage, un simple `--workers 2`
+# suffisaient à casser une connexion en cours — avec un message d'expiration
+# incompréhensible pour l'utilisateur, qui venait pourtant de s'authentifier.
+#
+# L'état vit donc en base. Le moteur d'authentification ne dépend plus du
+# processus qui l'exécute.
+#
+# ## Ce qui est stocké, et ce qui ne l'est jamais
+#
+# Le `flow_id` est un secret porteur : le présenter suffit à réclamer une
+# tentative. Il est donc traité comme un jeton de session — seule son empreinte
+# est écrite. Même raisonnement pour le `nonce`, qui n'a jamais besoin d'être
+# relu en clair : il suffit de comparer l'empreinte de celui que porte le jeton
+# d'identité à celle que l'on attendait.
+#
+# Ne sont **jamais** persistés : code d'autorisation, `code_verifier` (il ne
+# quitte pas le poste), jetons du fournisseur, jeton Nova, secret client.
+#
+# ## Machine à états
+#
+#     pending ──begin_exchange──▶ exchanging ──mark_consumed──▶ consumed
+#        │                            │
+#        └────────── expiration ──────┘
+#
+# `begin_exchange` est **atomique** : deux workers qui présentent le même
+# `flow_id` au même instant ne peuvent pas passer tous les deux. Un seul obtient
+# la tentative, l'autre reçoit un refus.
+
+SSO_FLOW_STATUS_PENDING = "pending"
+SSO_FLOW_STATUS_EXCHANGING = "exchanging"
+SSO_FLOW_STATUS_CONSUMED = "consumed"
+
+# Au-delà, la tentative est perdue. Assez large pour une authentification
+# multifacteur, assez court pour qu'un état oublié ne traîne pas.
+SSO_FLOW_TTL_SECONDS = 600
+# Les tentatives terminées ou expirées sont effacées après ce délai : la table
+# ne doit pas grossir indéfiniment, et ces lignes n'ont plus aucune utilité.
+SSO_FLOW_RETENTION_SECONDS = 3600
+
+
+class SsoFlowStore:
+    """Contrat du stockage des tentatives.
+
+    Une seule implémentation existe — la base du serveur — mais l'interface est
+    explicite parce que le stockage changera : un Control Plane réparti
+    voudra Postgres ou Redis, et le moteur d'authentification ne doit pas s'en
+    apercevoir.
+    """
+
+    def create(self, **fields) -> str:  # pragma: no cover - contrat
+        raise NotImplementedError
+
+    def begin_exchange(self, flow_id: str) -> dict | None:  # pragma: no cover
+        raise NotImplementedError
+
+    def mark_consumed(self, flow_id: str) -> None:  # pragma: no cover
+        raise NotImplementedError
+
+    def cleanup(self) -> int:  # pragma: no cover
+        raise NotImplementedError
+
+
+class DatabaseSsoFlowStore(SsoFlowStore):
+    """Tentatives stockées dans la base du serveur.
+
+    SQLite suffit à l'échelle d'une instance dédiée : les écritures sont rares
+    (une par connexion), courtes, et la transaction implicite d'un `UPDATE`
+    conditionnel donne l'atomicité recherchée. Ce ne sera pas le stockage d'un
+    Control Plane réparti — voir `docs/architecture/shared-sso-flow-state.md`.
+    """
+
+    def create(
+        self,
+        provider_type: str,
+        provider_config_id: str,
+        organization_id: str,
+        nonce: str,
+        redirect_uri: str,
+        machine: str,
+        ttl_seconds: int = SSO_FLOW_TTL_SECONDS,
+    ) -> str:
+        """Ouvre une tentative et renvoie son identifiant **en clair**.
+
+        Cet identifiant ne repassera jamais par la base : seule son empreinte y
+        est écrite, exactement comme pour un jeton de session.
+        """
+        flow_id = secrets.token_urlsafe(24)
+        now = time.time()
+        # Ménage opportuniste : pas de tâche de fond, pas de minuterie — le
+        # nettoyage se fait au moment où l'on écrit de toute façon.
+        self.cleanup()
+        with db() as conn:
+            conn.execute(
+                "INSERT INTO sso_flows(flow_id_hash, provider_type, provider_config_id, "
+                "organization_id, nonce_hash, redirect_uri, machine, status, "
+                "created_at, expires_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (
+                    hash_token(flow_id),
+                    provider_type,
+                    provider_config_id,
+                    organization_id,
+                    hash_token(nonce),
+                    redirect_uri,
+                    machine,
+                    SSO_FLOW_STATUS_PENDING,
+                    now,
+                    now + ttl_seconds,
+                ),
+            )
+        return flow_id
+
+    def begin_exchange(self, flow_id: str) -> dict | None:
+        """Réserve la tentative pour l'échange, **une seule fois**.
+
+        Le passage `pending → exchanging` est fait par un `UPDATE` conditionnel
+        et vérifié par son nombre de lignes touchées. C'est ce qui empêche deux
+        workers de lancer deux échanges avec le même code d'autorisation.
+
+        Renvoie la tentative réservée, ou `None` si elle est inconnue, expirée,
+        déjà en cours d'échange ou déjà consommée.
+        """
+        if not flow_id:
+            return None
+        flow_hash = hash_token(flow_id)
+        now = time.time()
+        with db() as conn:
+            changed = conn.execute(
+                "UPDATE sso_flows SET status=?, exchanging_at=? "
+                "WHERE flow_id_hash=? AND status=? AND expires_at>?",
+                (SSO_FLOW_STATUS_EXCHANGING, now, flow_hash,
+                 SSO_FLOW_STATUS_PENDING, now),
+            ).rowcount
+            if changed != 1:
+                return None
+            row = conn.execute(
+                "SELECT * FROM sso_flows WHERE flow_id_hash=?", (flow_hash,)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def mark_consumed(self, flow_id: str) -> None:
+        with db() as conn:
+            conn.execute(
+                "UPDATE sso_flows SET status=?, consumed_at=? WHERE flow_id_hash=?",
+                (SSO_FLOW_STATUS_CONSUMED, time.time(), hash_token(flow_id)),
+            )
+
+    def cleanup(self) -> int:
+        """Efface les tentatives terminées ou périmées depuis assez longtemps."""
+        cutoff = time.time() - SSO_FLOW_RETENTION_SECONDS
+        with db() as conn:
+            return conn.execute(
+                "DELETE FROM sso_flows WHERE expires_at < ? OR "
+                "(consumed_at IS NOT NULL AND consumed_at < ?)",
+                (cutoff, cutoff),
+            ).rowcount
+
+
+SSO_FLOW_STORE: SsoFlowStore = DatabaseSsoFlowStore()
 
 
 init_db()
@@ -1377,9 +1573,6 @@ async def entra_poll(body: EntraPollRequest):
 # le jeton d'identité et décide de l'organisation. Il n'accepte jamais
 # « fais-moi confiance, je suis X dans l'organisation Y ».
 
-# Flux en attente, tous fournisseurs confondus. La clé du flux porte son
-# fournisseur : un retour Google ne peut pas satisfaire une tentative Microsoft.
-SSO_FLOWS: dict[str, dict] = {}
 
 # Cache JWKS, indexé par URL de clés. La rotation est permanente chez les deux
 # fournisseurs : on recharge à la demande lorsqu'un `kid` inconnu apparaît, sans
@@ -1387,7 +1580,6 @@ SSO_FLOWS: dict[str, dict] = {}
 JWKS_CACHE: dict[str, dict] = {}
 JWKS_CACHE_TTL_SECONDS = 3600
 
-SSO_FLOW_TTL_SECONDS = 600
 # Tolérance d'horloge pour `exp` / `nbf`, en secondes.
 SSO_CLOCK_SKEW_SECONDS = 120
 
@@ -1851,7 +2043,9 @@ def signing_key_from_jwks(jwks: dict, kid: str):
     return None
 
 
-async def validate_id_token(config: dict, id_token: str, expected_nonce: str) -> dict:
+async def validate_id_token(
+    config: dict, id_token: str, expected_nonce_hash: str
+) -> dict:
     """Valide complètement un jeton d'identité, quel que soit le fournisseur.
 
     Rien n'est cru avant cette fonction, et tout est vérifié : signature contre
@@ -1921,7 +2115,13 @@ async def validate_id_token(config: dict, id_token: str, expected_nonce: str) ->
 
     # Le `nonce` lie ce jeton à **cette** tentative de connexion. Sans lui, un
     # jeton valide capté ailleurs pourrait être rejoué ici.
-    if not expected_nonce or claims.get("nonce") != expected_nonce:
+    #
+    # La comparaison porte sur les empreintes : le `nonce` n'a jamais besoin
+    # d'être relu en clair, donc il n'a jamais besoin d'être stocké en clair.
+    received = claims.get("nonce")
+    if not expected_nonce_hash or not received:
+        raise auth_error(401, "ID_TOKEN_INVALID")
+    if not secrets.compare_digest(hash_token(str(received)), expected_nonce_hash):
         raise auth_error(401, "ID_TOKEN_INVALID")
 
     # Sujet immuable : `oid` chez Microsoft, `sub` chez Google.
@@ -1937,7 +2137,7 @@ async def validate_entra_id_token(id_token: str, expected_nonce: str) -> dict:
         "provider_type": "microsoft_entra",
         "entra_tenant_id": ENTRA_ALLOWED_TENANT_ID,
     }
-    return await validate_id_token(config, id_token, expected_nonce)
+    return await validate_id_token(config, id_token, hash_token(expected_nonce))
 
 
 def organization_for_tenant_legacy(provider: str, tenant_value: str) -> sqlite3.Row | None:
@@ -2108,25 +2308,19 @@ async def start_sso_flow(provider: str, body: SsoStartRequest) -> dict:
 
     endpoints = await provider_endpoints(config)
     adapter = ADAPTERS[config["provider_type"]]
-    flow_id = secrets.token_urlsafe(24)
-    now = time.time()
-    # Ménage des tentatives expirées : pas de flux zombie qui s'accumule.
-    for stale, flow in list(SSO_FLOWS.items()):
-        if flow["expires_at"] < now:
-            SSO_FLOWS.pop(stale, None)
 
-    # Le flux retient sa configuration, son type et son organisation : un
+    # La tentative retient sa configuration, son type et son organisation : un
     # retour ne peut compléter ni un autre fournisseur, ni une autre
-    # configuration du même fournisseur.
-    SSO_FLOWS[flow_id] = {
-        "provider": config["provider_type"],
-        "provider_config_id": config["id"],
-        "organization_id": organization_id,
-        "nonce": body.nonce,
-        "redirect_uri": body.redirect_uri,
-        "machine": body.machine,
-        "expires_at": now + SSO_FLOW_TTL_SECONDS,
-    }
+    # configuration du même fournisseur. Elle vit en base, donc l'échange peut
+    # arriver sur un autre worker.
+    flow_id = SSO_FLOW_STORE.create(
+        provider_type=config["provider_type"],
+        provider_config_id=config["id"],
+        organization_id=organization_id,
+        nonce=body.nonce,
+        redirect_uri=body.redirect_uri,
+        machine=body.machine,
+    )
 
     parameters = {
         "client_id": config_client_id(config),
@@ -2198,13 +2392,18 @@ async def exchange_sso_code(provider: str, body: SsoExchangeRequest) -> dict:
     rafraîchissement externe n'est conservé — le fournisseur a prouvé
     l'identité, son rôle s'arrête là.
     """
-    flow = SSO_FLOWS.pop(body.flow_id, None)  # usage unique
-    if not flow or flow["expires_at"] < time.time():
+    # Réservation **atomique** : deux workers présentant le même identifiant au
+    # même instant, un seul passe. C'est ce qui empêche deux échanges avec le
+    # même code d'autorisation.
+    flow = SSO_FLOW_STORE.begin_exchange(body.flow_id)
+    if flow is None:
+        # Inconnue, expirée, déjà en cours d'échange ou déjà consommée : du
+        # point de vue de l'appelant, la tentative n'est plus disponible.
         raise auth_error(400, "AUTH_TIMEOUT")
-    # Un flux appartient à son fournisseur **et** à sa configuration : ni un
-    # retour Google ne satisfait une tentative Microsoft, ni un retour d'un IdP
-    # OIDC n'en satisfait un autre.
-    if provider and flow["provider"] != provider:
+    # Une tentative appartient à son fournisseur **et** à sa configuration : ni
+    # un retour Google ne satisfait une tentative Microsoft, ni un retour d'un
+    # IdP OIDC n'en satisfait un autre.
+    if provider and flow["provider_type"] != provider:
         raise auth_error(400, "STATE_MISMATCH")
     if flow["organization_id"] != nova_organization_id():
         raise auth_error(400, "STATE_MISMATCH")
@@ -2221,7 +2420,7 @@ async def exchange_sso_code(provider: str, body: SsoExchangeRequest) -> dict:
     if not id_token:
         raise auth_error(401, "ID_TOKEN_INVALID")
 
-    claims = await validate_id_token(config, id_token, flow["nonce"])
+    claims = await validate_id_token(config, id_token, flow["nonce_hash"])
     external_subject = claims[adapter["subject_claim"]]
 
     if config["provider_type"] == "oidc":
@@ -2272,7 +2471,11 @@ async def exchange_sso_code(provider: str, body: SsoExchangeRequest) -> dict:
     if account and (account["disabled"] or (account["status"] or "active") != "active"):
         raise auth_error(403, "ACCOUNT_DISABLED")
 
-    session = issue_token(resolved_email, flow["machine"])
+    session = issue_token(resolved_email, flow["machine"] or "poste inconnu")
+    # La tentative n'est marquée consommée qu'une fois la session émise : avant
+    # cela, elle est « en cours d'échange », donc déjà inutilisable par un autre
+    # worker, mais l'état dit ce qui s'est réellement passé.
+    SSO_FLOW_STORE.mark_consumed(body.flow_id)
     # Identité désormais **vérifiée** : signature, émetteur, audience,
     # expiration, nonce et rattachement l'ont été. C'est ce qui la distingue du
     # Device Code hérité, qui reste `transport_only`.
@@ -2286,7 +2489,7 @@ async def exchange_sso_code(provider: str, body: SsoExchangeRequest) -> dict:
     )
     print(
         f"[auth] provider={config['provider_type']} config={config['id'][:8]} "
-        f"organization={organization['id']} result=success flow={body.flow_id[:8]}"
+        f"organization={organization['id'][:8]} result=success"
     )
     return {"status": "complete", "email": resolved_email, **session}
 
