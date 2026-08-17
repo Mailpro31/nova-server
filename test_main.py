@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import contextlib
 import hashlib
 import hmac
 import json
@@ -1625,9 +1626,10 @@ class EntraPkceTests(unittest.TestCase):
             async def __aexit__(self, *args):
                 return False
 
-            async def post(self, url, data=None):
+            async def post(self, url, data=None, auth=None):
                 captured["url"] = url
                 captured["data"] = data
+                captured["auth"] = auth
                 return FakeResponse()
 
         body = main.EntraPkceExchangeRequest(
@@ -1957,9 +1959,10 @@ class GoogleWorkspaceTests(unittest.TestCase):
             async def __aexit__(self, *a):
                 return False
 
-            async def post(self, url, data=None):
+            async def post(self, url, data=None, auth=None):
                 captured["url"] = url
                 captured["data"] = data
+                captured["auth"] = auth
                 return FakeResponse()
 
         body = main.SsoExchangeRequest(
@@ -1989,7 +1992,7 @@ class GoogleWorkspaceTests(unittest.TestCase):
             async def __aexit__(self, *a):
                 return False
 
-            async def post(self, url, data=None):
+            async def post(self, url, data=None, auth=None):
                 captured["data"] = data
                 return FakeResponse()
 
@@ -2179,6 +2182,607 @@ class MultiProviderTests(unittest.TestCase):
             "/api/me",
             headers={"Authorization": f"Bearer {response.json()['token']}"}).json()
         self.assertEqual(me["identity"]["provider"], "legacy_email_code")
+
+
+class OidcIssuerPolicyTests(unittest.TestCase):
+    """Politique d'URL d'émetteur : la vraie nouveauté de l'adaptateur OIDC.
+
+    Un émetteur configurable transforme le serveur en client HTTP dirigé par la
+    configuration. Ces tests décrivent ce qu'il refuse de contacter.
+    """
+
+    def allowed(self, issuer, allow_private=False):
+        return main.issuer_url_is_allowed(issuer, allow_private)
+
+    def test_a_public_https_issuer_is_accepted(self):
+        ok, reason = self.allowed("https://accounts.google.com")
+        self.assertTrue(ok, reason)
+
+    def test_plain_http_is_refused(self):
+        ok, reason = self.allowed("http://idp.example.com")
+        self.assertFalse(ok)
+        self.assertEqual(reason, "scheme_not_https")
+
+    def test_exotic_schemes_are_refused(self):
+        for issuer in ("file:///etc/passwd", "ftp://idp.example.com",
+                       "gopher://idp.example.com"):
+            ok, _ = self.allowed(issuer)
+            self.assertFalse(ok, issuer)
+
+    def test_credentials_in_the_url_are_refused(self):
+        ok, reason = self.allowed("https://user:pass@idp.example.com")
+        self.assertFalse(ok)
+        self.assertEqual(reason, "credentials_in_url")
+
+    def test_a_query_or_fragment_is_refused(self):
+        # Un émetteur OIDC est une base, pas une requête.
+        for issuer in ("https://idp.example.com?a=b", "https://idp.example.com#x"):
+            ok, reason = self.allowed(issuer)
+            self.assertFalse(ok, issuer)
+            self.assertEqual(reason, "not_a_base_url")
+
+    def test_loopback_is_refused_in_public_mode(self):
+        for issuer in ("https://127.0.0.1", "https://127.0.0.1:8443",
+                       "https://[::1]"):
+            ok, reason = self.allowed(issuer)
+            self.assertFalse(ok, issuer)
+            self.assertEqual(reason, "internal_address")
+
+    def test_the_cloud_metadata_service_is_refused(self):
+        # 169.254.169.254 : la cible SSRF classique dans un cloud.
+        ok, reason = self.allowed("https://169.254.169.254")
+        self.assertFalse(ok)
+        self.assertEqual(reason, "internal_address")
+
+    def test_private_networks_are_refused_by_default(self):
+        for issuer in ("https://10.0.0.5", "https://192.168.1.20",
+                       "https://172.16.4.4"):
+            ok, reason = self.allowed(issuer)
+            self.assertFalse(ok, issuer)
+            self.assertEqual(reason, "internal_address")
+
+    def test_a_private_issuer_is_allowed_only_when_opted_in(self):
+        """Un Keycloak auto-hébergé reste possible — mais c'est une décision
+        d'exploitation, prise côté serveur."""
+        self.assertFalse(self.allowed("https://10.0.0.5")[0])
+        self.assertTrue(self.allowed("https://10.0.0.5", allow_private=True)[0])
+
+    def test_the_desktop_cannot_switch_the_private_mode(self):
+        # La politique n'est lisible que côté serveur : rien dans l'API ne
+        # l'expose, donc rien ne permet de la basculer à distance.
+        client = TestClient(main.app)
+        for path in ("/api/config", "/api/health", "/api/auth/providers"):
+            body = client.get(path).text
+            self.assertNotIn("ALLOW_PRIVATE", body)
+            self.assertNotIn("allow_private", body)
+
+    def test_an_unresolvable_host_is_refused(self):
+        ok, reason = self.allowed("https://hote-qui-n-existe-pas.invalid")
+        self.assertFalse(ok)
+        self.assertEqual(reason, "unresolvable_host")
+
+
+class OidcDiscoveryTests(unittest.TestCase):
+    """Découverte `.well-known/openid-configuration`, sans réseau."""
+
+    ISSUER = "https://idp.example.com"
+
+    def setUp(self):
+        main.OIDC_METADATA_CACHE.clear()
+
+    def metadata(self, **overrides):
+        document = {
+            "issuer": self.ISSUER,
+            "authorization_endpoint": f"{self.ISSUER}/authorize",
+            "token_endpoint": f"{self.ISSUER}/token",
+            "jwks_uri": f"{self.ISSUER}/jwks",
+        }
+        document.update(overrides)
+        return {k: v for k, v in document.items() if v is not None}
+
+    def fetch(self, document, status=200, issuer=None, allow_private=True):
+        class FakeResponse:
+            status_code = status
+
+            def json(self):
+                if document is None:
+                    raise ValueError("malformed")
+                return document
+
+        class FakeClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def get(self, url):
+                return FakeResponse()
+
+        # La politique d'URL a sa propre classe de tests : ici on vérifie le
+        # document, pas la destination. L'hôte d'exemple ne résout pas.
+        with patch.object(
+            main, "issuer_url_is_allowed", lambda *a, **k: (True, "ok")
+        ), patch.object(main, "OIDC_ALLOW_PRIVATE_ISSUER", allow_private), patch.object(
+            main.httpx, "AsyncClient", lambda **k: FakeClient()
+        ):
+            return asyncio.run(main.fetch_oidc_metadata(issuer or self.ISSUER))
+
+    def test_a_valid_document_is_accepted(self):
+        metadata = self.fetch(self.metadata())
+        self.assertEqual(metadata["issuer"], self.ISSUER)
+        self.assertTrue(metadata["jwks_uri"].startswith("https://"))
+
+    def test_an_issuer_mismatch_is_refused(self):
+        with self.assertRaises(HTTPException) as raised:
+            self.fetch(self.metadata(issuer="https://autre-idp.example.com"))
+        self.assertEqual(raised.exception.detail, "OIDC_ISSUER_MISMATCH")
+
+    def test_a_prefix_match_is_not_enough(self):
+        # Comparaison exacte : un émetteur voisin ne passe pas.
+        with self.assertRaises(HTTPException):
+            self.fetch(self.metadata(issuer=self.ISSUER + ".evil.test"))
+
+    def test_missing_endpoints_are_refused(self):
+        for field in ("authorization_endpoint", "token_endpoint", "jwks_uri"):
+            with self.assertRaises(HTTPException) as raised:
+                self.fetch(self.metadata(**{field: None}))
+            self.assertEqual(raised.exception.detail, "OIDC_DISCOVERY_FAILED", field)
+
+    def test_non_https_endpoints_are_refused(self):
+        with self.assertRaises(HTTPException):
+            self.fetch(self.metadata(token_endpoint="http://idp.example.com/token"))
+
+    def test_a_malformed_document_is_refused(self):
+        with self.assertRaises(HTTPException) as raised:
+            self.fetch(None)
+        self.assertEqual(raised.exception.detail, "OIDC_DISCOVERY_FAILED")
+
+    def test_a_failing_discovery_is_reported(self):
+        with self.assertRaises(HTTPException) as raised:
+            self.fetch(self.metadata(), status=404)
+        self.assertEqual(raised.exception.detail, "OIDC_DISCOVERY_FAILED")
+
+    def test_a_rejected_issuer_never_reaches_the_network(self):
+        called = []
+
+        class FakeClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def get(self, url):
+                called.append(url)
+                raise AssertionError("le réseau ne doit pas être contacté")
+
+        with patch.object(main, "OIDC_ALLOW_PRIVATE_ISSUER", False), patch.object(
+            main.httpx, "AsyncClient", lambda **k: FakeClient()
+        ):
+            with self.assertRaises(HTTPException) as raised:
+                asyncio.run(main.fetch_oidc_metadata("https://169.254.169.254"))
+        self.assertEqual(raised.exception.detail, "PROVIDER_CONFIG_INVALID")
+        self.assertEqual(called, [])
+
+    def test_the_document_is_cached(self):
+        calls = []
+
+        async def fake_fetch(issuer):
+            calls.append(issuer)
+            return self.metadata()
+
+        with patch.object(main, "fetch_oidc_metadata", fake_fetch):
+            asyncio.run(main.oidc_metadata(self.ISSUER))
+            asyncio.run(main.oidc_metadata(self.ISSUER))
+        self.assertEqual(len(calls), 1)
+
+
+class OidcSignInTests(unittest.TestCase):
+    """Connexion OIDC de bout en bout, sur le moteur partagé."""
+
+    ISSUER = "https://idp.example.com"
+    OTHER_ISSUER = "https://autre-idp.example.com"
+    CLIENT_ID = "nova-organization"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.client = TestClient(main.app)
+        cls.key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        cls.other_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+
+    def setUp(self):
+        with main.db() as conn:
+            for table in ("auth_codes", "tokens", "users", "federated_identities"):
+                conn.execute(f"DELETE FROM {table}")
+            conn.execute(
+                "UPDATE organizations SET oidc_issuer=? WHERE id=?",
+                (self.ISSUER, main.nova_organization_id()),
+            )
+        main.SSO_FLOWS.clear()
+        main.JWKS_CACHE.clear()
+        main.OIDC_METADATA_CACHE.clear()
+        self.seed_metadata(self.ISSUER)
+        self.seed_jwks(self.ISSUER)
+
+    def seed_metadata(self, issuer):
+        main.OIDC_METADATA_CACHE[issuer] = {
+            "metadata": {
+                "issuer": issuer,
+                "authorization_endpoint": f"{issuer}/authorize",
+                "token_endpoint": f"{issuer}/token",
+                "jwks_uri": f"{issuer}/jwks",
+            },
+            "fetched_at": time.time(),
+        }
+
+    def seed_jwks(self, issuer, kid="oidc-key-1", key=None):
+        jwk = json.loads(
+            jwt.algorithms.RSAAlgorithm.to_jwk((key or self.key).public_key()))
+        jwk.update({"kid": kid, "use": "sig", "alg": "RS256"})
+        main.JWKS_CACHE[f"{issuer}/jwks"] = {
+            "jwks": {"keys": [jwk]}, "fetched_at": time.time()}
+
+    def id_token(self, issuer=None, key=None, kid="oidc-key-1", **overrides):
+        issuer = issuer or self.ISSUER
+        now = int(time.time())
+        claims = {
+            "iss": issuer,
+            "aud": self.CLIENT_ID,
+            "exp": now + 600,
+            "iat": now,
+            "sub": "utilisateur-42",
+            "email": "personne@example.com",
+            "nonce": "nonce-oidc-0123456789",
+        }
+        claims.update(overrides)
+        for empty in [k for k, v in claims.items() if v is None]:
+            claims.pop(empty)
+        return jwt.encode(claims, key or self.key, algorithm="RS256",
+                          headers={"kid": kid})
+
+    def oidc_config(self, issuer=None, **extra):
+        patches = [
+            patch.object(main, "OIDC_ISSUER", issuer or self.ISSUER),
+            patch.object(main, "OIDC_CLIENT_ID", self.CLIENT_ID),
+        ]
+        for key, value in extra.items():
+            patches.append(patch.object(main, key, value))
+        return patches
+
+    def start_flow(self, issuer=None, port=54000, **extra):
+        patches = self.oidc_config(issuer, **extra)
+        with contextlib.ExitStack() as stack:
+            for item in patches:
+                stack.enter_context(item)
+            return self.client.post(
+                "/api/auth/sso/oidc/start",
+                json={"code_challenge": "o" * 43,
+                      "nonce": "nonce-oidc-0123456789",
+                      "redirect_uri": f"http://127.0.0.1:{port}/callback",
+                      "machine": "poste"})
+
+    def exchange(self, flow_id, token=None, issuer=None, port=54000, **extra):
+        async def fake_redeem(provider, body):
+            return {"id_token": token if token is not None else self.id_token()}
+
+        patches = self.oidc_config(issuer, **extra)
+        with contextlib.ExitStack() as stack:
+            for item in patches:
+                stack.enter_context(item)
+            stack.enter_context(
+                patch.object(main, "redeem_authorization_code", fake_redeem))
+            return self.client.post(
+                "/api/auth/sso/oidc/exchange",
+                json={"flow_id": flow_id, "code": "c", "code_verifier": "v" * 64,
+                      "redirect_uri": f"http://127.0.0.1:{port}/callback"})
+
+    def test_a_complete_oidc_sign_in_issues_a_nova_session(self):
+        flow_id = self.start_flow().json()["flow_id"]
+        response = self.exchange(flow_id)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["email"], "personne@example.com")
+
+    def test_the_authorization_url_comes_from_discovery(self):
+        body = self.start_flow().json()
+        self.assertTrue(body["authorization_url"].startswith(f"{self.ISSUER}/authorize?"))
+        self.assertIn("code_challenge_method=S256", body["authorization_url"])
+        self.assertNotIn("client_secret", body["authorization_url"])
+
+    def test_the_identity_records_its_issuer(self):
+        flow_id = self.start_flow().json()["flow_id"]
+        self.exchange(flow_id)
+        with main.db() as conn:
+            row = conn.execute(
+                "SELECT * FROM federated_identities WHERE provider='oidc'").fetchone()
+        self.assertEqual(row["external_issuer"], self.ISSUER)
+        self.assertEqual(row["external_subject"], "utilisateur-42")
+        self.assertEqual(row["verification"], "verified")
+
+    def test_two_issuers_with_the_same_subject_are_two_identities(self):
+        """Le point le plus important de l'adaptateur : un `sub` n'est unique
+        que dans le périmètre de son émetteur."""
+        flow_id = self.start_flow().json()["flow_id"]
+        self.assertEqual(self.exchange(flow_id).status_code, 200)
+
+        # Seconde organisation OIDC : autre émetteur, même sujet.
+        self.seed_metadata(self.OTHER_ISSUER)
+        self.seed_jwks(self.OTHER_ISSUER)
+        with main.db() as conn:
+            conn.execute("UPDATE organizations SET oidc_issuer=? WHERE id=?",
+                         (self.OTHER_ISSUER, main.nova_organization_id()))
+        second = self.start_flow(issuer=self.OTHER_ISSUER, port=54001).json()["flow_id"]
+        response = self.exchange(
+            second, token=self.id_token(issuer=self.OTHER_ISSUER),
+            issuer=self.OTHER_ISSUER, port=54001)
+        self.assertEqual(response.status_code, 200, response.text)
+
+        with main.db() as conn:
+            rows = conn.execute(
+                "SELECT external_issuer FROM federated_identities "
+                "WHERE provider='oidc' AND external_subject='utilisateur-42'").fetchall()
+        self.assertEqual(len(rows), 2)
+        self.assertEqual({r["external_issuer"] for r in rows},
+                         {self.ISSUER, self.OTHER_ISSUER})
+
+    def test_an_unconfigured_issuer_is_refused(self):
+        flow_id = self.start_flow().json()["flow_id"]
+        # Jeton signé pour un autre émetteur : la validation le refuse.
+        self.seed_metadata(self.OTHER_ISSUER)
+        self.seed_jwks(self.OTHER_ISSUER)
+        response = self.exchange(flow_id, token=self.id_token(issuer=self.OTHER_ISSUER))
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.json()["detail"], "ID_TOKEN_INVALID")
+
+    def test_a_wrong_signature_is_refused(self):
+        flow_id = self.start_flow().json()["flow_id"]
+        response = self.exchange(flow_id, token=self.id_token(key=self.other_key))
+        self.assertEqual(response.json()["detail"], "ID_TOKEN_INVALID")
+
+    def test_a_wrong_audience_or_expiry_or_nonce_is_refused(self):
+        past = int(time.time()) - 10000
+        for override in ({"aud": "autre-application"},
+                         {"exp": past, "iat": past - 100},
+                         {"nonce": "mauvais-nonce"},
+                         {"nonce": None},
+                         {"sub": None}):
+            flow_id = self.start_flow().json()["flow_id"]
+            response = self.exchange(flow_id, token=self.id_token(**override))
+            self.assertEqual(response.status_code, 401, override)
+
+    def test_an_unsigned_or_symmetric_token_is_refused(self):
+        now = int(time.time())
+        unsigned = jwt.encode({"iss": self.ISSUER, "aud": self.CLIENT_ID,
+                               "exp": now + 600, "sub": "s"},
+                              key="", algorithm="none",
+                              headers={"kid": "oidc-key-1"})
+        flow_id = self.start_flow().json()["flow_id"]
+        self.assertEqual(self.exchange(flow_id, token=unsigned).status_code, 401)
+
+    def test_an_unknown_kid_triggers_one_controlled_refresh(self):
+        calls = []
+        rotated = json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(self.key.public_key()))
+        rotated.update({"kid": "oidc-key-2", "use": "sig", "alg": "RS256"})
+
+        async def fake_fetch(jwks_uri):
+            calls.append(jwks_uri)
+            return {"keys": [rotated]}
+
+        self.seed_jwks(self.ISSUER, kid="oidc-key-ancienne")
+        flow_id = self.start_flow().json()["flow_id"]
+        with patch.object(main, "fetch_jwks", fake_fetch):
+            response = self.exchange(flow_id, token=self.id_token(kid="oidc-key-2"))
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(len(calls), 1)
+
+    def test_admin_claims_never_grant_administration(self):
+        flow_id = self.start_flow().json()["flow_id"]
+        token = self.id_token(role="admin", groups=["admins"], is_superuser=True)
+        response = self.exchange(flow_id, token=token)
+        me = self.client.get(
+            "/api/me",
+            headers={"Authorization": f"Bearer {response.json()['token']}"}).json()
+        self.assertEqual(me["membership"]["security_role"], "member")
+        self.assertEqual(me["identity"]["provider"], "oidc")
+
+    def test_groups_claims_are_not_turned_into_nova_groups(self):
+        flow_id = self.start_flow().json()["flow_id"]
+        response = self.exchange(
+            flow_id, token=self.id_token(groups=["engineering", "admins"]))
+        me = self.client.get(
+            "/api/me",
+            headers={"Authorization": f"Bearer {response.json()['token']}"}).json()
+        self.assertEqual(me["membership"]["groups"], [])
+
+    def test_a_client_supplied_organization_is_ignored(self):
+        flow_id = self.start_flow().json()["flow_id"]
+
+        async def fake_redeem(provider, body):
+            return {"id_token": self.id_token()}
+
+        with contextlib.ExitStack() as stack:
+            for item in self.oidc_config():
+                stack.enter_context(item)
+            stack.enter_context(
+                patch.object(main, "redeem_authorization_code", fake_redeem))
+            response = self.client.post(
+                "/api/auth/sso/oidc/exchange",
+                json={"flow_id": flow_id, "code": "c", "code_verifier": "v" * 64,
+                      "redirect_uri": "http://127.0.0.1:54000/callback",
+                      "organization_id": "organisation-b",
+                      "security_role": "it_admin"})
+        me = self.client.get(
+            "/api/me",
+            headers={"Authorization": f"Bearer {response.json()['token']}"}).json()
+        self.assertEqual(me["organization_id"], main.nova_organization_id())
+        self.assertEqual(me["membership"]["security_role"], "member")
+
+    def test_a_required_claim_is_compared_exactly(self):
+        flow_id = self.start_flow(
+            OIDC_REQUIRED_CLAIM="department",
+            OIDC_REQUIRED_CLAIM_VALUE="Engineering").json()["flow_id"]
+        refused = self.exchange(
+            flow_id, token=self.id_token(department="Sales"),
+            OIDC_REQUIRED_CLAIM="department",
+            OIDC_REQUIRED_CLAIM_VALUE="Engineering")
+        self.assertEqual(refused.status_code, 403)
+        self.assertEqual(refused.json()["detail"], "MEMBERSHIP_NOT_FOUND")
+
+        flow_id = self.start_flow(
+            OIDC_REQUIRED_CLAIM="department",
+            OIDC_REQUIRED_CLAIM_VALUE="Engineering", port=54002).json()["flow_id"]
+        accepted = self.exchange(
+            flow_id, token=self.id_token(department="Engineering"), port=54002,
+            OIDC_REQUIRED_CLAIM="department",
+            OIDC_REQUIRED_CLAIM_VALUE="Engineering")
+        self.assertEqual(accepted.status_code, 200, accepted.text)
+
+    def test_the_client_secret_never_appears_in_public_responses(self):
+        secret = "secret-oidc-de-test"
+        with contextlib.ExitStack() as stack:
+            for item in self.oidc_config():
+                stack.enter_context(item)
+            stack.enter_context(patch.object(main, "OIDC_CLIENT_SECRET", secret))
+            stack.enter_context(
+                patch.object(main, "OIDC_CLIENT_AUTH_METHOD", "client_secret_post"))
+            for path in ("/api/config", "/api/health", "/api/auth/providers",
+                         "/api/auth/entra/pkce/available"):
+                self.assertNotIn(secret, self.client.get(path).text, path)
+            start = self.start_flow(port=54003)
+        self.assertNotIn(secret, start.text)
+
+    def test_the_provider_is_announced_with_its_display_label(self):
+        with contextlib.ExitStack() as stack:
+            for item in self.oidc_config():
+                stack.enter_context(item)
+            stack.enter_context(patch.object(main, "OIDC_DISPLAY_NAME", "IPSA SSO"))
+            body = self.client.get("/api/auth/providers").json()
+        self.assertIn("oidc", body["providers"])
+        self.assertEqual(body["display_names"]["oidc"], "IPSA SSO")
+
+    def test_no_provider_without_configuration(self):
+        with patch.object(main, "OIDC_CLIENT_ID", ""):
+            providers = self.client.get("/api/auth/providers").json()["providers"]
+        self.assertNotIn("oidc", providers)
+
+    def test_an_invalid_client_auth_method_is_refused(self):
+        response = self.start_flow(
+            OIDC_CLIENT_AUTH_METHOD="private_key_jwt", port=54004)
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(response.json()["detail"], "PROVIDER_CONFIG_INVALID")
+
+
+class CrossProviderIdentityTests(unittest.TestCase):
+    """Trois fournisseurs, trois périmètres d'identité."""
+
+    def setUp(self):
+        with main.db() as conn:
+            for table in ("tokens", "users", "federated_identities"):
+                conn.execute(f"DELETE FROM {table}")
+
+    def record(self, provider, subject, issuer="", email="personne@example.com"):
+        main.record_federated_identity(
+            email, provider, subject, None, verification="verified",
+            external_issuer=issuer)
+
+    def test_the_same_subject_across_three_providers_is_three_identities(self):
+        shared = "identifiant-partage"
+        self.record("microsoft_entra", shared)
+        self.record("google_workspace", shared)
+        self.record("oidc", shared, issuer="https://idp.example.com")
+        with main.db() as conn:
+            rows = conn.execute(
+                "SELECT provider FROM federated_identities WHERE external_subject=?",
+                (shared,)).fetchall()
+        self.assertEqual(len(rows), 3)
+        self.assertEqual({r["provider"] for r in rows},
+                         {"microsoft_entra", "google_workspace", "oidc"})
+
+    def test_the_same_email_across_three_providers_never_merges(self):
+        self.record("microsoft_entra", "oid-ms")
+        self.record("google_workspace", "sub-google")
+        self.record("oidc", "sub-oidc", issuer="https://idp.example.com")
+        with main.db() as conn:
+            identities = conn.execute(
+                "SELECT COUNT(*) c FROM federated_identities").fetchone()["c"]
+            users = conn.execute("SELECT COUNT(*) c FROM users").fetchone()["c"]
+        self.assertEqual(identities, 3)
+        # Une seule personne, trois manières de prouver qui elle est.
+        self.assertLessEqual(users, 1)
+
+    def test_two_oidc_issuers_sharing_a_subject_coexist(self):
+        self.record("oidc", "sujet", issuer="https://idp-a.example.com")
+        self.record("oidc", "sujet", issuer="https://idp-b.example.com")
+        with main.db() as conn:
+            rows = conn.execute(
+                "SELECT external_issuer FROM federated_identities "
+                "WHERE provider='oidc'").fetchall()
+        self.assertEqual(len(rows), 2)
+
+
+class FederatedIdentityMigrationTests(unittest.TestCase):
+    """Migration d'une base antérieure à l'ajout de l'émetteur."""
+
+    def test_existing_identities_survive_the_key_change(self):
+        path = os.path.join(TEST_DIRECTORY.name, f"identities-{uuid.uuid4().hex}.db")
+        conn = sqlite3.connect(path)
+        conn.executescript("""
+            CREATE TABLE users(email TEXT PRIMARY KEY, role TEXT DEFAULT 'student',
+                cohort TEXT DEFAULT '', note TEXT DEFAULT '', disabled INTEGER DEFAULT 0,
+                created_at REAL, last_seen REAL);
+            CREATE TABLE tokens(token TEXT PRIMARY KEY, email TEXT, machine TEXT,
+                active INTEGER DEFAULT 1, created_at REAL);
+            CREATE TABLE auth_codes(email TEXT, code TEXT, expires_at REAL,
+                attempts INTEGER DEFAULT 0);
+            CREATE TABLE usage(email TEXT, day TEXT, transcriptions INTEGER DEFAULT 0,
+                reformulations INTEGER DEFAULT 0, audio_seconds REAL DEFAULT 0,
+                PRIMARY KEY (email, day));
+            CREATE TABLE shared_dictionary(id INTEGER PRIMARY KEY AUTOINCREMENT,
+                term TEXT NOT NULL UNIQUE, replacement TEXT NOT NULL);
+            CREATE TABLE personal_dictionary(id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email TEXT NOT NULL, term TEXT NOT NULL, replacement TEXT NOT NULL,
+                source TEXT NOT NULL DEFAULT 'personal', UNIQUE(email, term));
+            CREATE TABLE snippets(id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL,
+                trigger TEXT NOT NULL, content TEXT NOT NULL, UNIQUE(email, trigger));
+            CREATE TABLE formatting_rules(id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email TEXT, rule TEXT NOT NULL, shared INTEGER NOT NULL DEFAULT 0);
+            CREATE TABLE server_state(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE organizations(id TEXT PRIMARY KEY, slug TEXT,
+                display_name TEXT NOT NULL, org_type TEXT NOT NULL DEFAULT 'education',
+                entra_tenant_id TEXT, google_customer_id TEXT, oidc_issuer TEXT,
+                created_at REAL);
+            CREATE TABLE federated_identities(
+                provider TEXT NOT NULL, external_subject TEXT NOT NULL,
+                external_tenant_id TEXT, organization_id TEXT NOT NULL,
+                email TEXT NOT NULL, verification TEXT NOT NULL DEFAULT 'transport_only',
+                created_at REAL, last_seen REAL,
+                PRIMARY KEY (provider, external_subject));
+            INSERT INTO users(email, created_at) VALUES ('ancien@example.com', 1.0);
+            INSERT INTO federated_identities(provider, external_subject,
+                external_tenant_id, organization_id, email, verification,
+                created_at, last_seen)
+                VALUES ('microsoft_entra', 'oid-existant', 'tenant-1', 'org-1',
+                        'ancien@example.com', 'verified', 1.0, 2.0);
+        """)
+        conn.commit()
+        conn.close()
+
+        with patch.object(main, "DB_PATH", path):
+            main.init_db()
+            main.init_db()  # idempotence
+            with main.db() as conn:
+                rows = conn.execute("SELECT * FROM federated_identities").fetchall()
+                columns = {r["name"] for r in
+                           conn.execute("PRAGMA table_info(federated_identities)")}
+
+        self.assertIn("external_issuer", columns)
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        # Rien n'est perdu, et l'identité Microsoft garde exactement sa clé.
+        self.assertEqual(row["external_subject"], "oid-existant")
+        self.assertEqual(row["external_tenant_id"], "tenant-1")
+        self.assertEqual(row["verification"], "verified")
+        self.assertEqual(row["external_issuer"], "")
 
 
 if __name__ == "__main__":

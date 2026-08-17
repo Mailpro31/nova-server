@@ -11,8 +11,10 @@ import random
 import re
 import base64
 import hashlib
+import ipaddress
 import json
 import secrets
+import socket
 import sqlite3
 import time
 import uuid
@@ -82,6 +84,34 @@ GOOGLE_ALLOWED_HOSTED_DOMAIN = os.getenv("NOVA_GOOGLE_ALLOWED_HOSTED_DOMAIN", ""
 # Identité seule. Ni Admin SDK, ni Directory, ni Gmail, ni Drive, ni Calendar :
 # la synchronisation de groupes viendra plus tard et avec ses propres portées.
 GOOGLE_SCOPES = os.getenv("NOVA_GOOGLE_SCOPES", "openid email profile")
+
+# --- OIDC générique : Okta, Keycloak, Auth0, Ping, Zitadel, authentik… -----
+#
+# Un seul adaptateur configurable, pas une implémentation par marque. Les points
+# de terminaison ne sont pas saisis à la main : ils viennent du document de
+# découverte de l'émetteur. Les seules valeurs demandées à l'exploitant sont
+# celles que la découverte ne peut pas deviner.
+OIDC_ISSUER = os.getenv("NOVA_OIDC_ISSUER", "").strip().rstrip("/")
+OIDC_CLIENT_ID = os.getenv("NOVA_OIDC_CLIENT_ID", "").strip()
+# Présent seulement si l'IdP l'exige. Il ne quitte jamais le serveur : ni vers
+# le poste, ni vers /api/config, ni vers /api/me, ni vers les journaux.
+OIDC_CLIENT_SECRET = os.getenv("NOVA_OIDC_CLIENT_SECRET", "").strip()
+# `none` | `client_secret_post` | `client_secret_basic`. Rien d'exotique.
+OIDC_CLIENT_AUTH_METHOD = os.getenv("NOVA_OIDC_CLIENT_AUTH_METHOD", "none").strip()
+OIDC_SCOPES = os.getenv("NOVA_OIDC_SCOPES", "openid email profile")
+# Libellé du bouton. **Affichage uniquement** : il n'entre dans aucune décision
+# de sécurité. « Continue with OIDC » ne dit rien à un utilisateur.
+OIDC_DISPLAY_NAME = os.getenv("NOVA_OIDC_DISPLAY_NAME", "").strip() or "Company SSO"
+# Un IdP auto-hébergé peut légitimement vivre sur un réseau privé. C'est un
+# choix d'exploitation, jamais une décision du poste : cette variable n'est
+# lisible que par le serveur, et rien dans l'API ne permet de la basculer.
+OIDC_ALLOW_PRIVATE_ISSUER = (
+    os.getenv("NOVA_OIDC_ALLOW_PRIVATE_ISSUER", "false").strip().lower() == "true"
+)
+# Contrainte facultative : une revendication supplémentaire à comparer
+# exactement. Ni moteur de policy, ni expression — une égalité, ou rien.
+OIDC_REQUIRED_CLAIM = os.getenv("NOVA_OIDC_REQUIRED_CLAIM", "").strip()
+OIDC_REQUIRED_CLAIM_VALUE = os.getenv("NOVA_OIDC_REQUIRED_CLAIM_VALUE", "").strip()
 
 # --- SSO Organization moderne : Authorization Code + PKCE ------------------
 #
@@ -219,9 +249,15 @@ def init_db():
             --   verified       : signature, émetteur, audience et expiration
             --                    vérifiés (aucun flux ne produit ce niveau)
             verification TEXT NOT NULL DEFAULT 'transport_only',
+            -- Émetteur, pour l'OIDC générique. Vide chez Microsoft et Google,
+            -- dont le fournisseur suffit à cadrer le sujet.
+            external_issuer TEXT NOT NULL DEFAULT '',
             created_at REAL,
             last_seen REAL,
-            PRIMARY KEY (provider, external_subject)
+            -- L'émetteur fait partie de la clé : deux IdP OIDC distincts
+            -- peuvent parfaitement attribuer le même `sub` à deux personnes
+            -- différentes. Sans lui, la seconde écraserait la première.
+            PRIMARY KEY (provider, external_issuer, external_subject)
         );
         """)
         migrate_schema(conn)
@@ -250,6 +286,39 @@ def migrate_schema(conn):
         conn.execute(
             "ALTER TABLE federated_identities ADD COLUMN verification "
             "TEXT NOT NULL DEFAULT 'transport_only'"
+        )
+
+    if "external_issuer" not in columns("federated_identities"):
+        # SQLite ne sait pas modifier une clé primaire : la table est
+        # reconstruite, puis **toutes** les lignes sont recopiées. Les identités
+        # Microsoft et Google existantes reçoivent un émetteur vide, ce qui
+        # laisse leur clé inchangée en pratique. Idempotent : la condition
+        # ci-dessus ne se vérifie qu'une fois.
+        conn.execute("""
+            CREATE TABLE federated_identities_next(
+                provider TEXT NOT NULL,
+                external_subject TEXT NOT NULL,
+                external_tenant_id TEXT,
+                organization_id TEXT NOT NULL,
+                email TEXT NOT NULL,
+                verification TEXT NOT NULL DEFAULT 'transport_only',
+                external_issuer TEXT NOT NULL DEFAULT '',
+                created_at REAL,
+                last_seen REAL,
+                PRIMARY KEY (provider, external_issuer, external_subject)
+            )
+        """)
+        conn.execute("""
+            INSERT INTO federated_identities_next(
+                provider, external_subject, external_tenant_id, organization_id,
+                email, verification, external_issuer, created_at, last_seen)
+            SELECT provider, external_subject, external_tenant_id, organization_id,
+                   email, verification, '', created_at, last_seen
+            FROM federated_identities
+        """)
+        conn.execute("DROP TABLE federated_identities")
+        conn.execute(
+            "ALTER TABLE federated_identities_next RENAME TO federated_identities"
         )
 
     user_columns = columns("users")
@@ -367,13 +436,14 @@ def bootstrap_organization(conn) -> str:
     # de la ligne, non : la clause `WHERE id=?` ne bouge jamais.
     conn.execute(
         "UPDATE organizations SET slug=?, display_name=?, org_type=?, entra_tenant_id=?, "
-        "google_hosted_domain=? WHERE id=?",
+        "google_hosted_domain=?, oidc_issuer=? WHERE id=?",
         (
             ORGANIZATION_ID,
             ORGANIZATION_NAME,
             ORGANIZATION_TYPE,
             ENTRA_ALLOWED_TENANT_ID or None,
             GOOGLE_ALLOWED_HOSTED_DOMAIN or None,
+            OIDC_ISSUER or None,
             organization_id,
         ),
     )
@@ -511,6 +581,7 @@ def record_federated_identity(
     external_subject: str,
     external_tenant_id: str | None,
     verification: str = "transport_only",
+    external_issuer: str = "",
 ):
     """Associe une identité externe **immuable** à un compte.
 
@@ -534,8 +605,8 @@ def record_federated_identity(
     with db() as conn:
         conn.execute(
             "INSERT OR IGNORE INTO federated_identities(provider, external_subject, "
-            "external_tenant_id, organization_id, email, verification, created_at, last_seen) "
-            "VALUES (?,?,?,?,?,?,?,?)",
+            "external_tenant_id, organization_id, email, verification, external_issuer, "
+            "created_at, last_seen) VALUES (?,?,?,?,?,?,?,?,?)",
             (
                 provider,
                 external_subject,
@@ -543,14 +614,16 @@ def record_federated_identity(
                 organization_id,
                 email,
                 verification,
+                external_issuer,
                 now,
                 now,
             ),
         )
         conn.execute(
             "UPDATE federated_identities SET last_seen=?, email=?, external_tenant_id=?, "
-            "verification=? WHERE provider=? AND external_subject=?",
-            (now, email, external_tenant_id, verification, provider, external_subject),
+            "verification=? WHERE provider=? AND external_issuer=? AND external_subject=?",
+            (now, email, external_tenant_id, verification, provider, external_issuer,
+             external_subject),
         )
         conn.execute(
             "UPDATE users SET identity_provider=?, external_subject=?, external_tenant_id=? "
@@ -1066,6 +1139,21 @@ def google_jwks_uri(_claims: dict) -> str:
     return "https://www.googleapis.com/oauth2/v3/certs"
 
 
+def oidc_issuer_claim(_claims: dict) -> str:
+    """Emetteur attendu : celui configure, exactement."""
+    return OIDC_ISSUER
+
+
+def oidc_jwks_uri(_claims: dict) -> str:
+    """Clés publiques, telles que la découverte les a annoncées.
+
+    Le cache de métadonnées est déjà rempli au moment de la validation : la
+    tentative a commencé par la découverte.
+    """
+    cached = OIDC_METADATA_CACHE.get(OIDC_ISSUER)
+    return cached["metadata"]["jwks_uri"] if cached else ""
+
+
 PROVIDERS: dict[str, dict] = {
     "microsoft_entra": {
         # Autorité `organizations` : comptes professionnels et scolaires
@@ -1110,19 +1198,68 @@ PROVIDERS: dict[str, dict] = {
         "uses_client_secret": True,
         "algorithms": ["RS256"],
     },
+    "oidc": {
+        # Découverts, pas configurés à la main : voir `provider_endpoints`.
+        "authorization_endpoint": "",
+        "token_endpoint": "",
+        "issuer": oidc_issuer_claim,
+        "jwks_uri": oidc_jwks_uri,
+        "subject_claim": "sub",
+        # Aucun rattachement par revendication : la configuration OIDC
+        # **appartient** à une organisation. Voir `organization_for_tenant`.
+        "tenant_claim": None,
+        "organization_column": "oidc_issuer",
+        "extra_authorize_params": {},
+        # Décidé par la méthode d'authentification déclarée, pas en dur.
+        "uses_client_secret": False,
+        # RS256 seulement. Tous les IdP visés le proposent, et élargir
+        # l'allowlist sans tests complets serait un pari, pas une compatibilité.
+        "algorithms": ["RS256"],
+    },
 }
 
 
 def provider_client_id(provider: str) -> str:
-    return ENTRA_CLIENT_ID if provider == "microsoft_entra" else GOOGLE_CLIENT_ID
+    return {
+        "microsoft_entra": ENTRA_CLIENT_ID,
+        "google_workspace": GOOGLE_CLIENT_ID,
+        "oidc": OIDC_CLIENT_ID,
+    }.get(provider, "")
 
 
 def provider_client_secret(provider: str) -> str:
-    return GOOGLE_CLIENT_SECRET if provider == "google_workspace" else ""
+    return {
+        "google_workspace": GOOGLE_CLIENT_SECRET,
+        "oidc": OIDC_CLIENT_SECRET,
+    }.get(provider, "")
 
 
 def provider_scopes(provider: str) -> str:
-    return ENTRA_PKCE_SCOPES if provider == "microsoft_entra" else GOOGLE_SCOPES
+    return {
+        "microsoft_entra": ENTRA_PKCE_SCOPES,
+        "google_workspace": GOOGLE_SCOPES,
+        "oidc": OIDC_SCOPES,
+    }.get(provider, "openid email profile")
+
+
+def provider_requires_secret(provider: str) -> bool:
+    """Le fournisseur exige-t-il un secret à l'échange ?
+
+    Statique pour Microsoft (non) et Google (oui) ; déclaré pour l'OIDC
+    générique, où la méthode dépend de l'IdP.
+    """
+    if provider == "oidc":
+        return OIDC_CLIENT_AUTH_METHOD in {"client_secret_post", "client_secret_basic"}
+    return PROVIDERS[provider]["uses_client_secret"]
+
+
+def provider_display_name(provider: str) -> str:
+    """Libellé du bouton. **Affichage uniquement.**"""
+    return {
+        "microsoft_entra": "Microsoft",
+        "google_workspace": "Google",
+        "oidc": OIDC_DISPLAY_NAME,
+    }.get(provider, provider)
 
 
 def require_provider(provider: str) -> dict:
@@ -1131,8 +1268,17 @@ def require_provider(provider: str) -> dict:
         raise auth_error(404, "PROVIDER_UNKNOWN")
     if not provider_client_id(provider):
         raise auth_error(503, "PROVIDER_NOT_CONFIGURED")
-    if config["uses_client_secret"] and not provider_client_secret(provider):
+    if provider_requires_secret(provider) and not provider_client_secret(provider):
         raise auth_error(503, "PROVIDER_NOT_CONFIGURED")
+    if provider == "oidc":
+        if not OIDC_ISSUER:
+            raise auth_error(503, "PROVIDER_NOT_CONFIGURED")
+        if OIDC_CLIENT_AUTH_METHOD not in {
+            "none",
+            "client_secret_post",
+            "client_secret_basic",
+        }:
+            raise auth_error(500, "PROVIDER_CONFIG_INVALID")
     return config
 
 
@@ -1164,13 +1310,172 @@ def configured_providers() -> list[str]:
         config = PROVIDERS[provider]
         if not provider_client_id(provider):
             continue
-        if config["uses_client_secret"] and not provider_client_secret(provider):
+        if provider_requires_secret(provider) and not provider_client_secret(provider):
+            continue
+        if provider == "oidc" and not OIDC_ISSUER:
             continue
         if organization_for_provider(provider) is None:
             continue
         available.append(provider)
     available.append("legacy_email_code")
     return available
+
+
+# ------------------------------------------------------------ OIDC générique
+#
+# ## Pourquoi cette section existe séparément
+#
+# Microsoft et Google ont des points de terminaison connus d'avance. Un IdP
+# générique, non : c'est l'exploitant qui déclare un **émetteur**, et tout le
+# reste — autorisation, jeton, clés — vient de son document de découverte.
+#
+# Cela introduit un risque que les deux autres fournisseurs n'avaient pas : une
+# URL configurable fait émettre des requêtes au serveur. D'où le garde-fou
+# ci-dessous, qui est la vraie nouveauté de cet adaptateur.
+
+OIDC_METADATA_CACHE: dict[str, dict] = {}
+OIDC_METADATA_TTL_SECONDS = 3600
+
+
+class IssuerRejected(Exception):
+    """Émetteur refusé par la politique d'URL. Porte un motif, jamais l'URL."""
+
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason
+
+
+def issuer_url_is_allowed(issuer: str, allow_private: bool) -> tuple[bool, str]:
+    """L'émetteur est-il une destination que ce serveur accepte de contacter ?
+
+    Un émetteur configurable transforme le serveur en client HTTP dirigé par la
+    configuration. Sans contrôle, cela permettrait d'atteindre le service de
+    métadonnées d'un cloud (`169.254.169.254`), un port interne
+    (`127.0.0.1:6379`) ou un voisin du réseau privé. C'est exactement le motif
+    SSRF, et il ne se corrige pas après coup.
+
+    Politique par défaut :
+
+    - `https` obligatoire — un émetteur en clair n'authentifie rien ;
+    - pas d'identifiants dans l'URL ;
+    - pas de fragment ni de requête : un émetteur OIDC est une base ;
+    - hôte résolvable et **publiquement routable**.
+
+    Un Keycloak auto-hébergé sur un réseau privé reste possible, mais seulement
+    si l'exploitant l'a explicitement autorisé côté serveur. Le poste ne peut
+    pas activer ce mode : il ne le voit même pas.
+    """
+    try:
+        parsed = urlparse(issuer)
+    except ValueError:
+        return False, "malformed"
+
+    if parsed.scheme != "https":
+        return False, "scheme_not_https"
+    if parsed.username or parsed.password:
+        return False, "credentials_in_url"
+    if parsed.query or parsed.fragment:
+        return False, "not_a_base_url"
+    host = parsed.hostname
+    if not host:
+        return False, "missing_host"
+
+    addresses = []
+    try:
+        addresses = [
+            ipaddress.ip_address(info[4][0])
+            for info in socket.getaddrinfo(host, None)
+        ]
+    except (socket.gaierror, ValueError):
+        try:
+            addresses = [ipaddress.ip_address(host)]
+        except ValueError:
+            return False, "unresolvable_host"
+
+    if not addresses:
+        return False, "unresolvable_host"
+
+    # Toutes les adresses doivent être acceptables : un nom qui résout à la fois
+    # vers une adresse publique et vers une adresse interne servirait de pont.
+    for address in addresses:
+        internal = (
+            address.is_loopback
+            or address.is_private
+            or address.is_link_local
+            or address.is_reserved
+            or address.is_multicast
+            or address.is_unspecified
+        )
+        if internal and not allow_private:
+            return False, "internal_address"
+    return True, "ok"
+
+
+async def fetch_oidc_metadata(issuer: str) -> dict:
+    """Lit le document de découverte de l'émetteur.
+
+    Les redirections ne sont **pas** suivies : une redirection vers une adresse
+    interne contournerait le contrôle fait avant l'appel.
+    """
+    allowed, reason = issuer_url_is_allowed(issuer, OIDC_ALLOW_PRIVATE_ISSUER)
+    if not allowed:
+        print(f"[auth] provider=oidc result=failure reason=issuer_rejected:{reason}")
+        raise auth_error(400, "PROVIDER_CONFIG_INVALID")
+
+    url = f"{issuer}/.well-known/openid-configuration"
+    try:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=False) as client:
+            response = await client.get(url)
+    except httpx.HTTPError:
+        raise auth_error(502, "OIDC_DISCOVERY_FAILED")
+    if response.status_code != 200:
+        raise auth_error(502, "OIDC_DISCOVERY_FAILED")
+    try:
+        metadata = response.json()
+    except ValueError:
+        raise auth_error(502, "OIDC_DISCOVERY_FAILED")
+
+    # L'émetteur annoncé doit être **exactement** celui configuré. Une
+    # comparaison permissive (préfixe, sous-chaîne, domaine) laisserait un
+    # émetteur voisin se faire passer pour le bon.
+    if (metadata.get("issuer") or "").rstrip("/") != issuer:
+        raise auth_error(502, "OIDC_ISSUER_MISMATCH")
+
+    for field in ("authorization_endpoint", "token_endpoint", "jwks_uri"):
+        value = metadata.get(field)
+        if not value or not str(value).startswith("https://"):
+            raise auth_error(502, "OIDC_DISCOVERY_FAILED")
+
+    return metadata
+
+
+async def oidc_metadata(issuer: str, force_refresh: bool = False) -> dict:
+    cached = OIDC_METADATA_CACHE.get(issuer)
+    fresh = cached and cached["fetched_at"] + OIDC_METADATA_TTL_SECONDS > time.time()
+    if cached and fresh and not force_refresh:
+        return cached["metadata"]
+    metadata = await fetch_oidc_metadata(issuer)
+    OIDC_METADATA_CACHE[issuer] = {"metadata": metadata, "fetched_at": time.time()}
+    return metadata
+
+
+async def provider_endpoints(provider: str) -> dict:
+    """Points de terminaison effectifs d'un fournisseur.
+
+    Statiques pour Microsoft et Google, découverts pour l'OIDC générique. Le
+    reste du moteur n'a pas à savoir lequel des deux cas s'applique.
+    """
+    config = PROVIDERS[provider]
+    if provider != "oidc":
+        return {
+            "authorization_endpoint": config["authorization_endpoint"],
+            "token_endpoint": config["token_endpoint"],
+        }
+    metadata = await oidc_metadata(OIDC_ISSUER)
+    return {
+        "authorization_endpoint": metadata["authorization_endpoint"],
+        "token_endpoint": metadata["token_endpoint"],
+    }
 
 
 # ------------------------------------------------------------- bouclage
@@ -1338,7 +1643,11 @@ def organization_for_tenant(provider: str, tenant_value: str) -> sqlite3.Row | N
 
 
 def resolve_member_for_identity(
-    email: str, organization_id: str, external_subject: str, provider: str
+    email: str,
+    organization_id: str,
+    external_subject: str,
+    provider: str,
+    external_issuer: str = "",
 ) -> str:
     """Retrouve, rattache ou crée le compte correspondant à une identité
     **déjà vérifiée**.
@@ -1362,10 +1671,12 @@ def resolve_member_for_identity(
        même que pour le code e-mail.
     """
     with db() as conn:
+        # Le périmètre d'une identité est (fournisseur, émetteur, sujet). Un
+        # `sub` identique chez deux IdP OIDC ne désigne pas la même personne.
         existing = conn.execute(
             "SELECT email, organization_id FROM federated_identities "
-            "WHERE provider=? AND external_subject=?",
-            (provider, external_subject),
+            "WHERE provider=? AND external_issuer=? AND external_subject=?",
+            (provider, external_issuer, external_subject),
         ).fetchone()
 
         if existing:
@@ -1388,8 +1699,9 @@ def resolve_member_for_identity(
             # identité Google peut coexister avec une identité Microsoft.
             conflicting = conn.execute(
                 "SELECT external_subject FROM federated_identities "
-                "WHERE provider=? AND email=? AND external_subject<>?",
-                (provider, email, external_subject),
+                "WHERE provider=? AND external_issuer=? AND email=? "
+                "AND external_subject<>?",
+                (provider, external_issuer, email, external_subject),
             ).fetchone()
             if conflicting:
                 raise auth_error(409, "IDENTITY_CONFLICT")
@@ -1407,8 +1719,21 @@ def resolve_member_for_identity(
 
 @app.get("/api/auth/providers")
 def auth_providers():
-    """Fournisseurs d'identité réellement utilisables sur ce serveur."""
-    return {"providers": configured_providers()}
+    """Fournisseurs d'identité réellement utilisables sur ce serveur.
+
+    Le libellé est de l'affichage : « Continue with OIDC » ne dirait rien à un
+    utilisateur, « Continue with Company SSO » si. Il n'entre dans aucune
+    décision de sécurité, et aucun secret ne figure ici.
+    """
+    providers = configured_providers()
+    return {
+        "providers": providers,
+        "display_names": {
+            provider: provider_display_name(provider)
+            for provider in providers
+            if provider != "legacy_email_code"
+        },
+    }
 
 
 @app.get("/api/auth/entra/pkce/available")
@@ -1426,7 +1751,7 @@ def entra_pkce_available():
     }
 
 
-def start_sso_flow(provider: str, body: SsoStartRequest) -> dict:
+async def start_sso_flow(provider: str, body: SsoStartRequest) -> dict:
     """Prépare une tentative et renvoie l'URL d'autorisation.
 
     Le serveur retient le `nonce` attendu : c'est lui qui le confrontera au
@@ -1441,6 +1766,7 @@ def start_sso_flow(provider: str, body: SsoStartRequest) -> dict:
     if organization_for_provider(provider) is None:
         raise auth_error(503, "PROVIDER_NOT_CONFIGURED")
 
+    endpoints = await provider_endpoints(provider)
     flow_id = secrets.token_urlsafe(24)
     now = time.time()
     # Ménage des tentatives expirées : pas de flux zombie qui s'accumule.
@@ -1471,7 +1797,7 @@ def start_sso_flow(provider: str, body: SsoStartRequest) -> dict:
 
     return {
         "flow_id": flow_id,
-        "authorization_url": f"{config['authorization_endpoint']}?{urlencode(parameters)}",
+        "authorization_url": f"{endpoints['authorization_endpoint']}?{urlencode(parameters)}",
         "expires_in": SSO_FLOW_TTL_SECONDS,
     }
 
@@ -1483,7 +1809,7 @@ async def redeem_authorization_code(provider: str, body: SsoExchangeRequest) -> 
     `code_verifier`. Google exige en plus le secret de son client « Desktop » ;
     il ne quitte pas le serveur, et le poste n'en a jamais connaissance.
     """
-    config = PROVIDERS[provider]
+    endpoints = await provider_endpoints(provider)
     data = {
         "client_id": provider_client_id(provider),
         "grant_type": "authorization_code",
@@ -1491,13 +1817,21 @@ async def redeem_authorization_code(provider: str, body: SsoExchangeRequest) -> 
         "redirect_uri": body.redirect_uri,
         "code_verifier": body.code_verifier,
     }
-    if config["uses_client_secret"]:
-        data["client_secret"] = provider_client_secret(provider)
+    auth = None
+    if provider_requires_secret(provider):
+        # `client_secret_basic` place l'identifiant dans l'en-tête plutôt que
+        # dans le corps : les deux méthodes sont standard, l'IdP choisit.
+        if provider == "oidc" and OIDC_CLIENT_AUTH_METHOD == "client_secret_basic":
+            auth = (provider_client_id(provider), provider_client_secret(provider))
+        else:
+            data["client_secret"] = provider_client_secret(provider)
     else:
         data["scope"] = provider_scopes(provider)
 
     async with httpx.AsyncClient(timeout=20) as client:
-        response = await client.post(config["token_endpoint"], data=data)
+        response = await client.post(
+            endpoints["token_endpoint"], data=data, auth=auth
+        )
     if response.status_code != 200:
         # Le détail du fournisseur (`invalid_grant`, code expiré, code déjà
         # utilisé) n'est pas renvoyé au poste : il ne changerait pas sa conduite
@@ -1531,8 +1865,21 @@ async def exchange_sso_code(provider: str, body: SsoExchangeRequest) -> dict:
         raise auth_error(401, "ID_TOKEN_INVALID")
 
     claims = await validate_id_token(provider, id_token, flow["nonce"])
-    tenant_value = claims.get(config["tenant_claim"], "")
     external_subject = claims[config["subject_claim"]]
+
+    if provider == "oidc":
+        # Pas de devinette de tenant : la configuration OIDC **appartient** à
+        # une organisation, et l'émetteur vérifié est ce qui la désigne.
+        external_issuer = OIDC_ISSUER
+        tenant_value = OIDC_ISSUER
+        # Contrainte facultative, comparée à l'identique. Ni expression, ni
+        # moteur de règles : une égalité, ou rien.
+        if OIDC_REQUIRED_CLAIM:
+            if str(claims.get(OIDC_REQUIRED_CLAIM, "")) != OIDC_REQUIRED_CLAIM_VALUE:
+                raise auth_error(403, "MEMBERSHIP_NOT_FOUND")
+    else:
+        external_issuer = ""
+        tenant_value = claims.get(config["tenant_claim"], "")
 
     # Un compte sans rattachement d'organisation — typiquement un compte Google
     # personnel, qui ne porte aucun `hd` — n'entre pas dans une organisation.
@@ -1549,7 +1896,7 @@ async def exchange_sso_code(provider: str, body: SsoExchangeRequest) -> dict:
         raise auth_error(401, "ID_TOKEN_INVALID")
 
     resolved_email = resolve_member_for_identity(
-        email, organization["id"], external_subject, provider
+        email, organization["id"], external_subject, provider, external_issuer
     )
 
     with db() as conn:
@@ -1569,6 +1916,7 @@ async def exchange_sso_code(provider: str, body: SsoExchangeRequest) -> dict:
         external_subject,
         tenant_value or None,
         verification="verified",
+        external_issuer=external_issuer,
     )
     print(
         f"[auth] provider={provider} organization={organization['id']} "
@@ -1578,8 +1926,8 @@ async def exchange_sso_code(provider: str, body: SsoExchangeRequest) -> dict:
 
 
 @app.post("/api/auth/sso/{provider}/start")
-def sso_start(provider: str, body: SsoStartRequest):
-    return start_sso_flow(provider, body)
+async def sso_start(provider: str, body: SsoStartRequest):
+    return await start_sso_flow(provider, body)
 
 
 @app.post("/api/auth/sso/{provider}/exchange")
@@ -1591,8 +1939,8 @@ async def sso_exchange(provider: str, body: SsoExchangeRequest):
 
 
 @app.post("/api/auth/entra/pkce/start")
-def entra_pkce_start(body: SsoStartRequest):
-    return start_sso_flow("microsoft_entra", body)
+async def entra_pkce_start(body: SsoStartRequest):
+    return await start_sso_flow("microsoft_entra", body)
 
 
 @app.post("/api/auth/entra/pkce/exchange")
