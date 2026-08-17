@@ -9,9 +9,13 @@ import io
 import os
 import random
 import re
+import base64
+import hashlib
+import json
 import secrets
 import sqlite3
 import time
+import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -36,6 +40,11 @@ ORGANIZATION_ID = os.getenv("NOVA_ORGANIZATION_ID", "ipsa")
 ORGANIZATION_NAME = os.getenv("NOVA_ORGANIZATION_NAME", "IPSA")
 ORGANIZATION_SHORT_NAME = os.getenv("NOVA_ORGANIZATION_SHORT_NAME", "IPSA")
 ORGANIZATION_CAMPUS = os.getenv("NOVA_ORGANIZATION_CAMPUS", "Paris")
+# Nature de l'organisation. `business` est accepté par le modèle mais aucun
+# client ne l'expose encore.
+ORGANIZATION_TYPE = os.getenv("NOVA_ORGANIZATION_TYPE", "education").lower()
+if ORGANIZATION_TYPE not in {"education", "business"}:
+    ORGANIZATION_TYPE = "education"
 EDUCATION_MODE = os.getenv("NOVA_EDUCATION_MODE", "normal").lower()
 AI_SKILLS_REQUIRED = os.getenv("NOVA_AI_SKILLS_REQUIRED", "false").lower() == "true"
 AI_SKILLS_TRACK_PROGRESS = os.getenv("NOVA_AI_SKILLS_TRACK_PROGRESS", "true").lower() == "true"
@@ -46,6 +55,12 @@ AI_SKILLS_TRACK_PROGRESS = os.getenv("NOVA_AI_SKILLS_TRACK_PROGRESS", "true").lo
 ENTRA_TENANT_ID = os.getenv("NOVA_ENTRA_TENANT_ID", "organizations")
 ENTRA_CLIENT_ID = os.getenv("NOVA_ENTRA_CLIENT_ID", "")
 ENTRA_SCOPES = os.getenv("NOVA_ENTRA_SCOPES", "openid profile email User.Read")
+# Tenant Microsoft autorisé à s'authentifier, quand l'établissement le connaît.
+# Vide = comportement historique inchangé (seul le domaine e-mail filtre).
+# Renseigné = le `tid` du jeton d'identité doit correspondre : c'est le mapping
+# explicite « tenant externe → organisation Nova », qui ne repose pas sur le
+# suffixe d'adresse.
+ENTRA_ALLOWED_TENANT_ID = os.getenv("NOVA_ENTRA_ALLOWED_TENANT_ID", "").strip()
 ENTRA_AUTHORITY = f"https://login.microsoftonline.com/{ENTRA_TENANT_ID}/oauth2/v2.0"
 ENTRA_FLOWS: dict[str, dict] = {}
 
@@ -62,6 +77,11 @@ LLM_URL = os.getenv("NOVA_LLM_URL", "http://llm:8000/v1")            # vLLM (API
 LLM_MODEL = os.getenv("NOVA_LLM_MODEL", "Qwen/Qwen2.5-14B-Instruct")
 
 ADMIN_TOKEN = os.getenv("NOVA_ADMIN_TOKEN", secrets.token_urlsafe(24))
+
+# Environnement d'exécution. Le défaut est `production` : un déploiement qui
+# oublie de le déclarer obtient le comportement le plus prudent, jamais le plus
+# bavard. Seul `development` autorise l'affichage d'un code de connexion.
+NOVA_ENV = os.getenv("NOVA_ENV", "production").strip().lower()
 
 # ---------------------------------------------------------------- db
 @contextmanager
@@ -127,22 +147,390 @@ def init_db():
             rule TEXT NOT NULL,
             shared INTEGER NOT NULL DEFAULT 0
         );
+        -- Organisations connues du serveur. Mono-organisation aujourd'hui,
+        -- mais la table porte déjà une clé propre : le jour où un Control
+        -- Plane en gérera plusieurs, rien n'est à réinventer.
+        -- État propre à cette instance de serveur. Sert notamment à retenir
+        -- l'organisation qu'elle sert, indépendamment du slug configuré.
+        CREATE TABLE IF NOT EXISTS server_state(
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS organizations(
+            id TEXT PRIMARY KEY,               -- UUID Nova, immuable
+            slug TEXT,                         -- NOVA_ORGANIZATION_ID, lisible
+            display_name TEXT NOT NULL,        -- « IPSA Paris » : un libellé
+            org_type TEXT NOT NULL DEFAULT 'education',
+            entra_tenant_id TEXT,              -- mapping explicite, jamais déduit
+            google_customer_id TEXT,
+            oidc_issuer TEXT,
+            created_at REAL
+        );
+        -- Identités fédérées. Une identité n'est pas une permission : cette
+        -- table dit QUI se connecte, jamais ce qu'il a le droit de faire.
+        CREATE TABLE IF NOT EXISTS federated_identities(
+            provider TEXT NOT NULL,            -- microsoft_entra | google_workspace | oidc
+            external_subject TEXT NOT NULL,    -- oid/sub : immuable, jamais l'e-mail
+            external_tenant_id TEXT,           -- tid Microsoft, customer Google, issuer OIDC
+            organization_id TEXT NOT NULL,
+            email TEXT NOT NULL,               -- lien vers users, la clé actuelle
+            -- Niveau de garantie de l'identité :
+            --   transport_only : revendications lues d'un jeton reçu en TLS
+            --                    serveur-à-serveur, signature NON vérifiée
+            --   verified       : signature, émetteur, audience et expiration
+            --                    vérifiés (aucun flux ne produit ce niveau)
+            verification TEXT NOT NULL DEFAULT 'transport_only',
+            created_at REAL,
+            last_seen REAL,
+            PRIMARY KEY (provider, external_subject)
+        );
         """)
-        columns = {
-            row["name"] for row in conn.execute("PRAGMA table_info(tokens)").fetchall()
-        }
-        if "expires_at" not in columns:
-            conn.execute("ALTER TABLE tokens ADD COLUMN expires_at REAL")
+        migrate_schema(conn)
+
+def migrate_schema(conn):
+    """Migrations additives uniquement : aucune colonne n'est supprimée, aucun
+    compte existant n'est perdu, et une base d'avant cette phase reste lisible
+    par l'ancien code (les nouvelles colonnes sont simplement ignorées)."""
+    def columns(table: str) -> set[str]:
+        return {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+
+    token_columns = columns("tokens")
+    if "expires_at" not in token_columns:
+        conn.execute("ALTER TABLE tokens ADD COLUMN expires_at REAL")
+    if "token_hash" not in token_columns:
+        conn.execute("ALTER TABLE tokens ADD COLUMN token_hash TEXT")
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_tokens_hash ON tokens(token_hash)"
+    )
+    migrate_tokens_to_hashes(conn)
+
+    if "verification" not in columns("federated_identities"):
+        conn.execute(
+            "ALTER TABLE federated_identities ADD COLUMN verification "
+            "TEXT NOT NULL DEFAULT 'transport_only'"
+        )
+
+    user_columns = columns("users")
+    additive_user_columns = {
+        # Identifiant interne stable. L'adresse e-mail reste la clé primaire
+        # historique — la changer casserait toutes les tables qui la référencent.
+        "user_id": "TEXT",
+        "organization_id": "TEXT",
+        # active | disabled | deprovisioned. `disabled` (0/1) est conservé et
+        # reste la colonne que lisent l'admin et `current_user`.
+        "status": "TEXT NOT NULL DEFAULT 'active'",
+        "identity_provider": "TEXT NOT NULL DEFAULT 'legacy_email_code'",
+        "external_subject": "TEXT",
+        "external_tenant_id": "TEXT",
+    }
+    for column, definition in additive_user_columns.items():
+        if column not in user_columns:
+            conn.execute(f"ALTER TABLE users ADD COLUMN {column} {definition}")
+
+    organization_id = bootstrap_organization(conn)
+    # Rattrapage des comptes créés avant cette phase : chacun reçoit un
+    # identifiant interne et l'organisation du serveur.
+    for row in conn.execute(
+        "SELECT email FROM users WHERE user_id IS NULL OR user_id=''"
+    ).fetchall():
+        conn.execute(
+            "UPDATE users SET user_id=? WHERE email=?", (str(uuid.uuid4()), row["email"])
+        )
+    conn.execute(
+        "UPDATE users SET organization_id=? WHERE organization_id IS NULL OR organization_id=''",
+        (organization_id,),
+    )
+    # `status` suit `disabled` pour les comptes déjà suspendus.
+    conn.execute("UPDATE users SET status='disabled' WHERE disabled=1 AND status='active'")
+
+
+ORGANIZATION_ID_STATE_KEY = "organization_id"
+
+
+def seed_organization_id() -> str:
+    """Graine d'identifiant, utilisée **une seule fois**, au tout premier
+    démarrage d'une instance.
+
+    Dérivée du slug plutôt que tirée au hasard pour une raison de migration :
+    deux serveurs déjà déployés pour le même établissement (bascule, reprise
+    après incident, restauration d'une sauvegarde antérieure à cette phase)
+    convergent vers le même identifiant au lieu d'en inventer deux. Passé ce
+    premier démarrage, la valeur vient de la base et cette fonction n'est plus
+    consultée.
+
+    Le libellé n'entre pas dans le calcul, et le slug n'y entre qu'une fois :
+    voir `nova_organization_id`.
+    """
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"https://nova.id/organization/{ORGANIZATION_ID}"))
+
+
+def read_server_state(conn, key: str) -> str | None:
+    row = conn.execute("SELECT value FROM server_state WHERE key=?", (key,)).fetchone()
+    return row["value"] if row else None
+
+
+def nova_organization_id() -> str:
+    """Identifiant **immuable** de l'organisation servie par cette instance.
+
+    Lu en base, jamais recalculé. C'est la propriété fondamentale du modèle :
+
+    - renommer le libellé (`NOVA_ORGANIZATION_NAME`) ne le change pas ;
+    - **renommer le slug (`NOVA_ORGANIZATION_ID`) ne le change pas non plus** ;
+    - un redémarrage retrouve la même valeur ;
+    - aucune adresse e-mail n'entre dans son calcul.
+
+    Le slug reste un identifiant humain — lisible, utilisable pour du routage,
+    modifiable. L'identifiant de tenant, lui, est attribué une fois et pour
+    toutes.
+
+    À terme, c'est le **Nova Control Plane** qui attribuera cet UUID et le
+    fournira au serveur de l'organisation ; `seed_organization_id()` ne sert que
+    d'amorçage de compatibilité pour les instances déjà déployées.
+    """
+    with db() as conn:
+        stored = read_server_state(conn, ORGANIZATION_ID_STATE_KEY)
+    return stored or seed_organization_id()
+
+
+def bootstrap_organization(conn) -> str:
+    """Attribue l'identifiant de l'organisation **au premier démarrage**, puis
+    se contente de rafraîchir ce qui est modifiable.
+
+    Le rattachement instance → organisation passe par `server_state`, pas par le
+    slug : sans cela, renommer le slug ferait échouer la recherche et créerait
+    silencieusement une seconde organisation pour le même établissement.
+    """
+    organization_id = read_server_state(conn, ORGANIZATION_ID_STATE_KEY)
+
+    if organization_id is None:
+        organization_id = seed_organization_id()
+        conn.execute(
+            "INSERT OR IGNORE INTO organizations(id, slug, display_name, org_type, "
+            "entra_tenant_id, created_at) VALUES (?,?,?,?,?,?)",
+            (
+                organization_id,
+                ORGANIZATION_ID,
+                ORGANIZATION_NAME,
+                ORGANIZATION_TYPE,
+                ENTRA_ALLOWED_TENANT_ID or None,
+                time.time(),
+            ),
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO server_state(key, value) VALUES (?,?)",
+            (ORGANIZATION_ID_STATE_KEY, organization_id),
+        )
+
+    # Slug, libellé, type et mapping de tenant sont modifiables. L'identifiant
+    # de la ligne, non : la clause `WHERE id=?` ne bouge jamais.
+    conn.execute(
+        "UPDATE organizations SET slug=?, display_name=?, org_type=?, entra_tenant_id=? "
+        "WHERE id=?",
+        (
+            ORGANIZATION_ID,
+            ORGANIZATION_NAME,
+            ORGANIZATION_TYPE,
+            ENTRA_ALLOWED_TENANT_ID or None,
+            organization_id,
+        ),
+    )
+    return organization_id
+
+
+# ---------------------------------------------------------------- jetons
+#
+# Un jeton de session est un secret **porteur** : quiconque le détient est
+# l'utilisateur. Le stocker en clair signifie qu'un accès en lecture à la base
+# — sauvegarde égarée, injection SQL, poste d'administration compromis — livre
+# des sessions immédiatement utilisables.
+#
+# Le serveur ne conserve donc que l'empreinte. Un SHA-256 simple suffit ici, et
+# un dérivateur lent (bcrypt, argon2) serait un contresens : ces fonctions
+# protègent des secrets à **faible** entropie contre la force brute. Un jeton
+# `secrets.token_urlsafe(32)` porte 256 bits d'aléa — il n'y a rien à deviner —
+# et le ralentissement se paierait sur chaque requête authentifiée.
+
+TOKEN_HASH_MARKER = "h:"
+
+
+def hash_token(token: str) -> str:
+    """Empreinte d'un jeton. Ne journalise jamais son entrée ni sa sortie."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def migrate_tokens_to_hashes(conn):
+    """Remplace les jetons stockés en clair par leur empreinte, **sans perdre
+    une seule session**.
+
+    C'est possible parce que la base contient encore le jeton en clair : on peut
+    donc calculer son empreinte tout de suite. Aucun régime transitoire n'est
+    nécessaire, et surtout aucune ambiguïté « ce champ contient-il un jeton ou
+    une empreinte ? » ne subsiste après la migration.
+
+    La colonne `token` est conservée — rien n'est supprimé — mais ne contient
+    plus de secret : elle reçoit `h:<empreinte>`, valeur unique qui préserve la
+    clé primaire tout en étant inutilisable pour s'authentifier.
+    """
+    pending = conn.execute(
+        "SELECT token FROM tokens WHERE token_hash IS NULL AND token IS NOT NULL"
+    ).fetchall()
+    for row in pending:
+        stored = row["token"]
+        if not stored or stored.startswith(TOKEN_HASH_MARKER):
+            continue
+        digest = hash_token(stored)
+        conn.execute(
+            "UPDATE tokens SET token_hash=?, token=? WHERE token=?",
+            (digest, f"{TOKEN_HASH_MARKER}{digest}", stored),
+        )
+
+
 init_db()
 
 def touch_user(email: str):
     """Crée le profil s'il n'existe pas + met à jour last_seen."""
+    # Résolu avant d'ouvrir la connexion : `nova_organization_id()` lit la base,
+    # et l'imbriquer dans une transaction en écriture exposerait à un verrou.
+    organization_id = nova_organization_id()
     with db() as conn:
         conn.execute(
-            "INSERT OR IGNORE INTO users(email, created_at) VALUES (?,?)",
-            (email, time.time()),
+            "INSERT OR IGNORE INTO users(email, created_at, user_id, organization_id) "
+            "VALUES (?,?,?,?)",
+            (email, time.time(), str(uuid.uuid4()), organization_id),
         )
         conn.execute("UPDATE users SET last_seen=? WHERE email=?", (time.time(), email))
+
+
+# ---------------------------------------------------------------- identité
+#
+# Frontière de confiance : tout ce qui suit est décidé **par le serveur**. Le
+# Desktop ne peut ni proposer ni influencer un `security_role`, un
+# `organization_id` ou un `member_type` — il ne fait que lire ce que cette
+# section produit.
+
+# `users.role` décrit un métier. La correspondance ne produit jamais de droit.
+MEMBER_TYPE_BY_ROLE = {
+    "student": "student",
+    "teacher": "teacher",
+    "staff": "staff",
+    # `partner` est la catégorie fourre-tout du serveur : elle ne désigne
+    # aucun métier.
+    "partner": "other",
+}
+
+
+def member_type_for(role: str) -> str | None:
+    """Nature métier du membre, `None` si le rôle stocké n'en désigne aucune."""
+    return MEMBER_TYPE_BY_ROLE.get((role or "").strip().lower())
+
+
+def security_role_for(_row) -> str:
+    """Rôle de sécurité Nova.
+
+    Toujours `member`. Aucun métier, aucun groupe, aucun domaine d'adresse et
+    aucun champ envoyé par le client ne peut l'élever. Le panneau
+    d'administration s'authentifie par `X-Admin-Token`, hors du modèle
+    utilisateur : il ne fait de personne un `organization_admin`. Le jour où ce
+    rôle existera, il sera une colonne écrite par un administrateur, lue ici.
+    """
+    return "member"
+
+
+def groups_for(row) -> list[dict]:
+    """Groupes du membre. La cohorte historique devient un groupe de
+    compatibilité — même notion, source explicite pour qu'un futur groupe
+    d'annuaire ne puisse pas s'y confondre."""
+    cohort = (row["cohort"] or "").strip() if "cohort" in row.keys() else ""
+    if not cohort:
+        return []
+    return [
+        {
+            "id": cohort,
+            "label": cohort,
+            "source": "legacy_cohort",
+            "external_group_id": None,
+        }
+    ]
+
+
+def account_status(row) -> str:
+    """active | disabled | deprovisioned, en restant compatible avec la colonne
+    booléenne `disabled` que lit encore le reste du serveur."""
+    if "disabled" in row.keys() and row["disabled"]:
+        return "disabled"
+    status = (row["status"] or "active") if "status" in row.keys() else "active"
+    return status if status in {"active", "disabled", "deprovisioned"} else "active"
+
+
+def record_federated_identity(
+    email: str,
+    provider: str,
+    external_subject: str,
+    external_tenant_id: str | None,
+    verification: str = "transport_only",
+):
+    """Associe une identité externe **immuable** à un compte.
+
+    `external_subject` est l'`oid`/`sub` du fournisseur, jamais l'adresse : une
+    adresse change, se réattribue, et n'existe pas dans certains annuaires. La
+    clé primaire `(provider, external_subject)` garantit qu'un même sujet chez
+    deux fournisseurs reste deux identités distinctes.
+
+    `verification` dit ce qu'on sait réellement de la provenance. Le flux Device
+    Code actuel ne produit que `transport_only` : les revendications viennent
+    d'un jeton reçu en TLS depuis Microsoft, mais sa signature n'est pas
+    vérifiée. **L'identité enregistrée n'est donc pas autoritative** — elle est
+    conservée pour préparer la migration, jamais consultée pour autoriser. Ce
+    qui autorise reste le domaine de l'adresse et, s'il est configuré, le
+    mapping de tenant.
+    """
+    if not external_subject:
+        return
+    now = time.time()
+    organization_id = nova_organization_id()
+    with db() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO federated_identities(provider, external_subject, "
+            "external_tenant_id, organization_id, email, verification, created_at, last_seen) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (
+                provider,
+                external_subject,
+                external_tenant_id,
+                organization_id,
+                email,
+                verification,
+                now,
+                now,
+            ),
+        )
+        conn.execute(
+            "UPDATE federated_identities SET last_seen=?, email=?, external_tenant_id=?, "
+            "verification=? WHERE provider=? AND external_subject=?",
+            (now, email, external_tenant_id, verification, provider, external_subject),
+        )
+        conn.execute(
+            "UPDATE users SET identity_provider=?, external_subject=?, external_tenant_id=? "
+            "WHERE email=?",
+            (provider, external_subject, external_tenant_id, email),
+        )
+
+
+def decode_jwt_claims(token: str) -> dict:
+    """Lit la charge utile d'un JWT **sans vérifier sa signature**.
+
+    Légitime ici, et seulement ici : le jeton est reçu directement de
+    `login.microsoftonline.com` par un appel serveur-à-serveur sur TLS, il n'est
+    à aucun moment fourni par le client. Il ne doit **jamais** être employé sur
+    un jeton reçu du Desktop ou d'un navigateur — dans ce cas, signature,
+    émetteur, audience et expiration doivent être vérifiés.
+    """
+    try:
+        payload = token.split(".")[1]
+        payload += "=" * (-len(payload) % 4)
+        return json.loads(base64.urlsafe_b64decode(payload))
+    except Exception:
+        return {}
 
 def count_usage(email: str, kind: str, audio_seconds: float = 0.0):
     day = time.strftime("%Y-%m-%d")
@@ -158,8 +546,18 @@ def count_usage(email: str, kind: str, audio_seconds: float = 0.0):
 # ---------------------------------------------------------------- email
 def send_code_email(to: str, code: str):
     if not SMTP_HOST:
-        print(f"[DEV] Code pour {to} : {code}")
-        return
+        # Un code à usage unique imprimé dans les journaux est un secret en
+        # clair, consultable par quiconque lit `docker logs`. L'afficher exige
+        # donc un mode développement **explicitement** demandé : une production
+        # dont le SMTP est mal configuré échoue bruyamment plutôt que de
+        # divulguer silencieusement les codes de tous ses utilisateurs.
+        if NOVA_ENV == "development":
+            print(f"[DEV] Code pour {to} : {code}")
+            return
+        raise RuntimeError(
+            "SMTP non configure : impossible d'envoyer le code. "
+            "Renseignez NOVA_SMTP_HOST, ou NOVA_ENV=development en developpement."
+        )
     import smtplib
     from email.message import EmailMessage
     msg = EmailMessage()
@@ -178,19 +576,21 @@ def current_user(authorization: str = Header(default="")) -> str:
     if not authorization.startswith("Bearer "):
         raise HTTPException(401, "Token manquant")
     token = authorization.removeprefix("Bearer ").strip()
+    # La base ne contient que des empreintes : on compare des empreintes.
+    token_hash = hash_token(token)
     with db() as conn:
         row = conn.execute(
-            """SELECT t.email, t.expires_at, u.disabled FROM tokens t
+            """SELECT t.email, t.expires_at, u.disabled, u.status FROM tokens t
                LEFT JOIN users u ON u.email = t.email
-               WHERE t.token=? AND t.active=1""", (token,)
+               WHERE t.token_hash=? AND t.active=1""", (token_hash,)
         ).fetchone()
     if not row:
         raise HTTPException(401, "Token invalide ou révoqué")
-    if row["disabled"]:
+    if row["disabled"] or (row["status"] or "active") != "active":
         raise HTTPException(403, "Compte suspendu — contactez votre administrateur")
     if row["expires_at"] and row["expires_at"] < time.time():
         with db() as conn:
-            conn.execute("UPDATE tokens SET active=0 WHERE token=?", (token,))
+            conn.execute("UPDATE tokens SET active=0 WHERE token_hash=?", (token_hash,))
         raise HTTPException(401, "Session expiree")
     touch_user(row["email"])
     return row["email"]
@@ -224,11 +624,14 @@ def issue_token(email: str, machine: str) -> dict:
         if machines >= MAX_MACHINES_PER_EMAIL:
             raise HTTPException(403, "Nombre maximal d'appareils atteint")
         token = secrets.token_urlsafe(32)
+        # Seule l'empreinte est écrite. Le jeton lui-même ne quitte cette
+        # fonction que vers le client, et n'est jamais journalisé.
+        digest = hash_token(token)
         expires_at = now + TOKEN_TTL_SECONDS
         conn.execute(
-            "INSERT INTO tokens(token,email,machine,active,created_at,expires_at) "
-            "VALUES (?,?,?,?,?,?)",
-            (token, email, machine, 1, now, expires_at),
+            "INSERT INTO tokens(token,token_hash,email,machine,active,created_at,expires_at) "
+            "VALUES (?,?,?,?,?,?,?)",
+            (f"{TOKEN_HASH_MARKER}{digest}", digest, email, machine, 1, now, expires_at),
         )
     touch_user(email)
     return {"token": token, "expires_in": TOKEN_TTL_SECONDS}
@@ -338,6 +741,11 @@ def public_campus_config() -> dict:
     if ENTRA_CLIENT_ID:
         auth_methods.append("entra")
     return {
+        # Identifiant Nova immuable de l'organisation. Distinct du slug lisible
+        # (`organization.id`) et du nom d'affichage : c'est celui qui servira de
+        # clé de tenant le jour du Control Plane.
+        "organization_id": nova_organization_id(),
+        "organization_type": ORGANIZATION_TYPE,
         "organization": {
             "id": ORGANIZATION_ID,
             "name": ORGANIZATION_NAME,
@@ -439,7 +847,8 @@ def auth_logout(
     token = authenticated_token(authorization)
     with db() as conn:
         conn.execute(
-            "UPDATE tokens SET active=0 WHERE token=? AND email=?", (token, user)
+            "UPDATE tokens SET active=0 WHERE token_hash=? AND email=?",
+            (hash_token(token), user),
         )
     return {"revoked": True}
 
@@ -503,16 +912,76 @@ async def entra_poll(body: EntraPollRequest):
     email = (graph_profile.get("mail") or graph_profile.get("userPrincipalName") or "").lower()
     if not email or email.split("@")[-1] not in ALLOWED_DOMAINS:
         raise HTTPException(403, "Compte Microsoft hors etablissement")
+
+    # Identité Microsoft immuable. `oid` est l'identifiant de l'objet
+    # utilisateur dans le tenant : il survit à un changement d'adresse, là où
+    # `sub` n'est stable que par couple (application, utilisateur).
+    claims = decode_jwt_claims(token_payload.get("id_token", ""))
+    external_tenant_id = claims.get("tid")
+    external_subject = claims.get("oid") or claims.get("sub") or ""
+
+    # Mapping explicite « tenant externe → organisation Nova ». Quand
+    # l'établissement a déclaré son tenant, le suffixe d'adresse ne suffit plus
+    # à entrer : c'est le tenant qui décide. Non configuré, le comportement
+    # historique est conservé à l'identique.
+    if ENTRA_ALLOWED_TENANT_ID and external_tenant_id != ENTRA_ALLOWED_TENANT_ID:
+        ENTRA_FLOWS.pop(body.flow_id, None)
+        raise HTTPException(403, "Compte Microsoft hors etablissement")
+
     ENTRA_FLOWS.pop(body.flow_id, None)
     session = issue_token(email, flow["machine"])
+    record_federated_identity(email, "microsoft_entra", external_subject, external_tenant_id)
     return {"status": "complete", "email": email, **session}
 
 # --- profil de l'utilisateur connecté (pour l'app)
 @app.get("/api/me")
 def me(user: str = Depends(current_user)):
+    """Profil du membre connecté.
+
+    **Strictement additif.** Les trois champs historiques `email`, `role` et
+    `cohort` gardent leur nom, leur type et leur place à la racine ; le client
+    actuel les désérialise sans voir le reste. Le champ `organization` reste
+    une **chaîne** — le nom d'affichage — parce que le Desktop déployé le
+    déclare déjà ainsi : en faire un objet casserait chaque poste installé.
+    Les données structurées vivent donc dans des champs nouveaux, et la forme
+    du contrat est annoncée par `contract_version`.
+    """
+    organization_id = nova_organization_id()
     with db() as conn:
-        u = conn.execute("SELECT email, role, cohort FROM users WHERE email=?", (user,)).fetchone()
-    return dict(u) if u else {"email": user}
+        u = conn.execute("SELECT * FROM users WHERE email=?", (user,)).fetchone()
+        organization = conn.execute(
+            "SELECT id, display_name, org_type FROM organizations WHERE id=?",
+            (organization_id,),
+        ).fetchone()
+    if not u:
+        return {"email": user}
+
+    capabilities = public_campus_config()["capabilities"]
+    return {
+        # — contrat historique, inchangé —
+        "email": u["email"],
+        "role": u["role"],
+        "cohort": u["cohort"],
+        "organization": organization["display_name"] if organization else ORGANIZATION_NAME,
+        # — contrat v2, additif —
+        "contract_version": 2,
+        "user_id": u["user_id"],
+        "organization_id": u["organization_id"],
+        "organization_type": organization["org_type"] if organization else ORGANIZATION_TYPE,
+        "membership": {
+            "member_type": member_type_for(u["role"]),
+            "security_role": security_role_for(u),
+            "groups": groups_for(u),
+            "status": account_status(u),
+        },
+        "identity": {
+            "provider": u["identity_provider"] or "legacy_email_code",
+            # Le sujet externe n'est pas renvoyé : le client n'en a aucun usage
+            # et le diffuser élargirait la surface pour rien.
+            "has_external_identity": bool(u["external_subject"]),
+        },
+        "capabilities": sorted(name for name, enabled in capabilities.items() if enabled),
+    }
 
 def clean_required(value: str, field: str, limit: int = 4000) -> str:
     cleaned = value.strip()
