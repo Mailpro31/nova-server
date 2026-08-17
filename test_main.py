@@ -1050,7 +1050,7 @@ class EntraPkceTests(unittest.TestCase):
                 (self.ORGANIZATION_B, "org-b", "Organisation B", "business",
                  self.TENANT_B, time.time()),
             )
-        main.ENTRA_PKCE_FLOWS.clear()
+        main.SSO_FLOWS.clear()
         main.JWKS_CACHE.clear()
         self.seed_jwks(self.TENANT_A)
         self.seed_jwks(self.TENANT_B)
@@ -1065,7 +1065,8 @@ class EntraPkceTests(unittest.TestCase):
         return jwk
 
     def seed_jwks(self, tenant_id: str, kid: str = "test-key-1", key=None):
-        main.JWKS_CACHE[tenant_id] = {
+        uri = main.PROVIDERS["microsoft_entra"]["jwks_uri"]({"tid": tenant_id})
+        main.JWKS_CACHE[uri] = {
             "jwks": {"keys": [self.jwk_for(key or self.private_key, kid)]},
             "fetched_at": time.time(),
         }
@@ -1112,8 +1113,8 @@ class EntraPkceTests(unittest.TestCase):
         rotated = self.jwk_for(self.private_key, "kid-apres-rotation")
         calls = []
 
-        async def fake_fetch(tenant_id):
-            calls.append(tenant_id)
+        async def fake_fetch(jwks_uri):
+            calls.append(jwks_uri)
             return {"keys": [rotated]}
 
         # Le cache ne contient que l'ancienne clé.
@@ -1121,10 +1122,11 @@ class EntraPkceTests(unittest.TestCase):
         with patch.object(main, "fetch_jwks", fake_fetch):
             claims = self.validate(self.id_token(kid="kid-apres-rotation"))
         self.assertEqual(claims["oid"], "oid-immuable-1")
-        self.assertEqual(calls, [self.TENANT_A])
+        self.assertEqual(len(calls), 1)
+        self.assertIn(self.TENANT_A, calls[0])
 
     def test_an_unknown_kid_that_survives_a_refresh_is_refused(self):
-        async def fake_fetch(tenant_id):
+        async def fake_fetch(jwks_uri):
             return {"keys": []}
 
         with patch.object(main, "fetch_jwks", fake_fetch):
@@ -1213,12 +1215,9 @@ class EntraPkceTests(unittest.TestCase):
     def test_the_key_location_never_comes_from_the_token(self):
         # `jku` est un champ d'en-tête que l'attaquant contrôle : il ne doit
         # jouer aucun rôle. L'URL est dérivée du tenant, point.
-        self.assertIn(self.TENANT_A, main.jwks_uri_for_tenant(self.TENANT_A))
-        self.assertTrue(
-            main.jwks_uri_for_tenant(self.TENANT_A).startswith(
-                "https://login.microsoftonline.com/"
-            )
-        )
+        uri = main.PROVIDERS["microsoft_entra"]["jwks_uri"]({"tid": self.TENANT_A})
+        self.assertIn(self.TENANT_A, uri)
+        self.assertTrue(uri.startswith("https://login.microsoftonline.com/"))
 
     # -- démarrage du flux -------------------------------------------------
 
@@ -1290,7 +1289,7 @@ class EntraPkceTests(unittest.TestCase):
 
     def exchange(self, flow_id, token=None, redirect_uri="http://127.0.0.1:53125/callback",
                  code="code-microsoft"):
-        async def fake_redeem(body):
+        async def fake_redeem(provider, body):
             return {"id_token": token if token is not None else self.id_token()}
 
         with patch.object(main, "ENTRA_CLIENT_ID", self.CLIENT_ID), patch.object(
@@ -1349,7 +1348,7 @@ class EntraPkceTests(unittest.TestCase):
 
     def test_an_expired_flow_is_refused(self):
         flow_id = self.start_flow().json()["flow_id"]
-        main.ENTRA_PKCE_FLOWS[flow_id]["expires_at"] = time.time() - 1
+        main.SSO_FLOWS[flow_id]["expires_at"] = time.time() - 1
         response = self.exchange(flow_id)
         self.assertEqual(response.json()["detail"], "AUTH_TIMEOUT")
 
@@ -1382,7 +1381,7 @@ class EntraPkceTests(unittest.TestCase):
     def test_a_failed_token_exchange_is_reported_without_detail(self):
         flow_id = self.start_flow().json()["flow_id"]
 
-        async def failing(body):
+        async def failing(provider, body):
             raise main.auth_error(400, "TOKEN_EXCHANGE_FAILED")
 
         with patch.object(main, "ENTRA_CLIENT_ID", self.CLIENT_ID), patch.object(
@@ -1449,7 +1448,7 @@ class EntraPkceTests(unittest.TestCase):
     def test_a_client_supplied_organization_is_ignored(self):
         flow_id = self.start_flow().json()["flow_id"]
 
-        async def fake_redeem(body):
+        async def fake_redeem(provider, body):
             return {"id_token": self.id_token()}
 
         with patch.object(main, "ENTRA_CLIENT_ID", self.CLIENT_ID), patch.object(
@@ -1640,12 +1639,546 @@ class EntraPkceTests(unittest.TestCase):
         with patch.object(main, "ENTRA_CLIENT_ID", self.CLIENT_ID), patch.object(
             main.httpx, "AsyncClient", lambda **kwargs: FakeClient()
         ):
-            asyncio.run(main.redeem_authorization_code(body))
+            asyncio.run(main.redeem_authorization_code("microsoft_entra", body))
 
         self.assertNotIn("client_secret", captured["data"])
         self.assertEqual(captured["data"]["code_verifier"], "v" * 64)
         self.assertEqual(captured["data"]["grant_type"], "authorization_code")
         self.assertTrue(captured["url"].startswith("https://login.microsoftonline.com/"))
+
+
+class GoogleWorkspaceTests(unittest.TestCase):
+    """SSO Google Workspace, sur le même moteur que Microsoft.
+
+    Aucun test ne touche le réseau : les jetons sont signés par une paire de
+    clés locale et le JWKS est injecté dans le cache partagé.
+    """
+
+    CLIENT_ID = "111111111111-abcdefghij.apps.googleusercontent.com"
+    CLIENT_SECRET = "GOCSPX-secret-de-test-non-confidentiel"
+    HOSTED_DOMAIN = "example.com"
+    OTHER_DOMAIN = "autre-workspace.com"
+    ORGANIZATION_OTHER = "org-google-b"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.client = TestClient(main.app)
+        cls.private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        cls.other_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+
+    def setUp(self):
+        with main.db() as conn:
+            for table in ("auth_codes", "tokens", "users", "federated_identities"):
+                conn.execute(f"DELETE FROM {table}")
+            conn.execute("DELETE FROM organizations WHERE id=?", (self.ORGANIZATION_OTHER,))
+            conn.execute(
+                "UPDATE organizations SET google_hosted_domain=? WHERE id=?",
+                (self.HOSTED_DOMAIN, main.nova_organization_id()),
+            )
+            conn.execute(
+                "INSERT OR REPLACE INTO organizations(id, slug, display_name, org_type, "
+                "google_hosted_domain, created_at) VALUES (?,?,?,?,?,?)",
+                (self.ORGANIZATION_OTHER, "org-google-b", "Organisation B", "business",
+                 self.OTHER_DOMAIN, time.time()),
+            )
+        main.SSO_FLOWS.clear()
+        main.JWKS_CACHE.clear()
+        self.seed_jwks()
+
+    def jwk_for(self, key, kid):
+        jwk = json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(key.public_key()))
+        jwk.update({"kid": kid, "use": "sig", "alg": "RS256"})
+        return jwk
+
+    def seed_jwks(self, kid="google-key-1", key=None):
+        uri = main.PROVIDERS["google_workspace"]["jwks_uri"]({})
+        main.JWKS_CACHE[uri] = {
+            "jwks": {"keys": [self.jwk_for(key or self.private_key, kid)]},
+            "fetched_at": time.time(),
+        }
+
+    def id_token(self, key=None, kid="google-key-1", **overrides):
+        now = int(time.time())
+        claims = {
+            "iss": "https://accounts.google.com",
+            "aud": self.CLIENT_ID,
+            "exp": now + 600,
+            "iat": now,
+            "sub": "104729184756310928475",
+            "hd": self.HOSTED_DOMAIN,
+            "email": "etudiant@example.com",
+            "nonce": "nonce-google-0123456789",
+        }
+        claims.update(overrides)
+        for empty in [k for k, v in claims.items() if v is None]:
+            claims.pop(empty)
+        return jwt.encode(claims, key or self.private_key, algorithm="RS256",
+                          headers={"kid": kid})
+
+    def google_config(self):
+        return (
+            patch.object(main, "GOOGLE_CLIENT_ID", self.CLIENT_ID),
+            patch.object(main, "GOOGLE_CLIENT_SECRET", self.CLIENT_SECRET),
+        )
+
+    def validate(self, token, nonce="nonce-google-0123456789"):
+        a, b = self.google_config()
+        with a, b:
+            return asyncio.run(main.validate_id_token("google_workspace", token, nonce))
+
+    def start_flow(self, redirect_uri="http://127.0.0.1:53200/callback"):
+        a, b = self.google_config()
+        with a, b:
+            return self.client.post(
+                "/api/auth/sso/google_workspace/start",
+                json={
+                    "code_challenge": "g" * 43,
+                    "nonce": "nonce-google-0123456789",
+                    "redirect_uri": redirect_uri,
+                    "machine": "poste-1",
+                },
+            )
+
+    def exchange(self, flow_id, token=None,
+                 redirect_uri="http://127.0.0.1:53200/callback",
+                 provider="google_workspace"):
+        async def fake_redeem(prov, body):
+            return {"id_token": token if token is not None else self.id_token()}
+
+        a, b = self.google_config()
+        with a, b, patch.object(main, "redeem_authorization_code", fake_redeem):
+            return self.client.post(
+                f"/api/auth/sso/{provider}/exchange",
+                json={
+                    "flow_id": flow_id,
+                    "code": "code-google",
+                    "code_verifier": "v" * 64,
+                    "redirect_uri": redirect_uri,
+                },
+            )
+
+    def test_a_correctly_signed_google_token_is_accepted(self):
+        claims = self.validate(self.id_token())
+        self.assertEqual(claims["hd"], self.HOSTED_DOMAIN)
+        self.assertTrue(claims["sub"])
+
+    def test_a_token_signed_by_another_key_is_refused(self):
+        with self.assertRaises(HTTPException) as raised:
+            self.validate(self.id_token(key=self.other_key))
+        self.assertEqual(raised.exception.detail, "ID_TOKEN_INVALID")
+
+    def test_a_wrong_issuer_is_refused(self):
+        for issuer in ("https://accounts.google.example.com",
+                       "https://login.microsoftonline.com/x/v2.0",
+                       "accounts.google.com.evil.test"):
+            with self.assertRaises(HTTPException):
+                self.validate(self.id_token(iss=issuer))
+
+    def test_a_wrong_audience_is_refused(self):
+        with self.assertRaises(HTTPException):
+            self.validate(self.id_token(aud="autre.apps.googleusercontent.com"))
+
+    def test_an_expired_token_is_refused(self):
+        past = int(time.time()) - 10000
+        with self.assertRaises(HTTPException):
+            self.validate(self.id_token(exp=past, iat=past - 100))
+
+    def test_a_wrong_or_missing_nonce_is_refused(self):
+        with self.assertRaises(HTTPException):
+            self.validate(self.id_token(nonce="autre-nonce"))
+        with self.assertRaises(HTTPException):
+            self.validate(self.id_token(nonce=None))
+
+    def test_a_token_without_subject_is_refused(self):
+        with self.assertRaises(HTTPException):
+            self.validate(self.id_token(sub=None))
+
+    def test_a_symmetric_algorithm_is_refused(self):
+        now = int(time.time())
+        header = {"alg": "HS256", "typ": "JWT", "kid": "google-key-1"}
+        payload = {"iss": "https://accounts.google.com", "aud": self.CLIENT_ID,
+                   "exp": now + 600, "iat": now, "sub": "s",
+                   "hd": self.HOSTED_DOMAIN, "nonce": "nonce-google-0123456789"}
+
+        def segment(value):
+            return base64.urlsafe_b64encode(
+                json.dumps(value, separators=(",", ":")).encode()).rstrip(b"=")
+
+        public_pem = self.private_key.public_key().public_bytes(
+            serialization.Encoding.PEM,
+            serialization.PublicFormat.SubjectPublicKeyInfo)
+        signing_input = segment(header) + b"." + segment(payload)
+        signature = base64.urlsafe_b64encode(
+            hmac.new(public_pem, signing_input, hashlib.sha256).digest()).rstrip(b"=")
+        with self.assertRaises(HTTPException):
+            self.validate((signing_input + b"." + signature).decode())
+
+    def test_an_unknown_kid_triggers_a_controlled_refresh(self):
+        rotated = self.jwk_for(self.private_key, "google-key-rotated")
+        calls = []
+
+        async def fake_fetch(jwks_uri):
+            calls.append(jwks_uri)
+            return {"keys": [rotated]}
+
+        self.seed_jwks(kid="google-key-ancienne")
+        with patch.object(main, "fetch_jwks", fake_fetch):
+            claims = self.validate(self.id_token(kid="google-key-rotated"))
+        self.assertTrue(claims["sub"])
+        self.assertEqual(len(calls), 1)
+        self.assertIn("googleapis.com", calls[0])
+
+    def test_the_key_location_comes_from_the_provider_not_the_token(self):
+        uri = main.PROVIDERS["google_workspace"]["jwks_uri"]({"jku": "https://evil.test/keys"})
+        self.assertTrue(uri.startswith("https://www.googleapis.com/"))
+
+    def test_a_personal_gmail_account_is_refused(self):
+        """Un compte Google personnel ne porte aucun `hd` : il n'appartient a
+        aucune organisation, donc il n'entre nulle part."""
+        flow_id = self.start_flow().json()["flow_id"]
+        token = self.id_token(hd=None, email="quelquun@gmail.com")
+        response = self.exchange(flow_id, token=token)
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["detail"], "TENANT_NOT_ALLOWED")
+
+    def test_an_unmapped_workspace_is_refused(self):
+        flow_id = self.start_flow().json()["flow_id"]
+        response = self.exchange(flow_id, token=self.id_token(hd="workspace-inconnu.com"))
+        self.assertEqual(response.json()["detail"], "TENANT_NOT_ALLOWED")
+
+    def test_a_workspace_of_another_organization_cannot_sign_in_here(self):
+        flow_id = self.start_flow().json()["flow_id"]
+        token = self.id_token(hd=self.OTHER_DOMAIN, email="employe@example.com")
+        response = self.exchange(flow_id, token=token)
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["detail"], "TENANT_NOT_ALLOWED")
+
+    def test_a_mapped_workspace_signs_in(self):
+        flow_id = self.start_flow().json()["flow_id"]
+        response = self.exchange(flow_id)
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertEqual(body["email"], "etudiant@example.com")
+        for leaked in ("id_token", "access_token", "refresh_token"):
+            self.assertNotIn(leaked, body)
+
+    def test_the_identity_is_verified_and_keyed_on_sub(self):
+        flow_id = self.start_flow().json()["flow_id"]
+        self.exchange(flow_id)
+        with main.db() as conn:
+            row = conn.execute(
+                "SELECT * FROM federated_identities WHERE provider='google_workspace'"
+            ).fetchone()
+        self.assertEqual(row["verification"], "verified")
+        self.assertEqual(row["external_subject"], "104729184756310928475")
+        self.assertEqual(row["external_tenant_id"], self.HOSTED_DOMAIN)
+        self.assertNotIn("@", row["external_subject"])
+
+    def test_google_sign_in_never_grants_administration(self):
+        flow_id = self.start_flow().json()["flow_id"]
+        response = self.exchange(flow_id)
+        me = self.client.get(
+            "/api/me",
+            headers={"Authorization": f"Bearer {response.json()['token']}"}).json()
+        self.assertEqual(me["membership"]["security_role"], "member")
+        self.assertEqual(me["identity"]["provider"], "google_workspace")
+
+    def test_a_client_supplied_organization_or_role_is_ignored(self):
+        flow_id = self.start_flow().json()["flow_id"]
+
+        async def fake_redeem(prov, body):
+            return {"id_token": self.id_token()}
+
+        a, b = self.google_config()
+        with a, b, patch.object(main, "redeem_authorization_code", fake_redeem):
+            response = self.client.post(
+                "/api/auth/sso/google_workspace/exchange",
+                json={"flow_id": flow_id, "code": "c", "code_verifier": "v" * 64,
+                      "redirect_uri": "http://127.0.0.1:53200/callback",
+                      "organization_id": self.ORGANIZATION_OTHER,
+                      "security_role": "it_admin"})
+        me = self.client.get(
+            "/api/me",
+            headers={"Authorization": f"Bearer {response.json()['token']}"}).json()
+        self.assertEqual(me["organization_id"], main.nova_organization_id())
+        self.assertEqual(me["membership"]["security_role"], "member")
+
+    def test_the_authorization_url_is_google_and_carries_pkce(self):
+        body = self.start_flow().json()
+        url = body["authorization_url"]
+        self.assertTrue(url.startswith("https://accounts.google.com/o/oauth2/v2/auth?"))
+        self.assertIn("code_challenge_method=S256", url)
+        self.assertIn("response_type=code", url)
+        self.assertNotIn("client_secret", url)
+        self.assertNotIn(self.CLIENT_SECRET, url)
+
+    def test_only_a_loopback_redirect_is_accepted(self):
+        for rejected in ("http://192.168.1.20:53200/callback",
+                         "http://localhost:53200/callback",
+                         "https://127.0.0.1:53200/callback"):
+            self.assertEqual(self.start_flow(rejected).status_code, 400)
+
+    def test_google_needs_both_client_id_and_secret(self):
+        with patch.object(main, "GOOGLE_CLIENT_ID", self.CLIENT_ID), patch.object(
+            main, "GOOGLE_CLIENT_SECRET", ""
+        ):
+            response = self.client.post(
+                "/api/auth/sso/google_workspace/start",
+                json={"code_challenge": "g" * 43, "nonce": "n" * 20,
+                      "redirect_uri": "http://127.0.0.1:53200/callback"})
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["detail"], "PROVIDER_NOT_CONFIGURED")
+
+    def test_google_is_unavailable_without_a_mapped_domain(self):
+        with main.db() as conn:
+            conn.execute(
+                "UPDATE organizations SET google_hosted_domain=NULL WHERE id=?",
+                (main.nova_organization_id(),))
+        a, b = self.google_config()
+        with a, b:
+            providers = self.client.get("/api/auth/providers").json()["providers"]
+        self.assertNotIn("google_workspace", providers)
+
+    def test_the_exchange_sends_the_google_client_secret_server_side(self):
+        """Google exige le secret de son client Desktop a l'echange. Il ne
+        quitte pas le serveur : le poste ne le voit jamais."""
+        captured = {}
+
+        class FakeResponse:
+            status_code = 200
+
+            def json(self):
+                return {"id_token": "peu-importe"}
+
+        class FakeClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def post(self, url, data=None):
+                captured["url"] = url
+                captured["data"] = data
+                return FakeResponse()
+
+        body = main.SsoExchangeRequest(
+            flow_id="f", code="c", code_verifier="v" * 64,
+            redirect_uri="http://127.0.0.1:53200/callback")
+        a, b = self.google_config()
+        with a, b, patch.object(main.httpx, "AsyncClient", lambda **k: FakeClient()):
+            asyncio.run(main.redeem_authorization_code("google_workspace", body))
+
+        self.assertEqual(captured["data"]["client_secret"], self.CLIENT_SECRET)
+        self.assertEqual(captured["data"]["code_verifier"], "v" * 64)
+        self.assertTrue(captured["url"].startswith("https://oauth2.googleapis.com/"))
+
+    def test_microsoft_exchange_still_sends_no_secret(self):
+        captured = {}
+
+        class FakeResponse:
+            status_code = 200
+
+            def json(self):
+                return {"id_token": "peu-importe"}
+
+        class FakeClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def post(self, url, data=None):
+                captured["data"] = data
+                return FakeResponse()
+
+        body = main.SsoExchangeRequest(
+            flow_id="f", code="c", code_verifier="v" * 64,
+            redirect_uri="http://127.0.0.1:53200/callback")
+        with patch.object(main, "ENTRA_CLIENT_ID", "app-microsoft"), patch.object(
+            main.httpx, "AsyncClient", lambda **k: FakeClient()
+        ):
+            asyncio.run(main.redeem_authorization_code("microsoft_entra", body))
+        self.assertNotIn("client_secret", captured["data"])
+
+
+class MultiProviderTests(unittest.TestCase):
+    """Ce qui doit rester separe quand deux fournisseurs coexistent."""
+
+    GOOGLE_CLIENT_ID = "222222222222-zzz.apps.googleusercontent.com"
+    GOOGLE_CLIENT_SECRET = "GOCSPX-autre-secret-de-test"
+    ENTRA_CLIENT_ID = "cccccccc-dddd-4eee-8fff-aaaaaaaaaaaa"
+    TENANT = "33333333-3333-4333-8333-333333333333"
+    DOMAIN = "example.com"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.client = TestClient(main.app)
+        cls.key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+
+    def setUp(self):
+        with main.db() as conn:
+            for table in ("auth_codes", "tokens", "users", "federated_identities"):
+                conn.execute(f"DELETE FROM {table}")
+            conn.execute(
+                "UPDATE organizations SET entra_tenant_id=?, google_hosted_domain=? "
+                "WHERE id=?",
+                (self.TENANT, self.DOMAIN, main.nova_organization_id()))
+        main.SSO_FLOWS.clear()
+        main.JWKS_CACHE.clear()
+        for provider, seed in (("microsoft_entra", {"tid": self.TENANT}),
+                               ("google_workspace", {})):
+            uri = main.PROVIDERS[provider]["jwks_uri"](seed)
+            jwk = json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(self.key.public_key()))
+            jwk.update({"kid": "k1", "use": "sig", "alg": "RS256"})
+            main.JWKS_CACHE[uri] = {"jwks": {"keys": [jwk]}, "fetched_at": time.time()}
+
+    def config(self):
+        return (patch.object(main, "GOOGLE_CLIENT_ID", self.GOOGLE_CLIENT_ID),
+                patch.object(main, "GOOGLE_CLIENT_SECRET", self.GOOGLE_CLIENT_SECRET),
+                patch.object(main, "ENTRA_CLIENT_ID", self.ENTRA_CLIENT_ID))
+
+    def token(self, provider, subject, email, nonce):
+        now = int(time.time())
+        if provider == "microsoft_entra":
+            claims = {"iss": f"https://login.microsoftonline.com/{self.TENANT}/v2.0",
+                      "aud": self.ENTRA_CLIENT_ID, "exp": now + 600, "iat": now,
+                      "sub": "sub-app", "oid": subject, "tid": self.TENANT,
+                      "preferred_username": email, "nonce": nonce}
+        else:
+            claims = {"iss": "https://accounts.google.com",
+                      "aud": self.GOOGLE_CLIENT_ID, "exp": now + 600, "iat": now,
+                      "sub": subject, "hd": self.DOMAIN, "email": email,
+                      "nonce": nonce}
+        return jwt.encode(claims, self.key, algorithm="RS256", headers={"kid": "k1"})
+
+    def sign_in(self, provider, subject, email, port=53300):
+        nonce = f"nonce-{provider}-0123456789"
+        a, b, c = self.config()
+        with a, b, c:
+            start = self.client.post(
+                f"/api/auth/sso/{provider}/start",
+                json={"code_challenge": "x" * 43, "nonce": nonce,
+                      "redirect_uri": f"http://127.0.0.1:{port}/callback",
+                      "machine": "poste"}).json()
+
+            async def fake_redeem(prov, body):
+                return {"id_token": self.token(provider, subject, email, nonce)}
+
+            with patch.object(main, "redeem_authorization_code", fake_redeem):
+                return self.client.post(
+                    f"/api/auth/sso/{provider}/exchange",
+                    json={"flow_id": start["flow_id"], "code": "c",
+                          "code_verifier": "v" * 64,
+                          "redirect_uri": f"http://127.0.0.1:{port}/callback"})
+
+    def test_the_same_email_at_two_providers_is_not_merged_blindly(self):
+        """Deux identites, un seul compte — et surtout deux lignes distinctes :
+        rien ne fusionne parce que l'adresse coincide."""
+        first = self.sign_in("microsoft_entra", "oid-microsoft", "personne@example.com")
+        self.assertEqual(first.status_code, 200, first.text)
+        second = self.sign_in("google_workspace", "sub-google", "personne@example.com",
+                              port=53301)
+        self.assertEqual(second.status_code, 200, second.text)
+
+        with main.db() as conn:
+            identities = conn.execute(
+                "SELECT provider, external_subject FROM federated_identities "
+                "ORDER BY provider").fetchall()
+            users = conn.execute("SELECT COUNT(*) c FROM users").fetchone()["c"]
+        self.assertEqual([r["provider"] for r in identities],
+                         ["google_workspace", "microsoft_entra"])
+        self.assertEqual(len({r["external_subject"] for r in identities}), 2)
+        self.assertEqual(users, 1)
+
+    def test_the_same_subject_at_two_providers_is_two_identities(self):
+        shared = "sujet-identique-partout"
+        self.assertEqual(
+            self.sign_in("microsoft_entra", shared, "a@example.com").status_code, 200)
+        self.assertEqual(
+            self.sign_in("google_workspace", shared, "a@example.com", 53302).status_code,
+            200)
+        with main.db() as conn:
+            rows = conn.execute(
+                "SELECT provider FROM federated_identities WHERE external_subject=?",
+                (shared,)).fetchall()
+        self.assertEqual(len(rows), 2)
+        self.assertEqual({r["provider"] for r in rows},
+                         {"microsoft_entra", "google_workspace"})
+
+    def test_a_google_flow_cannot_be_exchanged_as_microsoft(self):
+        """Isolation des tentatives : un flux appartient a son fournisseur."""
+        a, b, c = self.config()
+        with a, b, c:
+            start = self.client.post(
+                "/api/auth/sso/google_workspace/start",
+                json={"code_challenge": "x" * 43, "nonce": "n" * 20,
+                      "redirect_uri": "http://127.0.0.1:53310/callback"}).json()
+
+            async def fake_redeem(prov, body):
+                return {"id_token": "peu-importe"}
+
+            with patch.object(main, "redeem_authorization_code", fake_redeem):
+                response = self.client.post(
+                    "/api/auth/sso/microsoft_entra/exchange",
+                    json={"flow_id": start["flow_id"], "code": "c",
+                          "code_verifier": "v" * 64,
+                          "redirect_uri": "http://127.0.0.1:53310/callback"})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"], "STATE_MISMATCH")
+
+    def test_a_microsoft_flow_cannot_be_exchanged_as_google(self):
+        a, b, c = self.config()
+        with a, b, c:
+            start = self.client.post(
+                "/api/auth/sso/microsoft_entra/start",
+                json={"code_challenge": "x" * 43, "nonce": "n" * 20,
+                      "redirect_uri": "http://127.0.0.1:53311/callback"}).json()
+
+            async def fake_redeem(prov, body):
+                return {"id_token": "peu-importe"}
+
+            with patch.object(main, "redeem_authorization_code", fake_redeem):
+                response = self.client.post(
+                    "/api/auth/sso/google_workspace/exchange",
+                    json={"flow_id": start["flow_id"], "code": "c",
+                          "code_verifier": "v" * 64,
+                          "redirect_uri": "http://127.0.0.1:53311/callback"})
+        self.assertEqual(response.json()["detail"], "STATE_MISMATCH")
+
+    def test_both_providers_are_announced_when_both_are_configured(self):
+        a, b, c = self.config()
+        with a, b, c:
+            providers = self.client.get("/api/auth/providers").json()["providers"]
+        self.assertEqual(providers,
+                         ["microsoft_entra", "google_workspace", "legacy_email_code"])
+        with a, b, c:
+            legacy = self.client.get("/api/auth/entra/pkce/available").json()
+        self.assertTrue(legacy["available"])
+        self.assertIn("google_workspace", legacy["providers"])
+
+    def test_an_unknown_provider_is_refused(self):
+        response = self.client.post(
+            "/api/auth/sso/okta/start",
+            json={"code_challenge": "x" * 43, "nonce": "n" * 20,
+                  "redirect_uri": "http://127.0.0.1:53312/callback"})
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["detail"], "PROVIDER_UNKNOWN")
+
+    def test_the_legacy_email_code_still_works_beside_both(self):
+        email = "student@example.com"
+        self.client.post("/api/auth/request", json={"email": email, "machine": "p"})
+        with main.db() as conn:
+            code = conn.execute(
+                "SELECT code FROM auth_codes WHERE email=?", (email,)).fetchone()["code"]
+        response = self.client.post(
+            "/api/auth/verify", json={"email": email, "code": code, "machine": "p"})
+        self.assertEqual(response.status_code, 200)
+        me = self.client.get(
+            "/api/me",
+            headers={"Authorization": f"Bearer {response.json()['token']}"}).json()
+        self.assertEqual(me["identity"]["provider"], "legacy_email_code")
 
 
 if __name__ == "__main__":
