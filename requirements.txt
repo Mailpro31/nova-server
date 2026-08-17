@@ -3,3 +3,4 @@ uvicorn[standard]
 httpx
 pydantic[email]
 python-multipart
+pyjwt[crypto]

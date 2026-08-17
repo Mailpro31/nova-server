@@ -19,7 +19,10 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
+from urllib.parse import urlencode, urlparse
+
 import httpx
+import jwt
 from fastapi import Depends, FastAPI, Header, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel, EmailStr
@@ -61,6 +64,23 @@ ENTRA_SCOPES = os.getenv("NOVA_ENTRA_SCOPES", "openid profile email User.Read")
 # explicite « tenant externe → organisation Nova », qui ne repose pas sur le
 # suffixe d'adresse.
 ENTRA_ALLOWED_TENANT_ID = os.getenv("NOVA_ENTRA_ALLOWED_TENANT_ID", "").strip()
+
+# --- SSO Organization moderne : Authorization Code + PKCE ------------------
+#
+# Autorité `organizations` : comptes professionnels et scolaires uniquement,
+# jamais de compte Microsoft personnel — Nova Organization n'a pas de sens pour
+# un compte personnel. Le point d'entrée reste multi-tenant parce que Nova doit
+# pouvoir servir plusieurs établissements ; c'est le `tid` du jeton vérifié,
+# rapproché de la table `organizations`, qui décide de l'accès. Le point
+# d'entrée ne fait entrer personne : le mapping, si.
+ENTRA_PKCE_AUTHORITY = "https://login.microsoftonline.com/organizations/oauth2/v2.0"
+# `openid profile email` suffit à l'identité : `oid`, `tid` et l'adresse sont
+# dans le jeton d'identité. Aucun appel Graph, donc aucun consentement
+# administrateur à demander pour se connecter.
+ENTRA_PKCE_SCOPES = os.getenv("NOVA_ENTRA_PKCE_SCOPES", "openid profile email")
+ENTRA_PKCE_FLOW_TTL_SECONDS = 600
+# Tolérance d'horloge pour `exp` / `nbf`, en secondes.
+ENTRA_CLOCK_SKEW_SECONDS = 120
 ENTRA_AUTHORITY = f"https://login.microsoftonline.com/{ENTRA_TENANT_ID}/oauth2/v2.0"
 ENTRA_FLOWS: dict[str, dict] = {}
 
@@ -932,6 +952,440 @@ async def entra_poll(body: EntraPollRequest):
     session = issue_token(email, flow["machine"])
     record_federated_identity(email, "microsoft_entra", external_subject, external_tenant_id)
     return {"status": "complete", "email": email, **session}
+
+# ------------------------------------------------------ SSO Entra : PKCE
+#
+# ## Frontière de confiance
+#
+# Le Desktop **ne prouve rien**. Il génère son `code_verifier`, son `state` et
+# son `nonce`, ouvre le navigateur système, récupère un `code` d'autorisation —
+# puis passe la main. C'est le serveur qui échange ce code auprès de Microsoft,
+# valide cryptographiquement le jeton d'identité et décide de l'organisation.
+#
+# Autrement dit, le serveur n'accepte jamais « fais-moi confiance, tid=X,
+# oid=Y » : il obtient la preuve lui-même, directement de Microsoft. Le poste ne
+# voit à aucun moment un jeton Microsoft, et n'a donc rien à en effacer.
+#
+# Conséquence pratique : un poste compromis peut au pire tenter une connexion,
+# jamais en fabriquer une.
+
+# Flux en attente, par identifiant. En mémoire, comme le Device Code existant :
+# la durée de vie est de quelques minutes et un redémarrage n'invalide qu'une
+# connexion en cours.
+ENTRA_PKCE_FLOWS: dict[str, dict] = {}
+
+# Cache JWKS par tenant. La rotation des clés Microsoft est permanente : on
+# recharge à la demande lorsqu'un `kid` inconnu apparaît, sans jamais suivre une
+# URL fournie par le jeton lui-même.
+JWKS_CACHE: dict[str, dict] = {}
+JWKS_CACHE_TTL_SECONDS = 3600
+
+
+class EntraPkceStartRequest(BaseModel):
+    code_challenge: str
+    nonce: str
+    redirect_uri: str
+    machine: str = "poste inconnu"
+
+
+class EntraPkceExchangeRequest(BaseModel):
+    flow_id: str
+    code: str
+    code_verifier: str
+    redirect_uri: str
+
+
+def auth_error(status: int, code: str) -> HTTPException:
+    """Erreur d'authentification structurée.
+
+    Le corps ne porte qu'un code : le poste choisit le libellé, et aucun détail
+    technique — jeton, code d'autorisation, revendication — ne transite.
+    """
+    return HTTPException(status, code)
+
+
+def is_loopback_redirect(redirect_uri: str) -> bool:
+    """Le retour doit se faire sur la machine de l'utilisateur, et nulle part
+    ailleurs.
+
+    Sans cette vérification, un poste modifié pourrait faire échanger un code
+    contre une URL de redirection qu'il contrôle. Seules les adresses de
+    bouclage littérales sont acceptées — `localhost` est écarté parce qu'il
+    dépend d'une résolution de noms que l'on ne maîtrise pas.
+    """
+    try:
+        parsed = urlparse(redirect_uri)
+    except ValueError:
+        return False
+    if parsed.scheme != "http":
+        return False
+    if parsed.hostname not in {"127.0.0.1", "::1"}:
+        return False
+    return bool(parsed.port)
+
+
+def jwks_uri_for_tenant(tenant_id: str) -> str:
+    """Emplacement des clés publiques, dérivé du tenant — jamais du jeton."""
+    return f"https://login.microsoftonline.com/{tenant_id}/discovery/v2.0/keys"
+
+
+async def fetch_jwks(tenant_id: str) -> dict:
+    async with httpx.AsyncClient(timeout=15) as client:
+        response = await client.get(jwks_uri_for_tenant(tenant_id))
+    if response.status_code != 200:
+        raise auth_error(502, "JWKS_UNAVAILABLE")
+    return response.json()
+
+
+async def jwks_for_tenant(tenant_id: str, force_refresh: bool = False) -> dict:
+    """JWKS du tenant, mis en cache, rechargé à la demande.
+
+    `force_refresh` sert au cas de la rotation : un `kid` absent du cache n'est
+    pas une signature invalide, c'est peut-être une clé neuve.
+    """
+    cached = JWKS_CACHE.get(tenant_id)
+    fresh = cached and cached["fetched_at"] + JWKS_CACHE_TTL_SECONDS > time.time()
+    if cached and fresh and not force_refresh:
+        return cached["jwks"]
+    jwks = await fetch_jwks(tenant_id)
+    JWKS_CACHE[tenant_id] = {"jwks": jwks, "fetched_at": time.time()}
+    return jwks
+
+
+def signing_key_from_jwks(jwks: dict, kid: str):
+    for key in jwks.get("keys", []):
+        if key.get("kid") == kid:
+            return jwt.PyJWK(key).key
+    return None
+
+
+async def validate_entra_id_token(id_token: str, expected_nonce: str) -> dict:
+    """Valide complètement un jeton d'identité Microsoft.
+
+    Rien n'est cru avant cette fonction, et tout est vérifié : signature contre
+    les clés publiques du tenant, algorithme, émetteur, audience, expiration,
+    date d'entrée en vigueur et `nonce`. L'algorithme est imposé — accepter
+    celui annoncé par le jeton laisserait passer `none` et les confusions
+    HMAC/RSA.
+
+    Le `kid` sert à choisir la clé, jamais l'URL : celle-ci est dérivée du
+    tenant, pas d'un champ du jeton.
+    """
+    try:
+        header = jwt.get_unverified_header(id_token)
+    except Exception:
+        raise auth_error(401, "ID_TOKEN_INVALID")
+
+    if header.get("alg") not in {"RS256"}:
+        raise auth_error(401, "ID_TOKEN_INVALID")
+    kid = header.get("kid")
+    if not kid:
+        raise auth_error(401, "ID_TOKEN_INVALID")
+
+    # Le tenant est nécessaire pour connaître l'émetteur et les clés. Il est lu
+    # sans vérification ici, puis **re-vérifié** par la validation de l'émetteur
+    # et de la signature juste après : un tenant falsifié ne peut pas produire
+    # une signature valide pour l'émetteur correspondant.
+    unverified = decode_jwt_claims(id_token)
+    tenant_id = (unverified.get("tid") or "").strip()
+    if not tenant_id:
+        raise auth_error(401, "ID_TOKEN_INVALID")
+
+    jwks = await jwks_for_tenant(tenant_id)
+    key = signing_key_from_jwks(jwks, kid)
+    if key is None:
+        # Clé inconnue : peut-être une rotation. On recharge une fois.
+        jwks = await jwks_for_tenant(tenant_id, force_refresh=True)
+        key = signing_key_from_jwks(jwks, kid)
+    if key is None:
+        raise auth_error(401, "ID_TOKEN_INVALID")
+
+    try:
+        claims = jwt.decode(
+            id_token,
+            key=key,
+            algorithms=["RS256"],
+            audience=ENTRA_CLIENT_ID,
+            issuer=f"https://login.microsoftonline.com/{tenant_id}/v2.0",
+            leeway=ENTRA_CLOCK_SKEW_SECONDS,
+            options={
+                "require": ["exp", "iat", "iss", "aud", "sub"],
+                "verify_signature": True,
+                "verify_exp": True,
+                "verify_nbf": True,
+                "verify_iat": True,
+                "verify_aud": True,
+                "verify_iss": True,
+            },
+        )
+    except jwt.InvalidTokenError:
+        raise auth_error(401, "ID_TOKEN_INVALID")
+
+    # Le `nonce` lie ce jeton à **cette** tentative de connexion. Sans lui, un
+    # jeton valide capté ailleurs pourrait être rejoué ici.
+    if not expected_nonce or claims.get("nonce") != expected_nonce:
+        raise auth_error(401, "ID_TOKEN_INVALID")
+
+    # `oid` identifie l'objet utilisateur dans le tenant : immuable au
+    # renommage, contrairement à `sub` qui dépend de l'application.
+    if not claims.get("oid"):
+        raise auth_error(401, "ID_TOKEN_INVALID")
+
+    return claims
+
+
+def organization_for_entra_tenant(tenant_id: str) -> sqlite3.Row | None:
+    """Organisation Nova rattachée à un tenant Microsoft.
+
+    Mapping **explicite** uniquement. Il n'existe pas de variante prenant un
+    domaine d'adresse : rattacher une organisation depuis « @entreprise.com »
+    donnerait son accès à quiconque contrôle une adresse dans ce domaine.
+    """
+    if not tenant_id:
+        return None
+    with db() as conn:
+        return conn.execute(
+            "SELECT * FROM organizations WHERE entra_tenant_id=?", (tenant_id,)
+        ).fetchone()
+
+
+def resolve_member_for_identity(
+    email: str, organization_id: str, external_subject: str, tenant_id: str
+) -> str:
+    """Retrouve, rattache ou crée le compte correspondant à une identité
+    Microsoft **déjà vérifiée**.
+
+    Trois cas, dans cet ordre :
+
+    1. **identité fédérée connue** — on retrouve le compte par le couple
+       (fournisseur, sujet). C'est le chemin normal, et le seul qui ne repose
+       sur aucune adresse ;
+    2. **compte historique correspondant** — rattachement contrôlé. Il n'a lieu
+       que si le tenant est vérifié, que l'organisation correspond, que
+       l'adresse correspond, et qu'aucune autre identité fédérée n'occupe déjà
+       ce compte. Une correspondance d'adresse seule ne suffit jamais : c'est
+       précisément la déduction qui permettrait à un tenant voisin de
+       s'approprier un compte ;
+    3. **nouveau membre autorisé** — création selon la politique actuelle, la
+       même que pour le code e-mail (domaine autorisé).
+    """
+    with db() as conn:
+        existing = conn.execute(
+            "SELECT email, organization_id FROM federated_identities "
+            "WHERE provider='microsoft_entra' AND external_subject=?",
+            (external_subject,),
+        ).fetchone()
+
+        if existing:
+            # Une identité rattachée à une autre organisation ne franchit pas
+            # la frontière, même si le sujet correspond.
+            if existing["organization_id"] != organization_id:
+                raise auth_error(403, "ORGANIZATION_MISMATCH")
+            return existing["email"]
+
+        user = conn.execute(
+            "SELECT email, organization_id, disabled, status FROM users WHERE email=?",
+            (email,),
+        ).fetchone()
+
+        if user:
+            if user["organization_id"] and user["organization_id"] != organization_id:
+                raise auth_error(403, "ORGANIZATION_MISMATCH")
+            conflicting = conn.execute(
+                "SELECT external_subject FROM federated_identities "
+                "WHERE provider='microsoft_entra' AND email=? AND external_subject<>?",
+                (email, external_subject),
+            ).fetchone()
+            if conflicting:
+                raise auth_error(409, "IDENTITY_CONFLICT")
+            return user["email"]
+
+    # Nouveau membre : même politique d'admission que le code e-mail.
+    if email.split("@")[-1] not in ALLOWED_DOMAINS:
+        raise auth_error(403, "MEMBERSHIP_NOT_FOUND")
+    touch_user(email)
+    return email
+
+
+@app.get("/api/auth/entra/pkce/available")
+def entra_pkce_available():
+    """Le SSO Organization moderne est-il utilisable sur ce serveur ?
+
+    Le poste s'en sert pour n'afficher « Continuer avec Microsoft » que lorsque
+    l'établissement l'a réellement configuré — identifiant d'application **et**
+    tenant rattaché à l'organisation.
+    """
+    organization_id = nova_organization_id()
+    with db() as conn:
+        organization = conn.execute(
+            "SELECT entra_tenant_id FROM organizations WHERE id=?", (organization_id,)
+        ).fetchone()
+    tenant_mapped = bool(organization and organization["entra_tenant_id"])
+    return {
+        "available": bool(ENTRA_CLIENT_ID) and tenant_mapped,
+        "providers": [
+            provider
+            for provider in (
+                "microsoft_entra" if ENTRA_CLIENT_ID and tenant_mapped else None,
+                "legacy_email_code",
+            )
+            if provider
+        ],
+    }
+
+
+@app.post("/api/auth/entra/pkce/start")
+def entra_pkce_start(body: EntraPkceStartRequest):
+    """Prépare une tentative de connexion et renvoie l'URL d'autorisation.
+
+    Le serveur retient le `nonce` attendu : c'est lui qui le confrontera au
+    jeton d'identité. Le `code_verifier`, lui, ne quitte jamais le poste avant
+    l'échange — c'est tout l'intérêt de PKCE.
+    """
+    if not ENTRA_CLIENT_ID:
+        raise auth_error(503, "PROVIDER_NOT_CONFIGURED")
+    if not is_loopback_redirect(body.redirect_uri):
+        raise auth_error(400, "REDIRECT_URI_INVALID")
+    if len(body.code_challenge) < 43 or len(body.nonce) < 16:
+        raise auth_error(400, "PKCE_INVALID")
+
+    organization = organization_for_entra_tenant_of_this_server()
+    if organization is None:
+        raise auth_error(503, "PROVIDER_NOT_CONFIGURED")
+
+    flow_id = secrets.token_urlsafe(24)
+    now = time.time()
+    # Ménage des tentatives expirées : pas de flux zombie qui s'accumule.
+    for stale, flow in list(ENTRA_PKCE_FLOWS.items()):
+        if flow["expires_at"] < now:
+            ENTRA_PKCE_FLOWS.pop(stale, None)
+
+    ENTRA_PKCE_FLOWS[flow_id] = {
+        "nonce": body.nonce,
+        "redirect_uri": body.redirect_uri,
+        "machine": body.machine,
+        "expires_at": now + ENTRA_PKCE_FLOW_TTL_SECONDS,
+    }
+
+    parameters = {
+        "client_id": ENTRA_CLIENT_ID,
+        "response_type": "code",
+        "redirect_uri": body.redirect_uri,
+        "response_mode": "query",
+        "scope": ENTRA_PKCE_SCOPES,
+        "code_challenge": body.code_challenge,
+        "code_challenge_method": "S256",
+        "nonce": body.nonce,
+    }
+    return {
+        "flow_id": flow_id,
+        "authorization_url": f"{ENTRA_PKCE_AUTHORITY}/authorize?{urlencode(parameters)}",
+        "expires_in": ENTRA_PKCE_FLOW_TTL_SECONDS,
+    }
+
+
+def organization_for_entra_tenant_of_this_server() -> sqlite3.Row | None:
+    with db() as conn:
+        organization = conn.execute(
+            "SELECT * FROM organizations WHERE id=?", (nova_organization_id(),)
+        ).fetchone()
+    if organization and organization["entra_tenant_id"]:
+        return organization
+    return None
+
+
+async def redeem_authorization_code(body: EntraPkceExchangeRequest) -> dict:
+    """Échange le code d'autorisation contre les jetons Microsoft.
+
+    Client public : aucun `client_secret`. C'est le `code_verifier` qui prouve
+    que le code revient bien à celui qui l'a demandé.
+    """
+    async with httpx.AsyncClient(timeout=20) as client:
+        response = await client.post(
+            f"{ENTRA_PKCE_AUTHORITY}/token",
+            data={
+                "client_id": ENTRA_CLIENT_ID,
+                "grant_type": "authorization_code",
+                "code": body.code,
+                "redirect_uri": body.redirect_uri,
+                "code_verifier": body.code_verifier,
+                "scope": ENTRA_PKCE_SCOPES,
+            },
+        )
+    if response.status_code != 200:
+        # Le détail Microsoft (`invalid_grant`, code expiré, code déjà utilisé)
+        # n'est pas renvoyé au poste : il ne changerait pas sa conduite et
+        # décrirait l'état d'un secret.
+        raise auth_error(400, "TOKEN_EXCHANGE_FAILED")
+    return response.json()
+
+
+@app.post("/api/auth/entra/pkce/exchange")
+async def entra_pkce_exchange(body: EntraPkceExchangeRequest):
+    """Transforme un code d'autorisation en session Nova.
+
+    Le jeton Microsoft ne ressort pas d'ici : le poste ne reçoit qu'une session
+    Nova opaque, avec son propre cycle de vie. Aucun jeton de rafraîchissement
+    Microsoft n'est conservé — Microsoft a prouvé l'identité, son rôle s'arrête
+    là.
+    """
+    flow = ENTRA_PKCE_FLOWS.pop(body.flow_id, None)  # usage unique
+    if not flow or flow["expires_at"] < time.time():
+        raise auth_error(400, "AUTH_TIMEOUT")
+    if flow["redirect_uri"] != body.redirect_uri:
+        raise auth_error(400, "REDIRECT_URI_INVALID")
+
+    tokens = await redeem_authorization_code(body)
+    id_token = tokens.get("id_token")
+    if not id_token:
+        raise auth_error(401, "ID_TOKEN_INVALID")
+
+    claims = await validate_entra_id_token(id_token, flow["nonce"])
+    tenant_id = claims["tid"]
+    external_subject = claims["oid"]
+
+    organization = organization_for_entra_tenant(tenant_id)
+    if organization is None:
+        raise auth_error(403, "TENANT_NOT_ALLOWED")
+    # Cette instance sert **une** organisation. Un tenant que Nova connaît, mais
+    # qui appartient à une autre organisation, n'obtient pas de session ici :
+    # sans ce contrôle, un annuaire voisin déclaré sur le même Control Plane
+    # entrerait chez cet établissement.
+    if organization["id"] != nova_organization_id():
+        raise auth_error(403, "TENANT_NOT_ALLOWED")
+
+    email = (claims.get("preferred_username") or claims.get("email") or "").lower()
+    if not email:
+        raise auth_error(401, "ID_TOKEN_INVALID")
+
+    resolved_email = resolve_member_for_identity(
+        email, organization["id"], external_subject, tenant_id
+    )
+
+    with db() as conn:
+        account = conn.execute(
+            "SELECT disabled, status FROM users WHERE email=?", (resolved_email,)
+        ).fetchone()
+    if account and (account["disabled"] or (account["status"] or "active") != "active"):
+        raise auth_error(403, "ACCOUNT_DISABLED")
+
+    session = issue_token(resolved_email, flow["machine"])
+    # Identité désormais **vérifiée** : signature, émetteur, audience,
+    # expiration, nonce et tenant l'ont été. C'est ce qui la distingue du
+    # Device Code hérité, qui reste `transport_only`.
+    record_federated_identity(
+        resolved_email,
+        "microsoft_entra",
+        external_subject,
+        tenant_id,
+        verification="verified",
+    )
+    print(
+        f"[auth] provider=microsoft_entra organization={organization['id']} "
+        f"result=success flow={body.flow_id[:8]}"
+    )
+    return {"status": "complete", "email": resolved_email, **session}
+
 
 # --- profil de l'utilisateur connecté (pour l'app)
 @app.get("/api/me")

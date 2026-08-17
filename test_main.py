@@ -1,4 +1,7 @@
+import asyncio
 import base64
+import hashlib
+import hmac
 import json
 import os
 import sqlite3
@@ -17,7 +20,12 @@ os.environ["NOVA_ORGANIZATION_NAME"] = "Nova Test School"
 os.environ["NOVA_ORGANIZATION_SHORT_NAME"] = "NTS"
 os.environ["NOVA_ENTRA_CLIENT_ID"] = ""
 
+import jwt
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from pathlib import Path
 
 import main
 
@@ -1004,6 +1012,640 @@ class TenantIsolationTests(unittest.TestCase):
             if enabled
         )
         self.assertEqual(body["capabilities"], expected)
+
+
+class EntraPkceTests(unittest.TestCase):
+    """SSO Microsoft moderne : Authorization Code + PKCE.
+
+    Aucun test ne touche le réseau. Les jetons sont signés localement par une
+    paire de clés de test, et le JWKS est injecté dans le cache — ce que fait
+    Microsoft en production, sans en dépendre ici.
+    """
+
+    TENANT_A = "11111111-1111-4111-8111-111111111111"
+    TENANT_B = "22222222-2222-4222-8222-222222222222"
+    CLIENT_ID = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+    ORGANIZATION_B = "org-b-uuid"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.client = TestClient(main.app)
+        cls.private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        cls.other_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+
+    def setUp(self):
+        with main.db() as conn:
+            for table in ("auth_codes", "tokens", "users", "federated_identities"):
+                conn.execute(f"DELETE FROM {table}")
+            conn.execute("DELETE FROM organizations WHERE id=?", (self.ORGANIZATION_B,))
+            # Le tenant A est rattaché à l'organisation servie par l'instance.
+            conn.execute(
+                "UPDATE organizations SET entra_tenant_id=? WHERE id=?",
+                (self.TENANT_A, main.nova_organization_id()),
+            )
+            # Le tenant B appartient à une autre organisation.
+            conn.execute(
+                "INSERT OR REPLACE INTO organizations(id, slug, display_name, org_type, "
+                "entra_tenant_id, created_at) VALUES (?,?,?,?,?,?)",
+                (self.ORGANIZATION_B, "org-b", "Organisation B", "business",
+                 self.TENANT_B, time.time()),
+            )
+        main.ENTRA_PKCE_FLOWS.clear()
+        main.JWKS_CACHE.clear()
+        self.seed_jwks(self.TENANT_A)
+        self.seed_jwks(self.TENANT_B)
+
+    # -- outillage ---------------------------------------------------------
+
+    def jwk_for(self, key, kid: str) -> dict:
+        jwk = json.loads(
+            jwt.algorithms.RSAAlgorithm.to_jwk(key.public_key())
+        )
+        jwk.update({"kid": kid, "use": "sig", "alg": "RS256"})
+        return jwk
+
+    def seed_jwks(self, tenant_id: str, kid: str = "test-key-1", key=None):
+        main.JWKS_CACHE[tenant_id] = {
+            "jwks": {"keys": [self.jwk_for(key or self.private_key, kid)]},
+            "fetched_at": time.time(),
+        }
+
+    def id_token(self, key=None, kid="test-key-1", **overrides) -> str:
+        now = int(time.time())
+        claims = {
+            "iss": f"https://login.microsoftonline.com/{self.TENANT_A}/v2.0",
+            "aud": self.CLIENT_ID,
+            "exp": now + 600,
+            "iat": now,
+            "nbf": now - 10,
+            "sub": "sub-application-specifique",
+            "oid": "oid-immuable-1",
+            "tid": self.TENANT_A,
+            "nonce": "nonce-attendu-0123456789",
+            "preferred_username": "etudiant@example.com",
+        }
+        claims.update(overrides)
+        for empty in [k for k, v in claims.items() if v is None]:
+            claims.pop(empty)
+        return jwt.encode(claims, key or self.private_key, algorithm="RS256",
+                          headers={"kid": kid})
+
+    def validate(self, token: str, nonce: str = "nonce-attendu-0123456789"):
+        with patch.object(main, "ENTRA_CLIENT_ID", self.CLIENT_ID):
+            return asyncio.run(main.validate_entra_id_token(token, nonce))
+
+    # -- validation du jeton d'identité ------------------------------------
+
+    def test_a_correctly_signed_token_is_accepted(self):
+        claims = self.validate(self.id_token())
+        self.assertEqual(claims["tid"], self.TENANT_A)
+        self.assertEqual(claims["oid"], "oid-immuable-1")
+
+    def test_a_token_signed_by_another_key_is_refused(self):
+        with self.assertRaises(HTTPException) as raised:
+            self.validate(self.id_token(key=self.other_key))
+        self.assertEqual(raised.exception.detail, "ID_TOKEN_INVALID")
+
+    def test_an_unknown_kid_triggers_a_controlled_refresh(self):
+        """Une clé inconnue peut être une rotation, pas une attaque : on
+        recharge une fois, depuis l'URL dérivée du tenant."""
+        rotated = self.jwk_for(self.private_key, "kid-apres-rotation")
+        calls = []
+
+        async def fake_fetch(tenant_id):
+            calls.append(tenant_id)
+            return {"keys": [rotated]}
+
+        # Le cache ne contient que l'ancienne clé.
+        self.seed_jwks(self.TENANT_A, kid="ancienne-cle")
+        with patch.object(main, "fetch_jwks", fake_fetch):
+            claims = self.validate(self.id_token(kid="kid-apres-rotation"))
+        self.assertEqual(claims["oid"], "oid-immuable-1")
+        self.assertEqual(calls, [self.TENANT_A])
+
+    def test_an_unknown_kid_that_survives_a_refresh_is_refused(self):
+        async def fake_fetch(tenant_id):
+            return {"keys": []}
+
+        with patch.object(main, "fetch_jwks", fake_fetch):
+            with self.assertRaises(HTTPException):
+                self.validate(self.id_token(kid="kid-inexistant"))
+
+    def test_a_wrong_issuer_is_refused(self):
+        with self.assertRaises(HTTPException):
+            self.validate(self.id_token(iss="https://accounts.example.com/v2.0"))
+
+    def test_a_wrong_audience_is_refused(self):
+        with self.assertRaises(HTTPException):
+            self.validate(self.id_token(aud="une-autre-application"))
+
+    def test_an_expired_token_is_refused(self):
+        past = int(time.time()) - 10_000
+        with self.assertRaises(HTTPException):
+            self.validate(self.id_token(exp=past, iat=past - 100, nbf=past - 100))
+
+    def test_a_token_not_yet_valid_is_refused(self):
+        future = int(time.time()) + 10_000
+        with self.assertRaises(HTTPException):
+            self.validate(self.id_token(nbf=future, iat=future))
+
+    def test_a_wrong_or_missing_nonce_is_refused(self):
+        with self.assertRaises(HTTPException):
+            self.validate(self.id_token(nonce="autre-nonce"))
+        with self.assertRaises(HTTPException):
+            self.validate(self.id_token(nonce=None))
+        # Un nonce attendu vide n'ouvre rien non plus.
+        with self.assertRaises(HTTPException):
+            self.validate(self.id_token(), nonce="")
+
+    def test_a_token_without_tenant_or_subject_is_refused(self):
+        with self.assertRaises(HTTPException):
+            self.validate(self.id_token(tid=None))
+        with self.assertRaises(HTTPException):
+            self.validate(self.id_token(oid=None))
+
+    def test_a_symmetric_algorithm_is_refused(self):
+        """Confusion d'algorithme : le jeton est signé en HMAC avec la clé
+        **publique**, que l'attaquant connaît. Seul un algorithme imposé côté
+        serveur ferme cette porte."""
+        public_pem = self.private_key.public_key().public_bytes(
+            serialization.Encoding.PEM,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        now = int(time.time())
+        header = {"alg": "HS256", "typ": "JWT", "kid": "test-key-1"}
+        payload = {
+            "iss": f"https://login.microsoftonline.com/{self.TENANT_A}/v2.0",
+            "aud": self.CLIENT_ID,
+            "exp": now + 600,
+            "iat": now,
+            "sub": "s",
+            "oid": "oid-immuable-1",
+            "tid": self.TENANT_A,
+            "nonce": "nonce-attendu-0123456789",
+        }
+
+        def segment(value: dict) -> bytes:
+            return base64.urlsafe_b64encode(
+                json.dumps(value, separators=(",", ":")).encode()
+            ).rstrip(b"=")
+
+        signing_input = segment(header) + b"." + segment(payload)
+        signature = base64.urlsafe_b64encode(
+            hmac.new(public_pem, signing_input, hashlib.sha256).digest()
+        ).rstrip(b"=")
+        forged = (signing_input + b"." + signature).decode()
+
+        with self.assertRaises(HTTPException):
+            self.validate(forged)
+
+    def test_an_unsigned_token_is_refused(self):
+        now = int(time.time())
+        forged = jwt.encode(
+            {"iss": "x", "aud": self.CLIENT_ID, "exp": now + 600, "sub": "s"},
+            key="",
+            algorithm="none",
+            headers={"kid": "test-key-1"},
+        )
+        with self.assertRaises(HTTPException):
+            self.validate(forged)
+
+    def test_the_key_location_never_comes_from_the_token(self):
+        # `jku` est un champ d'en-tête que l'attaquant contrôle : il ne doit
+        # jouer aucun rôle. L'URL est dérivée du tenant, point.
+        self.assertIn(self.TENANT_A, main.jwks_uri_for_tenant(self.TENANT_A))
+        self.assertTrue(
+            main.jwks_uri_for_tenant(self.TENANT_A).startswith(
+                "https://login.microsoftonline.com/"
+            )
+        )
+
+    # -- démarrage du flux -------------------------------------------------
+
+    def start_flow(self, redirect_uri="http://127.0.0.1:53125/callback"):
+        with patch.object(main, "ENTRA_CLIENT_ID", self.CLIENT_ID):
+            return self.client.post(
+                "/api/auth/entra/pkce/start",
+                json={
+                    "code_challenge": "a" * 43,
+                    "nonce": "nonce-attendu-0123456789",
+                    "redirect_uri": redirect_uri,
+                    "machine": "poste-1",
+                },
+            )
+
+    def test_the_authorization_url_carries_pkce_and_no_secret(self):
+        body = self.start_flow().json()
+        url = body["authorization_url"]
+        self.assertIn("code_challenge_method=S256", url)
+        self.assertIn("response_type=code", url)
+        self.assertIn(f"client_id={self.CLIENT_ID}", url)
+        self.assertNotIn("client_secret", url)
+        self.assertIn("organizations", url)
+        self.assertTrue(body["flow_id"])
+
+    def test_only_a_loopback_redirect_is_accepted(self):
+        for rejected in (
+            "http://192.168.1.20:53125/callback",
+            "http://attaquant.example.com/callback",
+            "http://localhost:53125/callback",
+            "https://127.0.0.1:53125/callback",
+            "http://127.0.0.1/callback",
+        ):
+            response = self.start_flow(rejected)
+            self.assertEqual(response.status_code, 400, rejected)
+            self.assertEqual(response.json()["detail"], "REDIRECT_URI_INVALID")
+
+    def test_sign_in_is_unavailable_without_configuration(self):
+        with patch.object(main, "ENTRA_CLIENT_ID", ""):
+            response = self.client.post(
+                "/api/auth/entra/pkce/start",
+                json={
+                    "code_challenge": "a" * 43,
+                    "nonce": "n" * 16,
+                    "redirect_uri": "http://127.0.0.1:53125/callback",
+                },
+            )
+        self.assertEqual(response.status_code, 503)
+
+    def test_availability_requires_both_client_and_tenant_mapping(self):
+        with patch.object(main, "ENTRA_CLIENT_ID", self.CLIENT_ID):
+            body = self.client.get("/api/auth/entra/pkce/available").json()
+        self.assertTrue(body["available"])
+        self.assertIn("microsoft_entra", body["providers"])
+        # Le mode hérité reste toujours proposé.
+        self.assertIn("legacy_email_code", body["providers"])
+
+        with main.db() as conn:
+            conn.execute(
+                "UPDATE organizations SET entra_tenant_id=NULL WHERE id=?",
+                (main.nova_organization_id(),),
+            )
+        with patch.object(main, "ENTRA_CLIENT_ID", self.CLIENT_ID):
+            body = self.client.get("/api/auth/entra/pkce/available").json()
+        self.assertFalse(body["available"])
+        self.assertNotIn("microsoft_entra", body["providers"])
+
+    # -- échange -----------------------------------------------------------
+
+    def exchange(self, flow_id, token=None, redirect_uri="http://127.0.0.1:53125/callback",
+                 code="code-microsoft"):
+        async def fake_redeem(body):
+            return {"id_token": token if token is not None else self.id_token()}
+
+        with patch.object(main, "ENTRA_CLIENT_ID", self.CLIENT_ID), patch.object(
+            main, "redeem_authorization_code", fake_redeem
+        ):
+            return self.client.post(
+                "/api/auth/entra/pkce/exchange",
+                json={
+                    "flow_id": flow_id,
+                    "code": code,
+                    "code_verifier": "v" * 64,
+                    "redirect_uri": redirect_uri,
+                },
+            )
+
+    def test_a_complete_sign_in_issues_a_nova_session(self):
+        flow_id = self.start_flow().json()["flow_id"]
+        response = self.exchange(flow_id)
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertEqual(body["email"], "etudiant@example.com")
+        # Le poste ne reçoit qu'une session Nova : aucun jeton Microsoft.
+        self.assertNotIn("id_token", body)
+        self.assertNotIn("access_token", body)
+        self.assertNotIn("refresh_token", body)
+        # …et cette session fonctionne.
+        me = self.client.get(
+            "/api/me", headers={"Authorization": f"Bearer {body['token']}"}
+        )
+        self.assertEqual(me.status_code, 200)
+
+    def test_the_identity_becomes_verified(self):
+        flow_id = self.start_flow().json()["flow_id"]
+        self.exchange(flow_id)
+        with main.db() as conn:
+            row = conn.execute(
+                "SELECT verification, external_subject, external_tenant_id "
+                "FROM federated_identities WHERE provider='microsoft_entra'"
+            ).fetchone()
+        self.assertEqual(row["verification"], "verified")
+        self.assertEqual(row["external_subject"], "oid-immuable-1")
+        self.assertEqual(row["external_tenant_id"], self.TENANT_A)
+        # Le sujet n'est jamais l'adresse.
+        self.assertNotIn("@", row["external_subject"])
+
+    def test_a_flow_is_single_use(self):
+        flow_id = self.start_flow().json()["flow_id"]
+        self.assertEqual(self.exchange(flow_id).status_code, 200)
+        # Rejouer le même flux — code capté, tentative de rejeu — échoue.
+        replayed = self.exchange(flow_id)
+        self.assertEqual(replayed.status_code, 400)
+        self.assertEqual(replayed.json()["detail"], "AUTH_TIMEOUT")
+
+    def test_an_unknown_flow_is_refused(self):
+        self.assertEqual(self.exchange("flux-inconnu").status_code, 400)
+
+    def test_an_expired_flow_is_refused(self):
+        flow_id = self.start_flow().json()["flow_id"]
+        main.ENTRA_PKCE_FLOWS[flow_id]["expires_at"] = time.time() - 1
+        response = self.exchange(flow_id)
+        self.assertEqual(response.json()["detail"], "AUTH_TIMEOUT")
+
+    def test_a_changed_redirect_uri_is_refused(self):
+        flow_id = self.start_flow().json()["flow_id"]
+        response = self.exchange(
+            flow_id, redirect_uri="http://127.0.0.1:60000/callback"
+        )
+        self.assertEqual(response.json()["detail"], "REDIRECT_URI_INVALID")
+
+    def test_a_replayed_nonce_from_an_older_flow_is_refused(self):
+        first = self.start_flow().json()["flow_id"]
+        self.exchange(first)
+        # Nouvelle tentative avec un nonce différent : un jeton émis pour la
+        # première ne doit pas la satisfaire.
+        with patch.object(main, "ENTRA_CLIENT_ID", self.CLIENT_ID):
+            second = self.client.post(
+                "/api/auth/entra/pkce/start",
+                json={
+                    "code_challenge": "b" * 43,
+                    "nonce": "nonce-de-la-seconde-tentative",
+                    "redirect_uri": "http://127.0.0.1:53125/callback",
+                    "machine": "poste-1",
+                },
+            ).json()["flow_id"]
+        response = self.exchange(second, token=self.id_token())
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.json()["detail"], "ID_TOKEN_INVALID")
+
+    def test_a_failed_token_exchange_is_reported_without_detail(self):
+        flow_id = self.start_flow().json()["flow_id"]
+
+        async def failing(body):
+            raise main.auth_error(400, "TOKEN_EXCHANGE_FAILED")
+
+        with patch.object(main, "ENTRA_CLIENT_ID", self.CLIENT_ID), patch.object(
+            main, "redeem_authorization_code", failing
+        ):
+            response = self.client.post(
+                "/api/auth/entra/pkce/exchange",
+                json={
+                    "flow_id": flow_id,
+                    "code": "code-perime",
+                    "code_verifier": "v" * 64,
+                    "redirect_uri": "http://127.0.0.1:53125/callback",
+                },
+            )
+        self.assertEqual(response.json()["detail"], "TOKEN_EXCHANGE_FAILED")
+
+    # -- tenants -----------------------------------------------------------
+
+    def test_an_unmapped_tenant_is_denied(self):
+        flow_id = self.start_flow().json()["flow_id"]
+        unknown = "99999999-9999-4999-8999-999999999999"
+        self.seed_jwks(unknown)
+        token = self.id_token(
+            tid=unknown,
+            iss=f"https://login.microsoftonline.com/{unknown}/v2.0",
+        )
+        response = self.exchange(flow_id, token=token)
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["detail"], "TENANT_NOT_ALLOWED")
+
+    def test_a_tenant_belonging_to_another_organization_cannot_sign_in_here(self):
+        """Le tenant B est connu de Nova, mais rattaché à une autre
+        organisation : il n'obtient pas de session sur cette instance."""
+        flow_id = self.start_flow().json()["flow_id"]
+        token = self.id_token(
+            tid=self.TENANT_B,
+            iss=f"https://login.microsoftonline.com/{self.TENANT_B}/v2.0",
+            oid="oid-du-tenant-b",
+            preferred_username="employe@example.com",
+        )
+        response = self.exchange(flow_id, token=token)
+        # L'identité est valide, l'organisation ne correspond pas.
+        self.assertEqual(response.status_code, 403)
+
+    def test_the_same_subject_in_two_tenants_is_not_confused(self):
+        flow_id = self.start_flow().json()["flow_id"]
+        self.exchange(flow_id)
+        with main.db() as conn:
+            conn.execute(
+                "INSERT INTO federated_identities(provider, external_subject, "
+                "external_tenant_id, organization_id, email, verification, created_at, "
+                "last_seen) VALUES (?,?,?,?,?,?,?,?)",
+                ("microsoft_entra", "oid-immuable-1-bis", self.TENANT_B,
+                 self.ORGANIZATION_B, "homonyme@example.com", "verified",
+                 time.time(), time.time()),
+            )
+            rows = conn.execute(
+                "SELECT organization_id, email FROM federated_identities "
+                "ORDER BY organization_id"
+            ).fetchall()
+        self.assertEqual(len(rows), 2)
+        self.assertNotEqual(rows[0]["organization_id"], rows[1]["organization_id"])
+
+    def test_a_client_supplied_organization_is_ignored(self):
+        flow_id = self.start_flow().json()["flow_id"]
+
+        async def fake_redeem(body):
+            return {"id_token": self.id_token()}
+
+        with patch.object(main, "ENTRA_CLIENT_ID", self.CLIENT_ID), patch.object(
+            main, "redeem_authorization_code", fake_redeem
+        ):
+            response = self.client.post(
+                "/api/auth/entra/pkce/exchange",
+                json={
+                    "flow_id": flow_id,
+                    "code": "code-microsoft",
+                    "code_verifier": "v" * 64,
+                    "redirect_uri": "http://127.0.0.1:53125/callback",
+                    "organization_id": self.ORGANIZATION_B,
+                    "security_role": "organization_admin",
+                },
+            )
+        token = response.json()["token"]
+        me = self.client.get(
+            "/api/me", headers={"Authorization": f"Bearer {token}"}
+        ).json()
+        self.assertEqual(me["organization_id"], main.nova_organization_id())
+        self.assertEqual(me["membership"]["security_role"], "member")
+
+    # -- rattachement de compte -------------------------------------------
+
+    def test_a_known_federated_identity_finds_its_account(self):
+        flow_id = self.start_flow().json()["flow_id"]
+        self.exchange(flow_id)
+        second = self.start_flow().json()["flow_id"]
+        # Même sujet, adresse changée côté Microsoft : le compte est retrouvé
+        # par le sujet immuable, pas par l'adresse.
+        response = self.exchange(
+            second, token=self.id_token(preferred_username="nouvelle@example.com")
+        )
+        self.assertEqual(response.json()["email"], "etudiant@example.com")
+
+    def test_a_legacy_account_is_linked_under_controlled_conditions(self):
+        with main.db() as conn:
+            conn.execute(
+                "INSERT INTO users(email, role, cohort, created_at, organization_id) "
+                "VALUES (?,?,?,?,?)",
+                ("etudiant@example.com", "student", "AERO2", time.time(),
+                 main.nova_organization_id()),
+            )
+        flow_id = self.start_flow().json()["flow_id"]
+        response = self.exchange(flow_id)
+        self.assertEqual(response.status_code, 200)
+        me = self.client.get(
+            "/api/me", headers={"Authorization": f"Bearer {response.json()['token']}"}
+        ).json()
+        # Le compte historique est conservé, cohorte comprise.
+        self.assertEqual(me["cohort"], "AERO2")
+        self.assertEqual(me["membership"]["member_type"], "student")
+        self.assertEqual(me["identity"]["provider"], "microsoft_entra")
+
+    def test_a_conflicting_identity_blocks_the_link(self):
+        """Une autre identité Microsoft occupe déjà ce compte : on refuse plutôt
+        que de rattacher deux personnes au même compte."""
+        with main.db() as conn:
+            conn.execute(
+                "INSERT INTO users(email, created_at, organization_id) VALUES (?,?,?)",
+                ("etudiant@example.com", time.time(), main.nova_organization_id()),
+            )
+            conn.execute(
+                "INSERT INTO federated_identities(provider, external_subject, "
+                "external_tenant_id, organization_id, email, verification, created_at, "
+                "last_seen) VALUES (?,?,?,?,?,?,?,?)",
+                ("microsoft_entra", "un-autre-oid", self.TENANT_A,
+                 main.nova_organization_id(), "etudiant@example.com", "verified",
+                 time.time(), time.time()),
+            )
+        flow_id = self.start_flow().json()["flow_id"]
+        response = self.exchange(flow_id)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["detail"], "IDENTITY_CONFLICT")
+
+    def test_an_account_of_another_organization_is_never_taken_over(self):
+        with main.db() as conn:
+            conn.execute(
+                "INSERT INTO users(email, created_at, organization_id) VALUES (?,?,?)",
+                ("etudiant@example.com", time.time(), self.ORGANIZATION_B),
+            )
+        flow_id = self.start_flow().json()["flow_id"]
+        response = self.exchange(flow_id)
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["detail"], "ORGANIZATION_MISMATCH")
+
+    def test_a_disabled_account_cannot_sign_in_through_sso(self):
+        with main.db() as conn:
+            conn.execute(
+                "INSERT INTO users(email, created_at, organization_id, disabled) "
+                "VALUES (?,?,?,1)",
+                ("etudiant@example.com", time.time(), main.nova_organization_id()),
+            )
+        flow_id = self.start_flow().json()["flow_id"]
+        response = self.exchange(flow_id)
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["detail"], "ACCOUNT_DISABLED")
+
+    def test_a_deprovisioned_account_cannot_sign_in_through_sso(self):
+        with main.db() as conn:
+            conn.execute(
+                "INSERT INTO users(email, created_at, organization_id, status) "
+                "VALUES (?,?,?,'deprovisioned')",
+                ("etudiant@example.com", time.time(), main.nova_organization_id()),
+            )
+        flow_id = self.start_flow().json()["flow_id"]
+        self.assertEqual(self.exchange(flow_id).status_code, 403)
+
+    def test_a_member_outside_the_admission_policy_is_refused(self):
+        flow_id = self.start_flow().json()["flow_id"]
+        token = self.id_token(preferred_username="externe@autre-domaine.com")
+        response = self.exchange(flow_id, token=token)
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["detail"], "MEMBERSHIP_NOT_FOUND")
+
+    def test_microsoft_sign_in_never_grants_administration(self):
+        flow_id = self.start_flow().json()["flow_id"]
+        token = self.id_token(
+            roles=["GlobalAdministrator"], jobTitle="Manager", wids=["admin"]
+        )
+        response = self.exchange(flow_id, token=token)
+        me = self.client.get(
+            "/api/me", headers={"Authorization": f"Bearer {response.json()['token']}"}
+        ).json()
+        self.assertEqual(me["membership"]["security_role"], "member")
+
+    # -- cohabitation avec l'existant --------------------------------------
+
+    def test_the_legacy_email_code_still_works_alongside_sso(self):
+        email = "student@example.com"
+        self.client.post("/api/auth/request", json={"email": email, "machine": "p"})
+        with main.db() as conn:
+            code = conn.execute(
+                "SELECT code FROM auth_codes WHERE email=?", (email,)
+            ).fetchone()["code"]
+        response = self.client.post(
+            "/api/auth/verify", json={"email": email, "code": code, "machine": "p"}
+        )
+        self.assertEqual(response.status_code, 200)
+        me = self.client.get(
+            "/api/me", headers={"Authorization": f"Bearer {response.json()['token']}"}
+        ).json()
+        self.assertEqual(me["identity"]["provider"], "legacy_email_code")
+
+    def test_device_code_identities_stay_transport_only(self):
+        """Le Device Code hérité ne produit pas d'identité vérifiée : il n'a
+        jamais contrôlé la signature du jeton."""
+        main.record_federated_identity(
+            "ancien@example.com", "microsoft_entra", "oid-device-code", self.TENANT_A
+        )
+        with main.db() as conn:
+            row = conn.execute(
+                "SELECT verification FROM federated_identities WHERE external_subject=?",
+                ("oid-device-code",),
+            ).fetchone()
+        self.assertEqual(row["verification"], "transport_only")
+
+    def test_no_secret_is_ever_sent_to_microsoft(self):
+        """Client public : la requête d'échange ne porte aucun secret client,
+        et c'est le `code_verifier` qui prouve l'origine de la demande."""
+        captured = {}
+
+        class FakeResponse:
+            status_code = 200
+
+            def json(self):
+                return {"id_token": "peu-importe"}
+
+        class FakeClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            async def post(self, url, data=None):
+                captured["url"] = url
+                captured["data"] = data
+                return FakeResponse()
+
+        body = main.EntraPkceExchangeRequest(
+            flow_id="f",
+            code="code-microsoft",
+            code_verifier="v" * 64,
+            redirect_uri="http://127.0.0.1:53125/callback",
+        )
+        with patch.object(main, "ENTRA_CLIENT_ID", self.CLIENT_ID), patch.object(
+            main.httpx, "AsyncClient", lambda **kwargs: FakeClient()
+        ):
+            asyncio.run(main.redeem_authorization_code(body))
+
+        self.assertNotIn("client_secret", captured["data"])
+        self.assertEqual(captured["data"]["code_verifier"], "v" * 64)
+        self.assertEqual(captured["data"]["grant_type"], "authorization_code")
+        self.assertTrue(captured["url"].startswith("https://login.microsoftonline.com/"))
 
 
 if __name__ == "__main__":
