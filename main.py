@@ -3046,6 +3046,18 @@ def public_campus_config(organization_id: str | None = None) -> dict:
 # ---------------------------------------------------------------- app
 app = FastAPI(title="Nova Server", version="0.2.0")
 
+# Ce que le navigateur a le droit de demander. La liste doit couvrir **toutes**
+# les methodes que l'API expose reellement : une methode oubliee ne produit pas
+# une erreur lisible. Le navigateur refuse le controle prealable, `fetch` echoue
+# sans reponse, et la console ne peut que l'annoncer comme une panne reseau —
+# ce qui envoie chercher le probleme au mauvais endroit. C'est arrive en
+# Phase 29 avec `PUT`, decouvert seulement dans un vrai navigateur.
+#
+# Declarees ici plutot qu'en ligne pour qu'un test puisse les confronter aux
+# routes, meme quand aucune origine n'est configuree.
+ADMIN_CORS_METHODS = ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+ADMIN_CORS_HEADERS = ["Authorization", "Content-Type"]
+
 if NOVA_ADMIN_ORIGINS:
     # Liste explicite, et `allow_credentials` reste faux : la console porte son
     # jeton dans un en-tête, jamais dans un cookie ambiant. Rien n'est donc
@@ -3055,8 +3067,8 @@ if NOVA_ADMIN_ORIGINS:
         CORSMiddleware,
         allow_origins=NOVA_ADMIN_ORIGINS,
         allow_credentials=False,
-        allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
-        allow_headers=["Authorization", "Content-Type"],
+        allow_methods=ADMIN_CORS_METHODS,
+        allow_headers=ADMIN_CORS_HEADERS,
         max_age=600,
     )
     print(f"[admin] web console origins={len(NOVA_ADMIN_ORIGINS)}")

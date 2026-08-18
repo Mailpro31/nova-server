@@ -9,6 +9,7 @@ parcours complet jusqu'a la session d'administration, step-up compris. Un
 raccourci rendrait verts des tests qui n'exercent plus le chemin reel.
 """
 
+import inspect
 import json
 import time
 import unittest
@@ -679,6 +680,74 @@ class PolicyPrivacyTests(AdminTestCase):
                     "/api/control/organization/policy", headers=self.auth(token),
                     json={"expected_revision": 0, "settings": payload})
                 self.assertEqual(response.status_code, 400)
+
+
+class BrowserReachabilityTests(unittest.TestCase):
+    """Ce que `TestClient` ne peut pas voir.
+
+    La console est servie depuis une autre origine que l'API. Avant toute
+    requete non simple, le navigateur envoie un controle prealable, et il
+    refuse si la methode n'est pas annoncee. `TestClient` n'en envoie jamais :
+    une methode oubliee passe donc tous les tests serveur et ne casse que dans
+    un vrai navigateur.
+
+    C'est exactement ce qui est arrive en Phase 29. `PUT` manquait, la mise a
+    jour de policy etait le premier `PUT` de la console, et l'echec remontait
+    en « panne reseau » — un message qui envoyait chercher le probleme du cote
+    de la connexion. Trouve par une recette humaine, pas par les tests.
+
+    Ces tests lisent les constantes plutot que le middleware installe : la
+    liste doit etre correcte meme quand aucune origine n'est configuree, comme
+    c'est le cas dans la suite de tests.
+    """
+
+    def api_methods(self) -> set[str]:
+        methods = set()
+        for route in main.app.routes:
+            if not getattr(route, "path", "").startswith("/api/"):
+                continue
+            methods |= {m.upper() for m in getattr(route, "methods", set())}
+        return methods - {"HEAD"}
+
+    def test_every_method_the_api_exposes_is_announced_to_browsers(self):
+        declared = {m.upper() for m in main.ADMIN_CORS_METHODS}
+        missing = self.api_methods() - declared
+        self.assertEqual(
+            missing, set(),
+            f"methodes exposees mais absentes de la liste CORS : {sorted(missing)}. "
+            "Un navigateur refusera le controle prealable et la console "
+            "annoncera une panne reseau qui n'existe pas.")
+
+    def test_the_policy_update_method_is_reachable_from_a_browser(self):
+        """Le cas concret, nomme : la route qui a revele le defaut."""
+        route = next(
+            r for r in main.app.routes
+            if getattr(r, "path", "") == "/api/control/organization/policy"
+            and "PUT" in getattr(r, "methods", set()))
+        self.assertIn("PUT", {m.upper() for m in main.ADMIN_CORS_METHODS}, route.path)
+
+    def test_the_authorization_header_is_announced(self):
+        """Sans lui, aucune session d'administration ne franchirait le
+        controle prealable."""
+        headers = {h.lower() for h in main.ADMIN_CORS_HEADERS}
+        self.assertIn("authorization", headers)
+        self.assertIn("content-type", headers)
+
+    def test_no_wildcard_method_or_header(self):
+        """Une etoile passerait tous les tests et annulerait la reflexion.
+
+        La liste doit rester explicite : c'est elle qui oblige a se demander,
+        a chaque nouvelle route, ce que le navigateur a le droit de faire.
+        """
+        self.assertNotIn("*", main.ADMIN_CORS_METHODS)
+        self.assertNotIn("*", main.ADMIN_CORS_HEADERS)
+
+    def test_the_middleware_uses_those_constants(self):
+        """Les constantes ne servent a rien si le middleware en declare
+        d'autres."""
+        source = inspect.getsource(main)
+        self.assertIn("allow_methods=ADMIN_CORS_METHODS", source)
+        self.assertIn("allow_headers=ADMIN_CORS_HEADERS", source)
 
 
 if __name__ == "__main__":
