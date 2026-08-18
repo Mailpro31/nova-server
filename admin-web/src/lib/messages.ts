@@ -24,6 +24,7 @@ export const t = {
     overview: "Overview",
     identity: "Identity",
     administrators: "Administrators",
+    members: "Members",
     deployment: "Deployment",
     configuration: "Configuration",
     security: "Security",
@@ -85,6 +86,7 @@ export const t = {
     deploymentMode: "Deployment mode",
     discovery: "Organization discovery",
     providers: "Sign-in providers",
+    seats: "Seats in use",
     yourAccess: "Your access",
     enabledOf: (enabled: number, total: number) => `${enabled} of ${total} enabled`,
   },
@@ -152,6 +154,58 @@ export const t = {
     searchEmpty: "No matching account.",
     grant: "Grant",
     grantedTo: (email: string) => `${email} is now an administrator.`,
+  },
+
+  members: {
+    title: "Members",
+    lead: "Who belongs to this organization, and what access they have.",
+    // La frontiere, affichee plutot que seulement documentee : c'est ici qu'on
+    // serait tente d'ajouter « ce que les gens ont dicte ».
+    boundary:
+      "Identity and access only. Nova Admin never shows what anyone dictated, typed or asked.",
+    search: "Search by email",
+    searchPlaceholder: "Start typing an email",
+    filterAll: "All",
+    filterActive: "Active",
+    filterDisabled: "Suspended",
+    none: "No member matches.",
+    count: (shown: number, total: number) => `${shown} of ${total} members`,
+    more: "Refine your search to see the rest.",
+    memberType: "Type",
+    groups: "Groups",
+    noGroup: "None",
+    devices: "Devices",
+    noDevice: "No device signed in.",
+    identities: "Sign-in methods",
+    adminSessions: "Open administration sessions",
+    note: "Administrative note",
+    open: "Open",
+    back: "Back to members",
+    suspend: "Suspend account",
+    reactivate: "Reactivate account",
+    suspendTitle: "Suspend this account?",
+    suspendBody:
+      "They are signed out of every device immediately and cannot sign in again. Their account, identity and history are kept — this is not a deletion.",
+    suspendConfirm: "Suspend",
+    reactivateTitle: "Reactivate this account?",
+    reactivateBody:
+      "They will be able to sign in again. Previous sessions are not restored: they sign in fresh.",
+    reactivateConfirm: "Reactivate",
+    revokeSessions: "Sign out of all devices",
+    revokeTitle: "Sign this person out everywhere?",
+    revokeBody:
+      "Every device is signed out. The account stays active and they can sign in again right away.",
+    revokeConfirm: "Sign out everywhere",
+    revoked: (devices: number) => `Signed out of ${devices} device(s).`,
+    remove: "Delete account",
+    removeTitle: "Delete this account permanently?",
+    removeBody:
+      "The account, its sessions, its personal dictionary and its sign-in methods are erased. The administration audit trail is kept — it records who did what, not what anyone dictated. Suspending is usually the better choice.",
+    removeConfirm: "Delete permanently",
+    lastManager:
+      "At least one organization administrator must remain. This account cannot be suspended or deleted.",
+    saveProfile: "Save",
+    profileSaved: "Saved.",
   },
 
   deployment: {
@@ -230,6 +284,8 @@ export function errorMessage(kind: ApiErrorKind, code?: string | null): string {
   if (code === "PROVIDER_LAST_ACTIVE") return t.identity.lastActive;
   if (code === "ADMIN_LAST_IDENTITY_MANAGER") return t.administrators.lastManager;
   if (code === "USER_NOT_FOUND") return "This account no longer exists.";
+  if (code === "MEMBER_STATUS_INVALID") return "That status is not recognised.";
+  if (code === "MEMBER_ROLE_INVALID") return "That member type is not recognised.";
   if (code === "SECURITY_ROLE_INVALID") return "That role is not recognised.";
   switch (kind) {
     case "network":

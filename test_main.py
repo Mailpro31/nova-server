@@ -213,27 +213,22 @@ class NovaServerTests(unittest.TestCase):
         )
         self.assertEqual(self.client.get("/api/me", headers=headers).status_code, 401)
 
-    def test_admin_requires_the_configured_token(self):
-        # La console heritee n'est plus exposee : elle contourne les roles, la
-        # reauthentification et l'audit nominatif. Nova Admin la remplace.
+    def test_the_shared_token_still_opens_admin_routes_in_dedicated_mode(self):
+        """La console heritee est supprimee ; le jeton partage, lui, ouvre encore
+        les routes d'administration en mode dedie — pour les automatisations qui
+        en dependent. Il reste refuse par construction en mode Control Plane."""
         self.assertEqual(self.client.get("/admin").status_code, 404)
-        with patch.object(main, "LEGACY_ADMIN_UI_ENABLED", True):
-            page = self.client.get("/admin")
-        self.assertEqual(page.status_code, 200)
-        self.assertIn("Nova — Administration", page.text)
 
         # Sans identifiant : 401. Le refus « interdit » suppose de savoir qui
         # demande, et ici on ne le sait pas.
-        self.assertEqual(self.client.get("/api/admin/overview").status_code, 401)
+        self.assertEqual(self.client.get("/api/admin/discovery").status_code, 401)
         self.assertEqual(
-            self.client.get("/api/admin/overview",
+            self.client.get("/api/admin/discovery",
                             headers={"X-Admin-Token": "faux"}).status_code, 403)
-        response = self.client.get(
-            "/api/admin/overview",
-            headers={"X-Admin-Token": "test-admin-token"},
-        )
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["max_seats"], main.MAX_SEATS)
+        self.assertEqual(
+            self.client.get("/api/admin/discovery",
+                            headers={"X-Admin-Token": "test-admin-token"}).status_code,
+            200)
 
     def test_microsoft_device_flow_creates_a_nova_session(self):
         class Response:
@@ -5302,19 +5297,25 @@ class MemberSearchTests(AdminTestCase):
         self.assertIn("cherchable@example.com",
                       [m["email"] for m in body["members"]])
 
-    def test_an_empty_query_lists_nothing(self):
-        """Pas de listing sans terme : une console d'administration n'a pas a
-        deverser l'annuaire pour attribuer un role."""
+    def test_a_listing_without_a_term_stays_bounded(self):
+        """Depuis la Phase 27, administrer suppose de voir qui est la : la liste
+        sans terme est permise. Ce qui reste interdit, c'est l'export — elle est
+        paginee et plafonnee."""
         token = self.admin_session()
-        for query in ("", "a"):
-            body = self.client.get(self.path(query), headers=self.auth(token)).json()
-            self.assertEqual(body["members"], [])
-            self.assertTrue(body["query_too_short"])
+        body = self.client.get(self.path(""), headers=self.auth(token)).json()
+        self.assertLessEqual(len(body["members"]), body["limit"])
+        self.assertLessEqual(body["limit"], main.MEMBER_PAGE_MAX)
+
+    def test_an_absurd_limit_is_capped(self):
+        token = self.admin_session()
+        body = self.client.get(
+            f"{self.path('')}&limit=100000", headers=self.auth(token)).json()
+        self.assertEqual(body["limit"], main.MEMBER_PAGE_MAX)
 
     def test_the_result_is_capped(self):
         token = self.admin_session()
         body = self.client.get(self.path("ab"), headers=self.auth(token)).json()
-        self.assertLessEqual(len(body["members"]), main.MEMBER_SEARCH_LIMIT)
+        self.assertLessEqual(len(body["members"]), main.MEMBER_PAGE_MAX)
 
     def test_it_admin_cannot_search_members(self):
         token = self.admin_session("it2@example.com", main.SECURITY_ROLE_IT_ADMIN,
@@ -5434,16 +5435,398 @@ class AuditReadTests(AdminTestCase):
 
 
 class LegacyAdminConsoleTests(AdminTestCase):
-    """L'ancienne console, eteinte par defaut."""
+    """L'ancienne console a jeton partage : supprimee en Phase 27."""
 
-    def test_it_is_not_exposed_by_default(self):
+    def test_the_console_no_longer_exists(self):
+        # Ni desactivee, ni cachee derriere un drapeau : retiree. Garder un
+        # fichier mort « au cas ou » finit par le voir revenir.
         self.assertEqual(self.client.get("/admin").status_code, 404)
+        self.assertFalse(hasattr(main, "LEGACY_ADMIN_UI_ENABLED"))
+        self.assertFalse(
+            (Path(main.__file__).parent / "admin.html").exists())
 
-    def test_it_can_still_be_enabled_during_migration(self):
-        # Elle porte encore la gestion des comptes metier que Nova Admin ne
-        # couvre pas : l'eteindre sans recours serait une regression.
-        with patch.object(main, "LEGACY_ADMIN_UI_ENABLED", True):
-            self.assertEqual(self.client.get("/admin").status_code, 200)
+    def test_the_legacy_user_routes_are_gone(self):
+        """Elles designaient une personne par son adresse, et n'avaient plus
+        d'appelant. Leurs equivalents modernes vivent sous /api/control."""
+        token = self.admin_session()
+        for method, path in (
+            ("get", "/api/admin/overview"),
+            ("get", "/api/admin/user/quelquun@example.com"),
+            ("post", "/api/admin/user/quelquun@example.com"),
+            ("post", "/api/admin/user/quelquun@example.com/revoke-machines"),
+            ("delete", "/api/admin/user/quelquun@example.com"),
+            ("post", "/api/admin/cohort/AERO2/disable"),
+        ):
+            response = getattr(self.client, method)(path, headers=self.auth(token))
+            self.assertIn(response.status_code, (404, 405), path)
+
+    def test_no_route_is_guarded_by_the_shared_token_alone(self):
+        # `require_admin` n'etait plus referencee depuis la Phase 22 : du code
+        # mort qui donnait l'illusion d'un second chemin d'autorisation.
+        self.assertFalse(hasattr(main, "require_admin"))
+
+
+# ═══════════════ Phase 27 — gestion des membres ═══════════════════════════
+
+
+class MemberManagementTests(AdminTestCase):
+    """Le cycle de vie d'un compte, depuis Nova Admin."""
+
+    def organization(self) -> str:
+        return main.nova_organization_id()
+
+    def members(self, suffix: str = "") -> str:
+        return f"/api/control/organizations/{self.organization()}/members{suffix}"
+
+    def member(self, email: str, **fields) -> str:
+        self.sign_in(email, machine=f"poste-{email}")
+        with main.db() as conn:
+            user_id = main.user_by_email(conn, self.organization(), email)["user_id"]
+            if fields:
+                assignments = ", ".join(f"{k}=?" for k in fields)
+                conn.execute(f"UPDATE users SET {assignments} WHERE user_id=?",
+                             (*fields.values(), user_id))
+        return user_id
+
+    # -- liste et recherche -------------------------------------------------
+
+    def test_the_listing_is_paginated_and_capped(self):
+        token = self.admin_session()
+        for n in range(3):
+            self.member(f"liste{n}@example.com")
+        body = self.client.get(self.members("?limit=2"), headers=self.auth(token)).json()
+        self.assertEqual(len(body["members"]), 2)
+        self.assertTrue(body["has_more"])
+        self.assertEqual(body["limit"], 2)
+
+    def test_an_absurd_limit_is_capped(self):
+        token = self.admin_session()
+        body = self.client.get(self.members("?limit=99999"),
+                               headers=self.auth(token)).json()
+        self.assertEqual(body["limit"], main.MEMBER_PAGE_MAX)
+
+    def test_searching_narrows_the_listing(self):
+        token = self.admin_session()
+        self.member("cherchable27@example.com")
+        body = self.client.get(self.members("?query=cherchable27"),
+                               headers=self.auth(token)).json()
+        self.assertEqual([m["email"] for m in body["members"]],
+                         ["cherchable27@example.com"])
+
+    def test_filtering_by_status(self):
+        token = self.admin_session()
+        suspended = self.member("suspendu27@example.com", disabled=1, status="disabled")
+        body = self.client.get(self.members("?status=disabled"),
+                               headers=self.auth(token)).json()
+        self.assertIn(suspended, [m["user_id"] for m in body["members"]])
+        self.assertTrue(all(m["status"] != "active" for m in body["members"]))
+
+    def test_the_listing_carries_no_sensitive_field(self):
+        token = self.admin_session()
+        raw = self.client.get(self.members(), headers=self.auth(token)).text
+        for forbidden in ("token", "secret", "external_subject", "tenant",
+                          "normalized_email"):
+            self.assertNotIn(forbidden, raw.lower())
+
+    # -- fiche --------------------------------------------------------------
+
+    def test_the_detail_shows_devices_without_tokens(self):
+        token = self.admin_session()
+        target = self.member("fiche@example.com")
+        body = self.client.get(self.members(f"/{target}"),
+                               headers=self.auth(token)).json()
+        self.assertEqual(body["member"]["user_id"], target)
+        self.assertTrue(body["devices"])
+        for device in body["devices"]:
+            self.assertEqual(set(device),
+                             {"machine", "active", "created_at", "expires_at"})
+        # Ni jeton, ni empreinte : une empreinte identifie encore une session.
+        raw = self.client.get(self.members(f"/{target}"),
+                              headers=self.auth(token)).text
+        self.assertNotIn("token_hash", raw)
+
+    def test_the_detail_never_shows_dictated_content(self):
+        """La frontiere du plan de donnees, verifiee sur la reponse elle-meme."""
+        token = self.admin_session()
+        target = self.member("prive@example.com")
+        raw = self.client.get(self.members(f"/{target}"),
+                              headers=self.auth(token)).text.lower()
+        for forbidden in ("transcript", "dictation", "prompt", "clipboard",
+                          "audio", "history"):
+            self.assertNotIn(forbidden, raw)
+
+    def test_an_unknown_member_is_not_found(self):
+        token = self.admin_session()
+        self.assertEqual(
+            self.client.get(self.members("/inconnu"),
+                            headers=self.auth(token)).status_code, 404)
+
+    # -- suspension ---------------------------------------------------------
+
+    def test_disabling_cuts_every_session(self):
+        token = self.admin_session()
+        target = self.member("acouper@example.com")
+        with main.db() as conn:
+            before = conn.execute(
+                "SELECT COUNT(*) c FROM tokens WHERE user_id=? AND active=1",
+                (target,)).fetchone()["c"]
+        self.assertGreater(before, 0)
+
+        response = self.client.post(
+            self.members(f"/{target}/status"), headers=self.auth(token),
+            json={"status": "disabled"})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["member"]["status"], "disabled")
+
+        with main.db() as conn:
+            after = conn.execute(
+                "SELECT COUNT(*) c FROM tokens WHERE user_id=? AND active=1",
+                (target,)).fetchone()["c"]
+            account = main.user_by_id(conn, target)
+            identities = conn.execute(
+                "SELECT COUNT(*) c FROM federated_identities WHERE user_id=?",
+                (target,)).fetchone()["c"]
+        self.assertEqual(after, 0)
+        # Suspendre n'est pas supprimer : le compte et l'identite demeurent.
+        self.assertIsNotNone(account)
+        self.assertEqual(identities, 0)  # ce compte n'en avait pas
+
+    def test_re_enabling_does_not_restore_old_sessions(self):
+        token = self.admin_session()
+        target = self.member("reactive@example.com")
+        self.client.post(self.members(f"/{target}/status"), headers=self.auth(token),
+                         json={"status": "disabled"})
+        self.client.post(self.members(f"/{target}/status"), headers=self.auth(token),
+                         json={"status": "active"})
+        with main.db() as conn:
+            active = conn.execute(
+                "SELECT COUNT(*) c FROM tokens WHERE user_id=? AND active=1",
+                (target,)).fetchone()["c"]
+            account = main.user_by_id(conn, target)
+        # Rendre l'acces n'est pas rendre les anciens jetons.
+        self.assertEqual(active, 0)
+        self.assertEqual(main.account_status(account), "active")
+
+    def test_an_unknown_status_is_refused(self):
+        token = self.admin_session()
+        target = self.member("statut@example.com")
+        response = self.client.post(
+            self.members(f"/{target}/status"), headers=self.auth(token),
+            json={"status": "vacances"})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"], "MEMBER_STATUS_INVALID")
+
+    def test_the_last_identity_manager_cannot_be_disabled(self):
+        """Suspendre le dernier gestionnaire ferme la porte aussi surement que
+        lui retirer son role."""
+        token = self.admin_session()
+        with main.db() as conn:
+            himself = main.user_by_email(conn, self.organization(),
+                                         "admin@example.com")["user_id"]
+        response = self.client.post(
+            self.members(f"/{himself}/status"), headers=self.auth(token),
+            json={"status": "disabled"})
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["detail"], "ADMIN_LAST_IDENTITY_MANAGER")
+        with main.db() as conn:
+            self.assertEqual(
+                main.account_status(main.user_by_id(conn, himself)), "active")
+
+    # -- profil metier ------------------------------------------------------
+
+    def test_changing_the_member_type_never_grants_a_privilege(self):
+        """`role` decrit un metier, `security_role` un privilege. Les confondre
+        ferait de l'annuaire une source de droits."""
+        token = self.admin_session()
+        target = self.member("metier@example.com")
+        for member_role in ("teacher", "staff", "partner", "student"):
+            response = self.client.post(
+                self.members(f"/{target}/profile"), headers=self.auth(token),
+                json={"member_role": member_role})
+            self.assertEqual(response.status_code, 200, member_role)
+            self.assertEqual(response.json()["member"]["security_role"], "member")
+
+    def test_the_profile_route_cannot_set_a_security_role(self):
+        token = self.admin_session()
+        target = self.member("tentative@example.com")
+        self.client.post(
+            self.members(f"/{target}/profile"), headers=self.auth(token),
+            json={"member_role": "staff", "security_role": "organization_admin"})
+        with main.db() as conn:
+            self.assertEqual(
+                main.security_role_for(main.user_by_id(conn, target)), "member")
+
+    def test_an_unknown_member_role_is_refused(self):
+        token = self.admin_session()
+        target = self.member("metier2@example.com")
+        response = self.client.post(
+            self.members(f"/{target}/profile"), headers=self.auth(token),
+            json={"member_role": "directeur"})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"], "MEMBER_ROLE_INVALID")
+
+    def test_the_group_is_the_legacy_cohort(self):
+        token = self.admin_session()
+        target = self.member("groupe@example.com")
+        self.client.post(self.members(f"/{target}/profile"), headers=self.auth(token),
+                         json={"cohort": "AERO2"})
+        body = self.client.get(self.members(f"/{target}"),
+                               headers=self.auth(token)).json()
+        groups = body["member"]["groups"]
+        self.assertEqual(groups[0]["label"], "AERO2")
+        # La source reste explicite : un futur groupe d'annuaire ne s'y
+        # confondra pas.
+        self.assertEqual(groups[0]["source"], "legacy_cohort")
+
+    # -- appareils ----------------------------------------------------------
+
+    def test_revoking_sessions_leaves_the_account_intact(self):
+        token = self.admin_session()
+        target = self.member("deconnecte@example.com")
+        response = self.client.post(
+            self.members(f"/{target}/sessions/revoke"), headers=self.auth(token))
+        self.assertEqual(response.status_code, 200)
+        self.assertGreater(response.json()["revoked_devices"], 0)
+        with main.db() as conn:
+            account = main.user_by_id(conn, target)
+            active = conn.execute(
+                "SELECT COUNT(*) c FROM tokens WHERE user_id=? AND active=1",
+                (target,)).fetchone()["c"]
+        self.assertEqual(active, 0)
+        self.assertEqual(main.account_status(account), "active")
+
+    # -- suppression --------------------------------------------------------
+
+    def test_deleting_a_member_keeps_the_audit(self):
+        token = self.admin_session()
+        target = self.member("aeffacer@example.com")
+        with main.db() as conn:
+            before = conn.execute(
+                "SELECT COUNT(*) c FROM admin_audit_log").fetchone()["c"]
+        response = self.client.delete(self.members(f"/{target}"),
+                                      headers=self.auth(token))
+        self.assertEqual(response.status_code, 200, response.text)
+        with main.db() as conn:
+            self.assertIsNone(main.user_by_id(conn, target))
+            after = conn.execute(
+                "SELECT COUNT(*) c FROM admin_audit_log").fetchone()["c"]
+        # Le journal porte des actes d'administration, pas des donnees de
+        # dictee : l'effacer reviendrait a effacer qui a fait quoi.
+        self.assertGreater(after, before)
+
+    def test_the_last_identity_manager_cannot_be_deleted(self):
+        token = self.admin_session()
+        with main.db() as conn:
+            himself = main.user_by_email(conn, self.organization(),
+                                         "admin@example.com")["user_id"]
+        response = self.client.delete(self.members(f"/{himself}"),
+                                      headers=self.auth(token))
+        self.assertEqual(response.status_code, 409)
+        with main.db() as conn:
+            self.assertIsNotNone(main.user_by_id(conn, himself))
+
+    # -- capacites et isolation ---------------------------------------------
+
+    def test_it_admin_cannot_manage_members(self):
+        token = self.admin_session("it27@example.com", main.SECURITY_ROLE_IT_ADMIN,
+                                   subject="oid-it27")
+        self.assertEqual(
+            self.client.get(self.members(), headers=self.auth(token)).status_code, 403)
+
+    def test_read_only_cannot_manage_members(self):
+        token = self.admin_session("ro27@example.com", main.SECURITY_ROLE_READ_ONLY,
+                                   subject="oid-ro27")
+        self.assertEqual(
+            self.client.get(self.members(), headers=self.auth(token)).status_code, 403)
+
+    def test_another_organization_is_invisible(self):
+        token = self.admin_session()
+        self.assertEqual(
+            self.client.get(
+                "/api/control/organizations/org-voisine/members",
+                headers=self.auth(token)).status_code, 404)
+
+    def test_a_member_of_another_organization_cannot_be_touched(self):
+        token = self.admin_session()
+        with main.db() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO organizations(id, slug, display_name, "
+                "org_type, status, created_at) VALUES (?,?,?,?,?,?)",
+                ("org-voisine-27", "voisine", "Voisine", "education", "active",
+                 time.time()))
+            stranger = main.create_user(conn, "org-voisine-27", "voisin@example.com")
+        for method, suffix, payload in (
+            ("get", f"/{stranger}", None),
+            ("post", f"/{stranger}/status", {"status": "disabled"}),
+            ("post", f"/{stranger}/sessions/revoke", None),
+            ("delete", f"/{stranger}", None),
+        ):
+            call = getattr(self.client, method)
+            response = (call(self.members(suffix), headers=self.auth(token), json=payload)
+                        if payload else call(self.members(suffix), headers=self.auth(token)))
+            self.assertEqual(response.status_code, 404, suffix)
+        with main.db() as conn:
+            self.assertIsNotNone(main.user_by_id(conn, stranger))
+            conn.execute("DELETE FROM users WHERE user_id=?", (stranger,))
+            conn.execute("DELETE FROM organizations WHERE id='org-voisine-27'")
+
+    # -- audit --------------------------------------------------------------
+
+    def test_member_actions_are_audited(self):
+        token = self.admin_session()
+        target = self.member("audite27@example.com")
+        self.client.post(self.members(f"/{target}/status"), headers=self.auth(token),
+                         json={"status": "disabled"})
+        self.client.post(self.members(f"/{target}/status"), headers=self.auth(token),
+                         json={"status": "active"})
+        self.client.post(self.members(f"/{target}/profile"), headers=self.auth(token),
+                         json={"member_role": "teacher"})
+        self.client.post(self.members(f"/{target}/sessions/revoke"),
+                         headers=self.auth(token))
+        with main.db() as conn:
+            actions = [r["action"] for r in conn.execute(
+                "SELECT action FROM admin_audit_log WHERE target_id=?", (target,))]
+        for expected in ("member.disable", "member.enable", "member.type_change",
+                         "member.sessions_revoke"):
+            self.assertIn(expected, actions)
+
+    def test_the_mutation_and_its_trace_share_a_transaction(self):
+        """Dette P1 de la Phase 26, reglee ici : une mutation sans trace serait
+        une reponse manquante a « qui a desactive ce compte ? »."""
+        token = self.admin_session()
+        target = self.member("transaction@example.com")
+        # Si l'audit echoue, la mutation ne doit pas subsister.
+        with patch.object(main, "_write_audit_row",
+                          side_effect=sqlite3.OperationalError("audit indisponible")):
+            with self.assertRaises(Exception):
+                self.client.post(self.members(f"/{target}/status"),
+                                 headers=self.auth(token), json={"status": "disabled"})
+        with main.db() as conn:
+            account = main.user_by_id(conn, target)
+        self.assertEqual(main.account_status(account), "active")
+
+
+class SeatsTests(AdminTestCase):
+    """Le compteur de sieges, rendu a la vue Control Plane."""
+
+    def test_seats_count_people_not_sessions(self):
+        token = self.admin_session()
+        # Le meme compte sur deux postes occupe un siege, pas deux.
+        self.sign_in("multi@example.com", machine="poste-1")
+        self.sign_in("multi@example.com", machine="poste-2")
+        body = self.client.get("/api/control/organization",
+                               headers=self.auth(token)).json()
+        self.assertIn("seats", body)
+        self.assertEqual(body["seats"]["limit"], main.MAX_SEATS)
+        self.assertGreaterEqual(body["seats"]["used"], 1)
+
+    def test_the_seat_count_is_real_not_invented(self):
+        # C'est le meme compteur que celui qui refuse une connexion de plus.
+        token = self.admin_session()
+        body = self.client.get("/api/control/organization",
+                               headers=self.auth(token)).json()
+        self.assertEqual(body["seats"]["used"],
+                         main.seats_in_use(main.nova_organization_id()))
 
 
 if __name__ == "__main__":

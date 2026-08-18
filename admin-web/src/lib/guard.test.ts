@@ -202,6 +202,88 @@ describe("gestion des administrateurs", () => {
   });
 });
 
+describe("gestion des membres", () => {
+  test("aucun ecran de membre ne montre de contenu dicte", async () => {
+    // C'est ici que la tentation serait la plus forte : un onglet de plus, et
+    // la console devient un outil de surveillance.
+    // Commentaires retires : le mot « transcription » figure justement dans
+    // celui qui declare que l'ecran n'en montre pas. Ce sont les *usages* qui
+    // comptent.
+    const strip = (source: string) =>
+      source
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .replace(/\/\/.*$/gm, "")
+        .toLowerCase();
+    const page = strip(readFileSync("src/pages/Members.tsx", "utf8"));
+    const client = strip(readFileSync("src/lib/controlPlane.ts", "utf8"));
+    for (const forbidden of ["transcript", "dictation", "clipboard", "prompt",
+                             "activity", "productivity"]) {
+      expect(page).not.toContain(forbidden);
+      expect(client).not.toContain(forbidden);
+    }
+  });
+
+  test("la frontiere est affirmee a l'ecran, pas seulement en commentaire", async () => {
+    const { t } = await import("./messages");
+    expect(t.members.boundary.toLowerCase()).toContain("never shows what anyone dictated");
+    const page = readFileSync("src/pages/Members.tsx", "utf8");
+    expect(page).toContain("t.members.boundary");
+  });
+
+  test("toutes les mutations designent un user_id", async () => {
+    const client = readFileSync("src/lib/controlPlane.ts", "utf8");
+    const members = client.slice(
+      client.indexOf("  members("),
+      client.indexOf("  audit("),
+    );
+    // Aucune route moderne ne vise une personne par son adresse.
+    expect(members).not.toMatch(/members\/\$\{[^}]*[eE]mail/);
+    expect(members).toContain("${userId}");
+  });
+
+  test("suspendre est distingue de supprimer", async () => {
+    const { t } = await import("./messages");
+    // Les deux gestes se confondent facilement dans une console.
+    expect(t.members.suspendBody.toLowerCase()).toContain("not a deletion");
+    expect(t.members.removeBody.toLowerCase()).toContain("suspending is usually the better choice");
+  });
+
+  test("reactiver ne promet pas de rendre les anciennes sessions", async () => {
+    const { t } = await import("./messages");
+    expect(t.members.reactivateBody.toLowerCase()).toContain("not restored");
+  });
+
+  test("la suppression annonce ce qui survit", async () => {
+    const { t } = await import("./messages");
+    // Le journal d'audit reste : il porte des actes d'administration.
+    expect(t.members.removeBody.toLowerCase()).toContain("audit trail is kept");
+  });
+
+  test("les actions de gestion exigent identity_manage", async () => {
+    const page = readFileSync("src/pages/Members.tsx", "utf8");
+    expect(page).toContain("CAPABILITY.identityManage");
+    expect(page).toContain("{mayManage && (");
+  });
+
+  test("le profil metier ne propose aucun role de securite", async () => {
+    const page = readFileSync("src/pages/Members.tsx", "utf8");
+    const editor = page.slice(page.indexOf("MEMBER_ROLES"), page.indexOf("export function Members"));
+    // Les privileges se gerent depuis leur propre ecran : deux endroits qui
+    // modifient le meme privilege finissent par diverger.
+    for (const role of ["organization_admin", "it_admin", "read_only"]) {
+      expect(editor).not.toContain(`"${role}"`);
+    }
+  });
+
+  test("les appareils sont nommes sans jeton", async () => {
+    const client = readFileSync("src/lib/controlPlane.ts", "utf8");
+    const detail = client.slice(client.indexOf("interface MemberDetail"),
+                                client.indexOf("export class ControlPlane"));
+    expect(detail).toContain("machine");
+    expect(detail).not.toContain("token");
+  });
+});
+
 describe("journal d'audit", () => {
   test("la vue est en lecture seule", async () => {
     const client = readFileSync("src/lib/controlPlane.ts", "utf8");

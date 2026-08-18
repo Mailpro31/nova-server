@@ -28,6 +28,7 @@ import { secondsRemaining } from "./lib/session";
 import { useSession } from "./lib/useAdminSession";
 import { Administrators } from "./pages/Administrators";
 import { Identity } from "./pages/Identity";
+import { Members } from "./pages/Members";
 import { Overview } from "./pages/Overview";
 import { Configuration, Deployment, Diagnostics, Security } from "./pages/Rest";
 
@@ -39,6 +40,7 @@ const PAGES = [
     label: t.nav.administrators,
     element: <Administrators />,
   },
+  { path: "members", label: t.nav.members, element: <Members /> },
   { path: "deployment", label: t.nav.deployment, element: <Deployment /> },
   { path: "configuration", label: t.nav.configuration, element: <Configuration /> },
   { path: "security", label: t.nav.security, element: <Security /> },

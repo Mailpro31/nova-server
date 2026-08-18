@@ -51,6 +51,19 @@ export function Overview() {
               />
             </Panel>
 
+            <Panel title={t.overview.seats}>
+              {/* Compteur reel : c'est lui qui refuse une connexion de plus
+                  quand le plafond est atteint. */}
+              <Facts
+                entries={[
+                  [
+                    t.overview.seats,
+                    `${view.seats.used} / ${view.seats.limit}`,
+                  ],
+                ]}
+              />
+            </Panel>
+
             <Panel title={t.overview.providers}>
               {view.providers.length === 0 ? (
                 <p className="notice">{t.state.notConfigured}</p>

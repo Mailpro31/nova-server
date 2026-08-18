@@ -17,6 +17,8 @@ export interface OrganizationView {
   };
   deployment: { server_mode: string; deployment_mode: string };
   discovery: { enabled: boolean; slug: string | null; service_endpoint: string };
+  /** Compteur réel : c'est lui qui refuse une connexion de plus. */
+  seats: { used: number; limit: number };
   providers: { provider_type: string; count: number; enabled_count: number }[];
 }
 
@@ -85,6 +87,39 @@ export interface AuditEntry {
   target: string | null;
   request_id: string | null;
   metadata: Record<string, unknown> | null;
+}
+
+export interface MemberGroup {
+  id: string;
+  label: string;
+  source: string;
+}
+
+export interface MemberView {
+  user_id: string;
+  email: string;
+  member_type: string | null;
+  member_role: string;
+  security_role: string;
+  status: string;
+  identity_provider: string | null;
+  last_seen: number | null;
+  created_at: number | null;
+  note: string | null;
+  groups?: MemberGroup[];
+}
+
+export interface MemberDetail {
+  member: MemberView;
+  /** Libellé et dates seulement — jamais un jeton, ni son empreinte. */
+  devices: {
+    machine: string | null;
+    active: boolean;
+    created_at: number | null;
+    expires_at: number | null;
+  }[];
+  identities: { provider: string; verification: string; last_seen: number | null }[];
+  open_admin_sessions: number;
 }
 
 export class ControlPlane {
@@ -189,12 +224,60 @@ export class ControlPlane {
     );
   }
 
-  searchMembers(organizationId: string, query: string) {
+  members(
+    organizationId: string,
+    options: { query?: string; status?: string; limit?: number } = {},
+  ) {
+    const params = new URLSearchParams();
+    if (options.query) params.set("query", options.query);
+    if (options.status) params.set("status", options.status);
+    if (options.limit) params.set("limit", String(options.limit));
+    const query = params.toString();
     return this.client.request<{
-      members: AdministratorView[];
-      query_too_short: boolean;
+      members: MemberView[];
+      has_more: boolean;
+      limit: number;
+      total: number;
     }>(
-      `/api/control/organizations/${organizationId}/members?query=${encodeURIComponent(query)}`,
+      `/api/control/organizations/${organizationId}/members${query ? `?${query}` : ""}`,
+    );
+  }
+
+  member(organizationId: string, userId: string) {
+    return this.client.request<MemberDetail>(
+      `/api/control/organizations/${organizationId}/members/${userId}`,
+    );
+  }
+
+  setMemberStatus(organizationId: string, userId: string, status: string) {
+    return this.client.request<{ member: MemberView; changed: boolean }>(
+      `/api/control/organizations/${organizationId}/members/${userId}/status`,
+      { method: "POST", body: { status } },
+    );
+  }
+
+  updateMemberProfile(
+    organizationId: string,
+    userId: string,
+    body: { member_role?: string; cohort?: string; note?: string },
+  ) {
+    return this.client.request<{ member: MemberView; changed: boolean }>(
+      `/api/control/organizations/${organizationId}/members/${userId}/profile`,
+      { method: "POST", body },
+    );
+  }
+
+  revokeMemberSessions(organizationId: string, userId: string) {
+    return this.client.request<{ revoked_devices: number }>(
+      `/api/control/organizations/${organizationId}/members/${userId}/sessions/revoke`,
+      { method: "POST", body: {} },
+    );
+  }
+
+  deleteMember(organizationId: string, userId: string) {
+    return this.client.request<{ deleted: string }>(
+      `/api/control/organizations/${organizationId}/members/${userId}`,
+      { method: "DELETE" },
     );
   }
 

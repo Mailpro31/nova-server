@@ -189,19 +189,6 @@ NOVA_ADMIN_ORIGINS = [
 # champ.
 CONTROL_CONTRACT_VERSION = 1
 
-# L'ancienne console web (`admin.html`), authentifiee par le jeton partage.
-#
-# Elle contourne tout le modele moderne : pas d'identite, pas de role, pas de
-# reauthentification, et un journal d'audit qui ne peut ecrire que « quelqu'un
-# qui detenait le jeton ». Nova Admin la remplace depuis la Phase 25.
-#
-# Elle n'est plus exposee par defaut. Elle reste activable le temps de la
-# migration, parce qu'elle porte encore la gestion des comptes metier — cohorte,
-# suppression, revocation d'appareils — que Nova Admin ne couvre pas.
-LEGACY_ADMIN_UI_ENABLED = (
-    os.getenv("NOVA_LEGACY_ADMIN_UI", "false").strip().lower() == "true"
-)
-
 LEGACY_ADMIN_TOKEN_ENABLED = (
     os.getenv("NOVA_LEGACY_ADMIN_TOKEN", "true").strip().lower() != "false"
     and NOVA_SERVER_MODE == SERVER_MODE_DEDICATED
@@ -1734,11 +1721,6 @@ if LEGACY_ADMIN_TOKEN_ENABLED and NOVA_ENV != "development":
         "once administrators have Nova security roles"
     )
 print(f"[admin] server_mode={NOVA_SERVER_MODE} legacy_admin_token={LEGACY_ADMIN_TOKEN_ENABLED}")
-if LEGACY_ADMIN_UI_ENABLED:
-    print(
-        "[admin] WARNING legacy /admin console enabled — it bypasses roles, "
-        "re-authentication and named audit; use Nova Admin instead"
-    )
 
 
 # ────────────────────── Accès aux comptes ─────────────────────────────────
@@ -2200,20 +2182,6 @@ def authenticated_token(authorization: str) -> str:
         raise HTTPException(401, "Token manquant")
     return authorization.removeprefix("Bearer ").strip()
 
-def require_admin(x_admin_token: str = Header(default="")):
-    """Jeton d'administration partagé — **hérité**, conservé pour compatibilité.
-
-    Voir `LEGACY_ADMIN_TOKEN_ENABLED` : refusé en mode Control Plane, où il
-    autoriserait un porteur à administrer une organisation qui n'est pas la
-    sienne. Les nouvelles routes utilisent `require_admin_capability`.
-    """
-    if not LEGACY_ADMIN_TOKEN_ENABLED:
-        raise auth_error(403, "ADMIN_REQUIRED")
-    if not x_admin_token or not hmac.compare_digest(x_admin_token, ADMIN_TOKEN):
-        raise HTTPException(403, "Admin invalide")
-    return True
-
-
 # ─────────────────────────── Administration moderne ───────────────────────
 #
 # ## Ce que cette section remplace
@@ -2349,6 +2317,7 @@ def record_admin_action(
     target_id: str | None = None,
     metadata: dict | None = None,
     request_id: str | None = None,
+    conn=None,
 ):
     """Écrit une ligne d'audit. Ajout seul.
 
@@ -2356,25 +2325,48 @@ def record_admin_action(
     fournisseur, un booléen, un mode. Jamais un secret, un jeton, un code
     d'autorisation, un `id_token`, un `nonce`, ni le moindre contenu dicté. Ce
     que l'on n'écrit pas ne peut pas fuir par un journal.
+
+    ## `conn` : la mutation et sa trace dans la même transaction
+
+    Passer la connexion de l'appelant fait entrer l'écriture d'audit **dans la
+    transaction de la mutation**. Les deux réussissent ou aucune ne réussit.
+
+    Sans elle — c'était le cas jusqu'à la Phase 27 — une panne entre les deux
+    laissait une mutation sans trace. Moins grave qu'un journal affirmant une
+    action qui n'a pas eu lieu, mais le journal servira un jour à répondre à
+    « qui a désactivé ce compte ? », et une réponse incomplète y est mauvaise.
+
+    Omettre `conn` reste possible pour les appels qui ne mutent rien —
+    l'ouverture d'une session d'administration, par exemple.
     """
-    with db() as conn:
-        conn.execute(
-            "INSERT INTO admin_audit_log(id, organization_id, actor_user_id, "
-            "actor_role, action, target_type, target_id, request_id, metadata, "
-            "created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
-            (
-                uuid.uuid4().hex,
-                principal.organization_id,
-                principal.user_id,
-                principal.security_role,
-                action,
-                target_type,
-                target_id,
-                request_id or new_request_id(),
-                json.dumps(metadata, ensure_ascii=False) if metadata else None,
-                time.time(),
-            ),
-        )
+    if conn is not None:
+        _write_audit_row(conn, principal, action, target_type, target_id,
+                         metadata, request_id)
+        return
+    with db() as owned:
+        _write_audit_row(owned, principal, action, target_type, target_id,
+                         metadata, request_id)
+
+
+def _write_audit_row(conn, principal, action, target_type, target_id,
+                     metadata, request_id):
+    conn.execute(
+        "INSERT INTO admin_audit_log(id, organization_id, actor_user_id, "
+        "actor_role, action, target_type, target_id, request_id, metadata, "
+        "created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (
+            uuid.uuid4().hex,
+            principal.organization_id,
+            principal.user_id,
+            principal.security_role,
+            action,
+            target_type,
+            target_id,
+            request_id or new_request_id(),
+            json.dumps(metadata, ensure_ascii=False) if metadata else None,
+            time.time(),
+        ),
+    )
 
 
 def create_admin_session(user_row, auth_provider: str | None) -> dict:
@@ -4594,6 +4586,21 @@ def close_admin_session(principal: AdminPrincipal = Depends(admin_principal)):
     return {"revoked": True}
 
 
+def seats_in_use(organization_id: str) -> int:
+    """Personnes ayant au moins une session active dans l'organisation.
+
+    Compte des `user_id` distincts, et non des sessions : quelqu'un avec trois
+    postes occupe un siege, pas trois.
+    """
+    now = time.time()
+    with db() as conn:
+        return conn.execute(
+            "SELECT COUNT(DISTINCT user_id) c FROM tokens WHERE active=1 "
+            "AND organization_id=? AND (expires_at IS NULL OR expires_at>?)",
+            (organization_id, now),
+        ).fetchone()["c"]
+
+
 def control_organization_view(organization_id: str) -> dict:
     """Vue d'administration d'une organisation. Des résumés, jamais de secrets."""
     with db() as conn:
@@ -4624,6 +4631,10 @@ def control_organization_view(organization_id: str) -> dict:
             "slug": row["discovery_slug"],
             "service_endpoint": row["service_endpoint"] or "",
         },
+        # Sieges consommes : la seule vue qu'en donnait l'ancienne console.
+        # Un compteur reel, pas une metrique inventee — c'est lui qui refuse
+        # une connexion de plus quand le plafond est atteint.
+        "seats": {"used": seats_in_use(organization_id), "limit": MAX_SEATS},
         # Un résumé par type : combien sont déclarés, combien servent. Ni
         # identifiant client, ni émetteur, ni secret — la vue détaillée existe
         # déjà, sous `provider_manage`.
@@ -4788,34 +4799,386 @@ def control_set_administrator_role(
     return administrator_view(updated)
 
 
+# ────────────────────────── Membres de l'organisation ─────────────────────
+#
+# Gestion des comptes : qui appartient a l'organisation, quel est son metier,
+# son statut, ses appareils. C'est ce que l'ancienne console faisait, porte ici
+# sous l'authentification moderne.
+#
+# Ce que ces routes ne montrent **jamais** : ce que les gens dictent. Ni audio,
+# ni transcription, ni prompt, ni presse-papiers, ni « activite ». Administrer
+# des acces n'est pas surveiller des personnes, et la frontiere doit tenir
+# dans le code, pas seulement dans une intention.
+
+MEMBER_PAGE_DEFAULT = 25
+MEMBER_PAGE_MAX = 100
+
+# Metiers acceptes, tels que la base les stocke aujourd'hui. Changer ce champ
+# ne change **jamais** un privilege : `security_role` vit ailleurs, et c'est
+# tout l'objet de la separation posee en Phase 13.
+MEMBER_ROLES = ("student", "teacher", "staff", "partner")
+
+
+def member_view(row, groups: bool = True) -> dict:
+    """Vue d'administration d'un compte.
+
+    Le sujet externe, le tenant et les jetons sont absents : rien de tout cela
+    n'aide a decider d'un acces, et tout cela elargirait la surface.
+    """
+    security_role = security_role_for(row)
+    view = {
+        "user_id": row["user_id"],
+        "email": row["email"],
+        "member_type": member_type_for(row["role"]),
+        "member_role": row["role"],
+        "security_role": security_role,
+        "status": account_status(row),
+        "identity_provider": row["identity_provider"],
+        "last_seen": row["last_seen"],
+        "created_at": row["created_at"],
+        "note": row["note"],
+    }
+    if groups:
+        view["groups"] = groups_for(row)
+    return view
+
+
+def member_or_404(conn, organization_id: str, user_id: str):
+    """Le compte, s'il appartient bien a cette organisation.
+
+    Un identifiant venu d'ailleurs ne se distingue pas d'un identifiant faux :
+    savoir qu'un compte existe dans une autre organisation est deja une
+    information.
+    """
+    row = user_by_id(conn, user_id)
+    if row is None or row["organization_id"] != organization_id:
+        raise auth_error(404, "USER_NOT_FOUND")
+    return row
+
+
+def guard_last_identity_manager(conn, organization_id: str, user_id: str):
+    """Refuse de retirer le dernier compte capable de nommer des administrateurs.
+
+    Meme garde-fou que la Phase 26, applique ici a la **desactivation** : un
+    compte suspendu ne peut plus administrer, donc suspendre le dernier
+    gestionnaire ferme la porte aussi surement que lui retirer son role.
+    """
+    managers = identity_managers_of(conn, organization_id)
+    if managers == [user_id]:
+        raise auth_error(409, "ADMIN_LAST_IDENTITY_MANAGER")
+
+
 @app.get("/api/control/organizations/{organization_id}/members")
-def control_search_members(
+def control_list_members(
     organization_id: str,
     query: str = "",
+    status: str = "",
+    limit: int = MEMBER_PAGE_DEFAULT,
     principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_IDENTITY_MANAGE)),
 ):
-    """Recherche de comptes, pour choisir qui nommer.
+    """Recherche et liste paginee des comptes de l'organisation.
 
-    Volontairement etroite : une recherche par prefixe, plafonnee, et **aucun
-    listing sans terme**. Une console d'administration n'a pas besoin de
-    deverser l'annuaire de l'organisation pour attribuer un role, et un annuaire
-    complet exporte est exactement ce qu'on ne veut pas laisser derriere soi.
+    Une liste est permise sans terme de recherche — administrer suppose de voir
+    qui est la — mais elle est **paginee et plafonnee**. Ce qui reste interdit,
+    c'est l'export : pas de « tout renvoyer », pas de curseur illimite.
     """
     require_organization_access(principal, organization_id)
+    limit = max(1, min(MEMBER_PAGE_MAX, limit))
+
+    clauses = ["organization_id=?"]
+    values: list = [organization_id]
     term = normalize_email(query)
-    if len(term) < 2:
-        return {"members": [], "query_too_short": True}
+    if term:
+        clauses.append("normalized_email LIKE ?")
+        values.append(f"%{term}%")
+    if status in {"active", "disabled", "deprovisioned"}:
+        # `disabled` reste la colonne booleenne que lit le reste du serveur ;
+        # `status` la double. On interroge les deux pour rester coherent.
+        if status == "active":
+            clauses.append("(disabled IS NULL OR disabled=0)")
+        elif status == "disabled":
+            clauses.append("disabled=1")
+        else:
+            clauses.append("status=?")
+            values.append(status)
+    values.append(limit + 1)
+
     with db() as conn:
         rows = conn.execute(
-            "SELECT * FROM users WHERE organization_id=? AND normalized_email LIKE ? "
-            "ORDER BY normalized_email LIMIT ?",
-            (organization_id, f"{term}%", MEMBER_SEARCH_LIMIT),
+            f"SELECT * FROM users WHERE {' AND '.join(clauses)} "
+            f"ORDER BY normalized_email LIMIT ?",
+            tuple(values),
         ).fetchall()
+        total = conn.execute(
+            "SELECT COUNT(*) c FROM users WHERE organization_id=?",
+            (organization_id,),
+        ).fetchone()["c"]
+
+    has_more = len(rows) > limit
     return {
-        "members": [administrator_view(row) for row in rows],
-        "query_too_short": False,
-        "limit": MEMBER_SEARCH_LIMIT,
+        "members": [member_view(row) for row in rows[:limit]],
+        "has_more": has_more,
+        "limit": limit,
+        "total": total,
     }
+
+
+@app.get("/api/control/organizations/{organization_id}/members/{user_id}")
+def control_member_detail(
+    organization_id: str,
+    user_id: str,
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_IDENTITY_MANAGE)),
+):
+    """Fiche d'un compte : identite, appartenance, appareils.
+
+    Les appareils sont nommes par leur libelle et leur date — jamais par leur
+    jeton, ni meme par son empreinte : une empreinte reste une valeur qui
+    identifie une session, et elle n'aide personne a decider.
+    """
+    require_organization_access(principal, organization_id)
+    with db() as conn:
+        row = member_or_404(conn, organization_id, user_id)
+        devices = conn.execute(
+            "SELECT machine, active, created_at, expires_at FROM tokens "
+            "WHERE user_id=? ORDER BY created_at DESC LIMIT 20",
+            (user_id,),
+        ).fetchall()
+        identities = conn.execute(
+            "SELECT provider, verification, last_seen FROM federated_identities "
+            "WHERE user_id=? AND organization_id=?",
+            (user_id, organization_id),
+        ).fetchall()
+        admin_sessions = conn.execute(
+            "SELECT COUNT(*) c FROM admin_sessions WHERE user_id=? AND revoked_at IS NULL",
+            (user_id,),
+        ).fetchone()["c"]
+
+    return {
+        "member": member_view(row),
+        "devices": [
+            {
+                "machine": device["machine"],
+                "active": bool(device["active"]),
+                "created_at": device["created_at"],
+                "expires_at": device["expires_at"],
+            }
+            for device in devices
+        ],
+        # Les methodes de connexion liees, sans `oid` ni `sub` : le detail
+        # n'aide pas a administrer et n'a pas a circuler.
+        "identities": [
+            {
+                "provider": identity["provider"],
+                "verification": identity["verification"],
+                "last_seen": identity["last_seen"],
+            }
+            for identity in identities
+        ],
+        "open_admin_sessions": admin_sessions,
+    }
+
+
+class MemberStatusRequest(BaseModel):
+    status: str
+
+
+@app.post("/api/control/organizations/{organization_id}/members/{user_id}/status")
+def control_set_member_status(
+    organization_id: str,
+    user_id: str,
+    body: MemberStatusRequest,
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_IDENTITY_MANAGE)),
+):
+    """Suspend ou reactive un compte.
+
+    Suspendre coupe tout de suite : sessions utilisateur et sessions
+    d'administration deviennent inutilisables, et aucune nouvelle connexion
+    n'est acceptee. Ce qui **survit** : l'identite federee, l'historique
+    d'audit, le compte lui-meme. Suspendre n'est pas supprimer.
+
+    Reactiver ne ressuscite aucune session : la personne se reconnecte. Rendre
+    a quelqu'un ses anciens jetons serait la mauvaise facon de lui rendre son
+    acces.
+    """
+    require_organization_access(principal, organization_id)
+    wanted = (body.status or "").strip().lower()
+    if wanted not in {"active", "disabled"}:
+        raise auth_error(400, "MEMBER_STATUS_INVALID")
+
+    with db() as conn:
+        row = member_or_404(conn, organization_id, user_id)
+        if wanted == "disabled":
+            guard_last_identity_manager(conn, organization_id, user_id)
+        previous = account_status(row)
+        if previous == wanted:
+            return {"member": member_view(row), "changed": False}
+
+        conn.execute(
+            "UPDATE users SET disabled=?, status=?, updated_at=? WHERE user_id=?",
+            (1 if wanted == "disabled" else 0, wanted, time.time(), user_id),
+        )
+        if wanted == "disabled":
+            conn.execute("UPDATE tokens SET active=0 WHERE user_id=?", (user_id,))
+            conn.execute(
+                "UPDATE admin_sessions SET revoked_at=? WHERE user_id=? "
+                "AND revoked_at IS NULL",
+                (time.time(), user_id),
+            )
+        # Meme transaction que la mutation : la trace ne peut pas manquer.
+        record_admin_action(
+            principal,
+            "member.disable" if wanted == "disabled" else "member.enable",
+            target_type="user", target_id=user_id,
+            metadata={"previous_status": previous, "status": wanted},
+            conn=conn,
+        )
+        updated = user_by_id(conn, user_id)
+
+    print(f"[admin] member status target={user_id[:8]} to={wanted}")
+    return {"member": member_view(updated), "changed": True}
+
+
+class MemberProfileRequest(BaseModel):
+    """Metier et groupe. **Aucun privilege ne passe par ici.**"""
+
+    member_role: str | None = None
+    cohort: str | None = None
+    note: str | None = None
+
+
+@app.post("/api/control/organizations/{organization_id}/members/{user_id}/profile")
+def control_update_member_profile(
+    organization_id: str,
+    user_id: str,
+    body: MemberProfileRequest,
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_IDENTITY_MANAGE)),
+):
+    """Change le metier ou le groupe d'un membre.
+
+    `security_role` n'est **pas** modifiable ici, et ce n'est pas un oubli : les
+    roles d'administration se gerent depuis leur propre ecran. Deux endroits qui
+    modifient le meme privilege finissent par diverger, et l'un des deux oublie
+    un garde-fou.
+    """
+    require_organization_access(principal, organization_id)
+    if body.member_role is not None and body.member_role not in MEMBER_ROLES:
+        raise auth_error(400, "MEMBER_ROLE_INVALID")
+
+    with db() as conn:
+        row = member_or_404(conn, organization_id, user_id)
+        updates: dict = {}
+        if body.member_role is not None and body.member_role != row["role"]:
+            updates["role"] = body.member_role
+        if body.cohort is not None and body.cohort.strip() != (row["cohort"] or ""):
+            updates["cohort"] = body.cohort.strip()
+        if body.note is not None and body.note.strip() != (row["note"] or ""):
+            updates["note"] = body.note.strip()
+        if not updates:
+            return {"member": member_view(row), "changed": False}
+
+        assignments = ", ".join(f"{name}=?" for name in updates)
+        conn.execute(
+            f"UPDATE users SET {assignments}, updated_at=? WHERE user_id=?",
+            (*updates.values(), time.time(), user_id),
+        )
+        record_admin_action(
+            principal,
+            "member.type_change" if "role" in updates else "member.group_change",
+            target_type="user", target_id=user_id,
+            metadata={"fields": sorted(updates)},
+            conn=conn,
+        )
+        updated = user_by_id(conn, user_id)
+
+    # Le privilege n'a pas bouge : le verifier plutot que l'affirmer.
+    assert security_role_for(updated) == security_role_for(row)
+    return {"member": member_view(updated), "changed": True}
+
+
+@app.delete("/api/control/organizations/{organization_id}/members/{user_id}")
+def control_delete_member(
+    organization_id: str,
+    user_id: str,
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_IDENTITY_MANAGE)),
+):
+    """Efface un compte et ce qui s'y rattache.
+
+    ## Pourquoi cette route existe malgre tout
+
+    Suspendre vaut mieux que supprimer dans presque tous les cas : on garde
+    l'historique, on peut revenir en arriere. Mais « presque » n'est pas
+    « toujours » — une demande d'effacement est un droit, et sans chemin
+    prevu elle se ferait en SQL, a la main, sans trace.
+
+    ## Ce qui part, ce qui reste
+
+    Partent : le compte, ses sessions, ses compteurs d'usage, ses identites
+    federees. Reste : **le journal d'audit**, qui porte des actes
+    d'administration et non des donnees personnelles de dictee — l'effacer
+    reviendrait a effacer la trace de qui a fait quoi.
+
+    Le dernier gestionnaire d'identites ne peut pas etre supprime, pour la
+    meme raison qu'il ne peut pas etre suspendu.
+    """
+    require_organization_access(principal, organization_id)
+    with db() as conn:
+        row = member_or_404(conn, organization_id, user_id)
+        guard_last_identity_manager(conn, organization_id, user_id)
+        normalized = row["normalized_email"]
+        for table in ("tokens", "usage", "personal_dictionary", "snippets",
+                      "formatting_rules"):
+            columns = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+            if "user_id" in columns:
+                conn.execute(f"DELETE FROM {table} WHERE user_id=?", (user_id,))
+        conn.execute(
+            "DELETE FROM federated_identities WHERE user_id=? AND organization_id=?",
+            (user_id, organization_id),
+        )
+        conn.execute(
+            "DELETE FROM auth_codes WHERE lower(trim(email))=? AND organization_id=?",
+            (normalized, organization_id),
+        )
+        conn.execute("DELETE FROM admin_sessions WHERE user_id=?", (user_id,))
+        conn.execute("DELETE FROM users WHERE user_id=?", (user_id,))
+        # L'audit conserve la trace de la suppression elle-meme.
+        record_admin_action(
+            principal, "member.delete", target_type="user", target_id=user_id,
+            conn=conn,
+        )
+    print(f"[admin] member deleted target={user_id[:8]}")
+    return {"deleted": user_id}
+
+
+@app.post("/api/control/organizations/{organization_id}/members/{user_id}/sessions/revoke")
+def control_revoke_member_sessions(
+    organization_id: str,
+    user_id: str,
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_IDENTITY_MANAGE)),
+):
+    """Deconnecte une personne de tous ses appareils.
+
+    Par `user_id` : l'homonyme d'une autre organisation garde ses sessions. Le
+    compte reste actif et son identite federee intacte — la personne se
+    reconnecte simplement.
+    """
+    require_organization_access(principal, organization_id)
+    with db() as conn:
+        member_or_404(conn, organization_id, user_id)
+        devices = conn.execute(
+            "UPDATE tokens SET active=0 WHERE user_id=? AND active=1", (user_id,)
+        ).rowcount
+        conn.execute(
+            "UPDATE admin_sessions SET revoked_at=? WHERE user_id=? "
+            "AND revoked_at IS NULL",
+            (time.time(), user_id),
+        )
+        record_admin_action(
+            principal, "member.sessions_revoke",
+            target_type="user", target_id=user_id,
+            metadata={"devices": devices}, conn=conn,
+        )
+    print(f"[admin] member sessions revoked target={user_id[:8]} devices={devices}")
+    return {"revoked_devices": devices}
 
 
 # ─────────────────────────── Journal d'audit ──────────────────────────────
@@ -5300,163 +5663,3 @@ async def engineering_notes(body: CommandRequest, user: str = Depends(current_us
     return {"text": await llm_complete(prompt, source_text)}
 
 # ================================================================ ADMIN
-@app.get("/api/admin/overview")
-def admin_overview(
-    _: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_DIAGNOSTICS_READ)),
-):
-    with db() as conn:
-        users = conn.execute("""
-            SELECT u.email, u.role, u.cohort, u.note, u.disabled, u.created_at, u.last_seen,
-                   (SELECT COUNT(*) FROM tokens t WHERE t.email=u.email AND t.active=1) AS machines,
-                   COALESCE((SELECT SUM(g.transcriptions) FROM usage g WHERE g.email=u.email),0) AS total_transcriptions,
-                   COALESCE((SELECT SUM(g.reformulations) FROM usage g WHERE g.email=u.email),0) AS total_reformulations
-            FROM users u ORDER BY u.last_seen DESC
-        """).fetchall()
-        today = time.strftime("%Y-%m-%d")
-        day_stats = conn.execute("""
-            SELECT COALESCE(SUM(transcriptions),0) t, COALESCE(SUM(reformulations),0) r,
-                   COUNT(DISTINCT email) actifs
-            FROM usage WHERE day=?
-        """, (today,)).fetchone()
-        seats = conn.execute("SELECT COUNT(*) c FROM tokens WHERE active=1").fetchone()["c"]
-    return {
-        "seats_used": seats, "max_seats": MAX_SEATS, "domains": ALLOWED_DOMAINS,
-        "today": dict(day_stats),
-        "users": [dict(u) for u in users],
-    }
-
-@app.get("/api/admin/user/{email}")
-def admin_user_detail(
-    email: str,
-    _: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_IDENTITY_MANAGE)),
-):
-    """Profil complet : infos + appareils + historique d'usage (30 jours, compteurs)."""
-    email = email.lower()
-    with db() as conn:
-        u = user_by_email(conn, nova_organization_id(), email)
-        if not u:
-            raise HTTPException(404, "Utilisateur inconnu")
-        machines = conn.execute(
-            "SELECT machine, active, created_at FROM tokens WHERE user_id=?",
-            (u["user_id"],)
-        ).fetchall()
-        history = conn.execute(
-            "SELECT day, transcriptions, reformulations, audio_seconds FROM usage "
-            "WHERE email=? ORDER BY day DESC LIMIT 30", (email,)
-        ).fetchall()
-    return {"profile": dict(u),
-            "machines": [dict(m) for m in machines],
-            "usage_30d": [dict(h) for h in history]}
-
-@app.post("/api/admin/user/{email}")
-def admin_user_update(
-    email: str,
-    body: UserUpdate,
-    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_IDENTITY_MANAGE)),
-):
-    """Rôle métier, cohorte, note, suspension.
-
-    Ce que cette route ne peut **pas** faire : attribuer un rôle de sécurité.
-    `users.role` décrit un métier ; le privilège vit dans `users.security_role`,
-    qu'aucun endpoint n'écrit — voir `set_security_role` et `admin_cli.py`.
-    """
-    email = email.lower()
-    fields, vals = [], []
-    if body.role is not None:
-        if body.role not in ("student", "teacher", "staff", "partner"):
-            raise HTTPException(400, "Rôle invalide")
-        fields.append("role=?"); vals.append(body.role)
-    if body.cohort is not None:
-        fields.append("cohort=?"); vals.append(body.cohort)
-    if body.note is not None:
-        fields.append("note=?"); vals.append(body.note)
-    if body.disabled is not None:
-        fields.append("disabled=?"); vals.append(1 if body.disabled else 0)
-    if not fields:
-        return {"updated": False}
-    organization_id = nova_organization_id()
-    with db() as conn:
-        existing = user_by_email(conn, organization_id, email)
-        if existing is None:
-            # Créer un compte depuis une route d'administration reste possible,
-            # mais il naît désormais avec une identité, pas avec une adresse.
-            create_user(conn, organization_id, email)
-            existing = user_by_email(conn, organization_id, email)
-        conn.execute(
-            f"UPDATE users SET {', '.join(fields)}, updated_at=? WHERE user_id=?",
-            (*vals, time.time(), existing["user_id"]),
-        )
-    record_admin_action(
-        principal, "user.update", target_type="user", target_id=email,
-        metadata={"fields": sorted(f.rstrip("=?") for f in fields)},
-    )
-    return {"updated": True}
-
-@app.post("/api/admin/user/{email}/revoke-machines")
-def admin_revoke_machines(
-    email: str,
-    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_IDENTITY_MANAGE)),
-):
-    """Déconnecte l'utilisateur de tous ses appareils (il devra refaire un code email)."""
-    with db() as conn:
-        existing = user_by_email(conn, nova_organization_id(), email)
-        if existing is None:
-            raise HTTPException(404, "Utilisateur inconnu")
-        # Par `user_id` : révoquer les appareils d'une personne ne doit jamais
-        # atteindre son homonyme dans une autre organisation.
-        n = conn.execute("UPDATE tokens SET active=0 WHERE user_id=?",
-                         (existing["user_id"],)).rowcount
-    record_admin_action(
-        principal, "user.revoke_machines", target_type="user", target_id=email.lower())
-    return {"revoked_tokens": n}
-
-@app.delete("/api/admin/user/{email}")
-def admin_user_delete(
-    email: str,
-    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_IDENTITY_MANAGE)),
-):
-    """Supprime complètement l'utilisateur (profil, tokens, compteurs)."""
-    email = email.lower()
-    organization_id = nova_organization_id()
-    with db() as conn:
-        # Jamais `DELETE ... WHERE email=?` seul : cela effacerait aussi
-        # l'homonyme d'une autre organisation.
-        existing = user_by_email(conn, organization_id, email)
-        if existing is None:
-            raise HTTPException(404, "Utilisateur inconnu")
-        user_id = existing["user_id"]
-        conn.execute("DELETE FROM tokens WHERE user_id=?", (user_id,))
-        conn.execute("DELETE FROM users WHERE user_id=?", (user_id,))
-        conn.execute("DELETE FROM usage WHERE user_id=?", (user_id,))
-        conn.execute(
-            "DELETE FROM auth_codes WHERE lower(trim(email))=? AND organization_id=?",
-            (normalize_email(email), organization_id),
-        )
-    record_admin_action(principal, "user.delete", target_type="user", target_id=email)
-    return {"deleted": email}
-
-@app.post("/api/admin/cohort/{cohort}/disable")
-def admin_cohort_disable(
-    cohort: str,
-    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_IDENTITY_MANAGE)),
-):
-    """Suspend toute une cohorte (ex. fin d'année scolaire)."""
-    with db() as conn:
-        n = conn.execute("UPDATE users SET disabled=1 WHERE cohort=?", (cohort,)).rowcount
-    record_admin_action(
-        principal, "cohort.disable", target_type="cohort", target_id=cohort,
-        metadata={"affected": n})
-    return {"disabled_users": n}
-
-# ---------------------------------------------------------------- admin UI
-@app.get("/admin", response_class=HTMLResponse)
-def admin_page():
-    """Console heritee — **eteinte par defaut** depuis la Phase 26.
-
-    Nova Admin la remplace : identite reelle, roles, reauthentification, audit
-    nominatif. Voir `NOVA_LEGACY_ADMIN_UI` et
-    `docs/architecture/admin-identity-management.md`.
-    """
-    if not LEGACY_ADMIN_UI_ENABLED:
-        raise HTTPException(404, "Not Found")
-    return (Path(__file__).parent / "admin.html").read_text(encoding="utf-8")

@@ -11,7 +11,7 @@
 
 import { useState } from "react";
 import { ApiError } from "../lib/api";
-import type { AdministratorView } from "../lib/controlPlane";
+import type { AdministratorView, MemberView } from "../lib/controlPlane";
 import { errorMessage, t } from "../lib/messages";
 import { CAPABILITY, can } from "../lib/session";
 import { useResource } from "../lib/useResource";
@@ -44,7 +44,7 @@ function roleLabel(role: string): string {
 function GrantAccess({ onGranted }: { onGranted: () => void }) {
   const { control, session } = useSession();
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<AdministratorView[] | null>(null);
+  const [results, setResults] = useState<MemberView[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const [granted, setGranted] = useState<string | null>(null);
@@ -59,8 +59,13 @@ function GrantAccess({ onGranted }: { onGranted: () => void }) {
       return;
     }
     try {
-      const found = await control!.searchMembers(organizationId, term.trim());
-      setResults(found.query_too_short ? null : found.members);
+      // La recherche et la liste des membres ont fusionné en Phase 27 : une
+      // seule route, paginée, qui se restreint quand on lui donne un terme.
+      const found = await control!.members(organizationId, {
+        query: term.trim(),
+        limit: 25,
+      });
+      setResults(found.members);
       setFailure(null);
     } catch (raised) {
       setFailure(
@@ -71,7 +76,7 @@ function GrantAccess({ onGranted }: { onGranted: () => void }) {
     }
   }
 
-  async function grant(member: AdministratorView, role: string) {
+  async function grant(member: MemberView, role: string) {
     setBusy(true);
     setFailure(null);
     try {
