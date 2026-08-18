@@ -125,8 +125,34 @@ describe("No arbitrary JSON", () => {
     }
   });
 
-  test("only declared keys are written", () => {
-    expect(code(REST)).toContain('set("ai_skills_enabled"');
+  test("only keys declared in the table are written", () => {
+    // Les cles ne viennent plus de JSX repete mais d'une table : l'ecran ne
+    // peut ecrire que ce qu'elle declare, et ajouter une policy revient a
+    // ajouter une ligne.
+    const source = code(REST);
+    expect(source).toContain("onChange={(event) => set(item.key, event.target.checked)}");
+    for (const key of [
+      "ai_skills_enabled",
+      "organization_vocabulary_enabled",
+      "voice_commands_enabled",
+      "engineering_notes_enabled",
+      "file_import_enabled",
+    ]) {
+      expect(source).toContain(`key: "${key}"`);
+    }
+  });
+
+  test("the file import switch says the dictation stays available", async () => {
+    // La question qu'un administrateur se pose en lisant « import audio ».
+    // Ne pas y repondre a l'ecran, c'est laisser croire qu'il coupe la dictee.
+    const { t } = await import("./messages");
+    expect(t.policies.dictationSafe.toLowerCase()).toContain("dictation");
+    expect(t.policies.dictationSafe.toLowerCase()).toContain("always");
+    expect(code(REST)).toContain("t.policies.dictationSafe");
+  });
+
+  test("every switch carries an accessible label", () => {
+    expect(code(REST)).toContain("aria-label={item.title}");
   });
 
   test("an unknown key rejected by the server is explained, not echoed", async () => {

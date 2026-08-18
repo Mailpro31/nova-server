@@ -177,6 +177,62 @@ export function Configuration() {
 /* ── Product policies ───────────────────────────────────────────────── */
 
 /**
+ * Les policies, groupées par usage.
+ *
+ * Une table plutôt que du JSX répété : ajouter une policy revient à ajouter
+ * une ligne, et l'écran ne peut pas en oublier une au fil des modifications.
+ * Le regroupement suit ce qu'un administrateur cherche — « ce qui touche à
+ * l'écriture » — pas l'ordre du schéma serveur.
+ */
+const POLICY_GROUPS: {
+  title: string;
+  items: { key: string; title: string; body: string }[];
+}[] = [
+  {
+    title: t.policies.groupAi,
+    items: [
+      {
+        key: "ai_skills_enabled",
+        title: t.policies.aiSkillsTitle,
+        body: t.policies.aiSkillsBody,
+      },
+    ],
+  },
+  {
+    title: t.policies.groupWriting,
+    items: [
+      {
+        key: "organization_vocabulary_enabled",
+        title: t.policies.vocabularyTitle,
+        body: t.policies.vocabularyBody,
+      },
+      {
+        key: "engineering_notes_enabled",
+        title: t.policies.notesTitle,
+        body: t.policies.notesBody,
+      },
+    ],
+  },
+  {
+    title: t.policies.groupInput,
+    items: [
+      {
+        key: "voice_commands_enabled",
+        title: t.policies.commandsTitle,
+        body: t.policies.commandsBody,
+      },
+      {
+        key: "file_import_enabled",
+        title: t.policies.fileImportTitle,
+        // La question qu'on se pose en lisant « import audio » : est-ce que
+        // cela coupe la dictée ? Non, et l'écran le dit.
+        body: `${t.policies.fileImportBody} ${t.policies.dictationSafe}`,
+      },
+    ],
+  },
+];
+
+/**
  * Ce que l'organisation autorise à ses membres.
  *
  * Les valeurs affichées viennent **toujours** du serveur. Après sauvegarde,
@@ -278,29 +334,39 @@ function Policies() {
             />
             {!view.configured && <p className="policy-hint">{t.policies.defaults}</p>}
 
-            <div className="policy-setting">
-              <div>
-                <strong>{t.policies.aiSkillsTitle}</strong>
-                <p style={{ color: "var(--text-muted)", margin: 0 }}>
-                  {t.policies.aiSkillsBody}
-                </p>
+            {POLICY_GROUPS.map((group) => (
+              <div key={group.title}>
+                <h3 className="policy-group">{group.title}</h3>
+                {group.items.map((item) => (
+                  <div className="policy-setting" key={item.key}>
+                    <div>
+                      <strong>{item.title}</strong>
+                      <p style={{ color: "var(--text-muted)", margin: 0 }}>
+                        {item.body}
+                      </p>
+                    </div>
+                    <label className="row">
+                      <input
+                        type="checkbox"
+                        aria-label={item.title}
+                        checked={settings[item.key] === true}
+                        disabled={!mayManage || busy}
+                        onChange={(event) => set(item.key, event.target.checked)}
+                      />
+                      <span>
+                        {settings[item.key]
+                          ? t.policies.enabled
+                          : t.policies.disabled}
+                      </span>
+                    </label>
+                  </div>
+                ))}
               </div>
-              <label className="row">
-                <input
-                  type="checkbox"
-                  checked={settings.ai_skills_enabled === true}
-                  disabled={!mayManage || busy}
-                  onChange={(event) =>
-                    set("ai_skills_enabled", event.target.checked)
-                  }
-                />
-                <span>
-                  {settings.ai_skills_enabled
-                    ? t.policies.enabled
-                    : t.policies.disabled}
-                </span>
-              </label>
-            </div>
+            ))}
+            {/* Le mode pedagogique du deploiement peut fermer une fonction
+                qu'aucune policy n'a fermee. Le dire evite de chercher
+                longtemps pourquoi un interrupteur ouvert ne suffit pas. */}
+            <p className="policy-hint">{t.policies.modeRestricted}</p>
 
             {!mayManage && <p className="policy-hint">{t.policies.readOnly}</p>}
             {conflict && (

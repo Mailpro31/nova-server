@@ -1920,7 +1920,7 @@ def capabilities_for_role(role: str) -> frozenset[str]:
 # ecran de configuration. La separation est structurelle : ces fonctions ne
 # figurent dans aucune cle de POLICY_SETTINGS, et un test le verifie.
 
-POLICY_SCHEMA_VERSION = 1
+POLICY_SCHEMA_VERSION = 2
 
 
 class PolicySetting:
@@ -1941,22 +1941,33 @@ class PolicySetting:
         self.capability = capability
 
 
-# ## Pourquoi si peu de cles
+# ## Ce qui entre ici, et ce qui n'y entre pas
 #
 # Une policy n'est legitime que si la fonction existe vraiment, si l'on sait
 # exactement ce que son refus signifie, et si ce refus peut etre applique
-# ailleurs que dans l'affichage. Declarer quarante interrupteurs « pour plus
-# tard » produirait un panneau de configuration dont la plupart des lignes ne
-# feraient rien — et l'on ne saurait bientot plus lesquelles.
+# ailleurs que dans l'affichage. Declarer des interrupteurs « pour plus tard »
+# produirait un panneau dont la plupart des lignes ne feraient rien — et l'on
+# ne saurait bientot plus lesquelles comptent.
 #
-# `ai_skills_enabled` remplit les trois conditions : la fonction existe
-# (`/api/ai-skills`, la page du poste, le premier lancement), son refus a un
-# sens unique — les membres n'utilisent pas les AI Skills — et le serveur
-# refuse reellement, puisque c'est lui qui distribue les modules.
+# Les quatre cles ajoutees en Phase 30 gouvernent chacune une route serveur
+# reelle, ce qui rend le refus opposable a n'importe quel client :
+#
+#     organization_vocabulary_enabled  /api/vocabulary, /api/dictionary/*
+#     voice_commands_enabled           /api/command
+#     engineering_notes_enabled        /api/engineering-notes
+#     file_import_enabled              /api/import/transcribe
+#
+# **`file_import_enabled` ne touche jamais `/api/transcribe`.** Cette route
+# sert aussi la dictee micro : la fermer sur une policy d'import couperait le
+# coeur du produit. D'ou une route d'import distincte, sur le meme moteur.
 POLICY_SETTINGS: dict[str, PolicySetting] = {
     setting.key: setting
     for setting in (
         PolicySetting("ai_skills_enabled", bool, True, "aiSkills"),
+        PolicySetting("organization_vocabulary_enabled", bool, True, "dictionary"),
+        PolicySetting("voice_commands_enabled", bool, True, "commands"),
+        PolicySetting("engineering_notes_enabled", bool, True, "engineeringNotes"),
+        PolicySetting("file_import_enabled", bool, True, "fileTranscription"),
     )
 }
 
@@ -1966,20 +1977,27 @@ POLICY_SETTINGS: dict[str, PolicySetting] = {
 #
 # **Tous les defauts valent `True`.** Une organisation qui n'a jamais rien
 # configure doit se comporter exactement comme avant l'existence des policies.
-# Une migration qui eteindrait une fonction au passage serait une panne, pas
-# une mise a jour.
+# Une cle qui apparait dans le schema ne doit rien eteindre chez personne.
 DEFAULT_ORGANIZATION_POLICY: dict = {
     key: setting.default for key, setting in POLICY_SETTINGS.items()
 }
 
 
 def validate_policy_settings(candidate: dict) -> dict:
-    """Le document propose est-il un document de policy valide ?
+    """Le document propose est-il valide ? Renvoie les **surcharges** retenues.
 
-    Renvoie le document complet et normalise, ou leve `ValueError` avec un
-    motif. Les cles absentes reprennent le defaut : une console qui n'envoie
-    que ce qu'elle a modifie reste correcte, et une cle ajoutee par une version
-    ulterieure du serveur ne casse pas une console plus ancienne.
+    ## Pourquoi ne stocker que les surcharges
+
+    Ce qui revient n'est pas le document complet mais uniquement les cles dont
+    la valeur differe du defaut. Recopier les defauts en base les figerait :
+    le jour ou un defaut produit change, les organisations qui n'avaient rien
+    demande garderaient l'ancien comportement sans que personne ne l'ait choisi.
+
+    Une console qui renvoie l'etat complet obtient donc gratuitement le
+    « revenir au defaut » : reposer une valeur sur son defaut efface la
+    surcharge.
+
+    Leve `ValueError` avec un motif portant la cle fautive.
     """
     if not isinstance(candidate, dict):
         raise ValueError("POLICY_SETTINGS_INVALID")
@@ -1989,26 +2007,24 @@ def validate_policy_settings(candidate: dict) -> dict:
         # en silence donne a l'administrateur la certitude d'avoir configure
         # quelque chose qui ne s'appliquera jamais.
         raise ValueError(f"POLICY_KEY_UNKNOWN:{sorted(unknown)[0]}")
-    resolved = {}
-    for key, setting in POLICY_SETTINGS.items():
-        if key not in candidate:
-            resolved[key] = setting.default
-            continue
-        value = candidate[key]
+    overrides = {}
+    for key, value in candidate.items():
+        setting = POLICY_SETTINGS[key]
         # `isinstance(True, int)` vaut vrai : sans ce controle, un booleen
         # passerait pour un entier et reciproquement.
         if setting.kind is bool and not isinstance(value, bool):
             raise ValueError(f"POLICY_VALUE_INVALID:{key}")
         if not isinstance(value, setting.kind):
             raise ValueError(f"POLICY_VALUE_INVALID:{key}")
-        resolved[key] = value
-    return resolved
+        if value != setting.default:
+            overrides[key] = value
+    return overrides
 
 
 def read_policy_settings(raw: str | None) -> dict:
-    """Relit un document stocke, sans jamais laisser tomber le serveur.
+    """Relit les surcharges stockees, sans jamais laisser tomber le serveur.
 
-    En **lecture**, l'inconnu est ignore et le manquant reprend son defaut. La
+    En **lecture**, l'inconnu est ignore et l'invalide est ecarte. La
     dissymetrie avec l'ecriture est voulue : une ligne ecrite par une version
     ulterieure — ou abimee — doit se degrader vers un comportement sur, pas
     empecher l'organisation de fonctionner.
@@ -2019,21 +2035,40 @@ def read_policy_settings(raw: str | None) -> dict:
         stored = {}
     if not isinstance(stored, dict):
         stored = {}
-    resolved = {}
+    overrides = {}
     for key, setting in POLICY_SETTINGS.items():
-        value = stored.get(key, setting.default)
+        if key not in stored:
+            continue
+        value = stored[key]
         if setting.kind is bool and not isinstance(value, bool):
-            value = setting.default
-        elif not isinstance(value, setting.kind):
-            value = setting.default
-        resolved[key] = value
+            continue
+        if not isinstance(value, setting.kind):
+            continue
+        overrides[key] = value
+    return overrides
+
+
+def effective_policy_settings(overrides: dict) -> dict:
+    """defauts ⊕ surcharges = policy effective.
+
+    Le seul endroit ou les deux se rencontrent. Laisser chaque appelant faire
+    son propre `overrides.get(key, default)` finirait par produire des defauts
+    divergents selon la route.
+    """
+    resolved = dict(DEFAULT_ORGANIZATION_POLICY)
+    resolved.update(overrides)
     return resolved
 
 
 def organization_policy(organization_id: str, conn=None) -> dict:
     """La policy d'une organisation — toujours une reponse, jamais `None`.
 
-    Une organisation sans ligne obtient le defaut a la **revision 0**. Cette
+    Renvoie **les deux** formes, et la distinction compte :
+
+    - `overrides` : ce qu'un administrateur a explicitement decide ;
+    - `settings`  : ce qui s'applique reellement, defauts compris.
+
+    Une organisation sans ligne obtient les defauts a la **revision 0**. Cette
     revision-la est significative : elle dit « rien n'a jamais ete configure »,
     et une premiere ecriture partira donc de 0 pour produire la revision 1.
     """
@@ -2052,15 +2087,18 @@ def organization_policy(organization_id: str, conn=None) -> dict:
         return {
             "schema_version": POLICY_SCHEMA_VERSION,
             "revision": 0,
+            "overrides": {},
             "settings": dict(DEFAULT_ORGANIZATION_POLICY),
             "updated_at": None,
             "updated_by_user_id": None,
             "configured": False,
         }
+    overrides = read_policy_settings(row["settings"])
     return {
         "schema_version": row["schema_version"],
         "revision": row["revision"],
-        "settings": read_policy_settings(row["settings"]),
+        "overrides": overrides,
+        "settings": effective_policy_settings(overrides),
         "updated_at": row["updated_at"],
         "updated_by_user_id": row["updated_by_user_id"],
         "configured": True,
@@ -2072,13 +2110,24 @@ def resolve_effective_product_capabilities(
 ) -> dict:
     """capacite de base ∩ policy = capacite effective.
 
+    ## L'ordre de composition
+
+        support produit  ∩  policy d'organisation  ∩  restriction de contexte
+                                                   =  capacite effective
+
+    Les restrictions de contexte — le mode pedagogique, par exemple — sont
+    **deja** dans `base_capabilities` : c'est ainsi que le mode `classroom`
+    ferme les commandes et les notes d'ingenierie. L'intersection les preserve
+    donc sans traitement particulier : une policy permissive ne peut pas
+    rouvrir ce qu'un mode a ferme, parce que `False and True` vaut `False`.
+
+    C'est la propriete qui compte, et elle vaut mieux qu'une regle de priorite
+    ecrite quelque part : il n'y a rien a se rappeler.
+
     **Autorite unique.** Le poste porte le meme resolveur pour son interface,
     mais toute action qui passe par le serveur est tranchee ici. Deux formules
     qui divergeraient produiraient un bouton actif menant a un refus — ou, bien
     pire, l'inverse.
-
-    Le sens de l'intersection est la regle qui compte : `False and True` vaut
-    `False`. Une policy ne peut qu'oter.
     """
     effective = dict(base_capabilities)
     for setting in POLICY_SETTINGS.values():
@@ -2090,6 +2139,50 @@ def resolve_effective_product_capabilities(
             effective[setting.capability]
         ) and bool(policy_settings.get(setting.key, setting.default))
     return effective
+
+
+def organization_policy_for_account(account) -> dict:
+    """La policy applicable a un compte, cadree par **son** organisation.
+
+    Jamais par un identifiant venu du client : ce serait un moyen de lire — ou
+    de subir — la configuration d'une autre organisation.
+    """
+    organization_id = (
+        account["organization_id"] if account is not None else None
+    ) or nova_organization_id()
+    return organization_id, organization_policy(organization_id)
+
+
+def product_capability(capability: str, feature: str):
+    """Garde de route, posee en dependance.
+
+    En dependance plutot qu'en corps de fonction : la plupart des routes
+    concernees recoivent une adresse (`current_user`), pas un compte, et leur
+    faire changer de signature pour un controle transversal aurait touche sept
+    routes sans rapport entre elles. La garde se lit aussi mieux au-dessus de
+    la route qu'enfouie dans son corps.
+    """
+    def guard(account=Depends(current_account)):
+        require_product_capability(account, capability, feature)
+
+    return guard
+
+
+def require_product_capability(account, capability: str, feature: str):
+    """Refuse l'operation si l'organisation a ferme la fonction.
+
+    Le poste masque deja l'entree correspondante, mais un poste est une
+    interface : il peut etre ancien, modifie, ou appeler la route directement.
+    Quand la fonction passe par le serveur, c'est au serveur de refuser.
+
+    Le refus porte un code stable et le nom de la fonction — de quoi afficher
+    un message juste — et rien d'autre : ni etat interne, ni configuration.
+    """
+    organization_id, _ = organization_policy_for_account(account)
+    if not public_campus_config(organization_id)["capabilities"].get(capability):
+        raise HTTPException(
+            403, {"code": "ORGANIZATION_POLICY_DISABLED", "feature": feature}
+        )
 
 
 # `users.role` décrit un métier. La correspondance ne produit jamais de droit.
@@ -3018,7 +3111,12 @@ def public_campus_config(organization_id: str | None = None) -> dict:
             "screenContext": False,
             "cloudInference": True,
             "engineeringNotes": EDUCATION_MODE == "normal",
-            "aiSkills": True,
+            # Derive du meme mode que `ai_skills.enabled` ci-dessus. Les deux
+            # champs decrivent une seule decision : les laisser diverger — ce
+            # qui etait le cas en mode examen, ou la capacite restait ouverte
+            # pendant que le bloc la fermait — obligeait le poste a choisir
+            # lequel croire.
+            "aiSkills": EDUCATION_MODE != "assessment",
             "personalization": True,
         },
         "privacy": {
@@ -4936,7 +5034,15 @@ def policy_view(organization_id: str) -> dict:
     return {
         "schema_version": policy["schema_version"],
         "revision": policy["revision"],
+        # Ce qui s'applique reellement, defauts compris : c'est ce que la
+        # console affiche.
         "settings": policy["settings"],
+        # Ce qu'un administrateur a explicitement decide. La console peut ainsi
+        # distinguer « laisse par defaut » de « choisi ainsi », et le jour ou un
+        # defaut produit change, les organisations qui n'avaient rien demande
+        # suivent.
+        "overrides": policy["overrides"],
+        "defaults": dict(DEFAULT_ORGANIZATION_POLICY),
         "updated_at": policy["updated_at"],
         "updated_by_user_id": policy["updated_by_user_id"],
         # `false` tant que personne n'a rien change : la console peut alors dire
@@ -4973,7 +5079,7 @@ def control_update_policy(
     document stocke est donc toujours complet et toujours relisible.
     """
     try:
-        settings = validate_policy_settings(body.settings)
+        overrides = validate_policy_settings(body.settings)
     except ValueError as error:
         reason = str(error)
         # Le motif porte la cle fautive — `POLICY_KEY_UNKNOWN:ai_skils` — pour
@@ -4993,13 +5099,18 @@ def control_update_policy(
             # travail de son collegue ne saurait meme pas qu'il a existe.
             raise auth_error(409, "POLICY_REVISION_CONFLICT")
 
-        previous = (
-            read_policy_settings(current["settings"]) if current
-            else dict(DEFAULT_ORGANIZATION_POLICY)
-        )
-        changed = sorted(
-            key for key in POLICY_SETTINGS if previous.get(key) != settings.get(key)
-        )
+        previous = read_policy_settings(current["settings"]) if current else {}
+        before = effective_policy_settings(previous)
+        after = effective_policy_settings(overrides)
+        changed = sorted(key for key in POLICY_SETTINGS if before[key] != after[key])
+
+        if not changed and current is not None:
+            # Enregistrer sans rien changer ne doit produire ni revision, ni
+            # ligne d'audit. Une revision qui avance sans qu'aucune valeur ne
+            # bouge rendrait le compteur illisible, et un journal qui note des
+            # non-evenements finit par ne plus etre lu.
+            return policy_view(organization_id)
+
         revision = current_revision + 1
         conn.execute(
             "INSERT INTO organization_policies(organization_id, schema_version, "
@@ -5007,7 +5118,7 @@ def control_update_policy(
             "ON CONFLICT(organization_id) DO UPDATE SET schema_version=excluded.schema_version, "
             "revision=excluded.revision, settings=excluded.settings, "
             "updated_at=excluded.updated_at, updated_by_user_id=excluded.updated_by_user_id",
-            (organization_id, POLICY_SCHEMA_VERSION, revision, json.dumps(settings),
+            (organization_id, POLICY_SCHEMA_VERSION, revision, json.dumps(overrides),
              now, principal.user_id),
         )
         # Meme transaction que la mutation : une policy changee sans trace
@@ -5817,7 +5928,7 @@ def command_prompt(instruction: str, vocabulary: str) -> str:
         )
     return prompt
 
-@app.get("/api/vocabulary")
+@app.get("/api/vocabulary", dependencies=[Depends(product_capability("dictionary", "organization_vocabulary"))])
 def vocabulary(user: str = Depends(current_user)):
     with db() as conn:
         shared = conn.execute(
@@ -5837,7 +5948,7 @@ def vocabulary(user: str = Depends(current_user)):
         "snippets": [dict(row) for row in snippets],
     }
 
-@app.post("/api/dictionary")
+@app.post("/api/dictionary", dependencies=[Depends(product_capability("dictionary", "organization_vocabulary"))])
 def dictionary_add(body: DictionaryEntryRequest, user: str = Depends(current_user)):
     term = clean_required(body.term, "term", 200)
     replacement = clean_required(body.replacement, "replacement", 500)
@@ -5852,7 +5963,7 @@ def dictionary_add(body: DictionaryEntryRequest, user: str = Depends(current_use
         ).fetchone()
     return {"id": row["id"]}
 
-@app.delete("/api/dictionary/{entry_id}")
+@app.delete("/api/dictionary/{entry_id}", dependencies=[Depends(product_capability("dictionary", "organization_vocabulary"))])
 def dictionary_delete(entry_id: int, user: str = Depends(current_user)):
     with db() as conn:
         deleted = conn.execute(
@@ -5862,7 +5973,7 @@ def dictionary_delete(entry_id: int, user: str = Depends(current_user)):
         raise HTTPException(404, "Terme inconnu")
     return {"deleted": True}
 
-@app.post("/api/dictionary/learn")
+@app.post("/api/dictionary/learn", dependencies=[Depends(product_capability("dictionary", "organization_vocabulary"))])
 def dictionary_learn(body: DictionaryLearnRequest, user: str = Depends(current_user)):
     heard = clean_required(body.heard, "heard", 200)
     corrected = clean_required(body.corrected, "corrected", 500)
@@ -5874,7 +5985,7 @@ def dictionary_learn(body: DictionaryLearnRequest, user: str = Depends(current_u
         )
     return {"learned": True}
 
-@app.get("/api/dictionary/export", response_class=PlainTextResponse)
+@app.get("/api/dictionary/export", response_class=PlainTextResponse, dependencies=[Depends(product_capability("dictionary", "organization_vocabulary"))])
 def dictionary_export(user: str = Depends(current_user)):
     output = io.StringIO()
     writer = csv.writer(output)
@@ -5887,7 +5998,7 @@ def dictionary_export(user: str = Depends(current_user)):
     writer.writerows((row["term"], row["replacement"]) for row in rows)
     return output.getvalue()
 
-@app.post("/api/dictionary/import")
+@app.post("/api/dictionary/import", dependencies=[Depends(product_capability("dictionary", "organization_vocabulary"))])
 async def dictionary_import(file: UploadFile, user: str = Depends(current_user)):
     raw = (await file.read()).decode("utf-8-sig", errors="replace")
     imported = 0
@@ -5908,7 +6019,7 @@ async def dictionary_import(file: UploadFile, user: str = Depends(current_user))
             imported += 1
     return {"imported": imported}
 
-@app.post("/api/dictionary/analyze")
+@app.post("/api/dictionary/analyze", dependencies=[Depends(product_capability("dictionary", "organization_vocabulary"))])
 async def dictionary_analyze(file: UploadFile, user: str = Depends(current_user)):
     text = (await file.read()).decode("utf-8", errors="replace")[:200_000]
     candidates = set(re.findall(r"\b(?:[A-Z]{2,8}|[A-Z][a-z]+(?:[- ][A-Z][a-z]+)+)\b", text))
@@ -5980,8 +6091,11 @@ def formatting_rule_delete(rule_id: int, user: str = Depends(current_user)):
         raise HTTPException(404, "Regle inconnue")
     return {"deleted": True}
 
-@app.get("/api/ai-skills")
-def ai_skills(account=Depends(current_account)):
+@app.get(
+    "/api/ai-skills",
+    dependencies=[Depends(product_capability("aiSkills", "ai_skills"))],
+)
+def ai_skills():
     """Les modules AI Skills, si l'organisation les autorise.
 
     C'est ici que la policy cesse d'etre un affichage. Le poste masque deja
@@ -5989,17 +6103,33 @@ def ai_skills(account=Depends(current_account)):
     interface : il peut etre ancien, modifie, ou simplement appeler la route
     directement. Le catalogue vient du serveur — c'est donc au serveur de ne
     pas le donner.
+
+    Le refus est passe au contrat commun `ORGANIZATION_POLICY_DISABLED` en
+    Phase 30 : cinq fonctions se refusent desormais pour la meme raison, et
+    cinq codes differents auraient oblige la console a les traiter une par une.
     """
-    organization_id = (
-        account["organization_id"] if account is not None else None
-    ) or nova_organization_id()
-    if not public_campus_config(organization_id)["capabilities"]["aiSkills"]:
-        raise auth_error(403, "CAPABILITY_NOT_AVAILABLE")
     return {"skills": AI_SKILLS}
 
 # --- transcription (proxy vers faster-whisper-server)
-@app.post("/api/transcribe")
-async def transcribe(file: UploadFile, user: str = Depends(current_user)):
+#
+# ## Deux routes, un seul moteur
+#
+# La dictee au micro et l'import d'un fichier audio passaient par la meme
+# route. Cela paraissait econome, et cela devenait dangereux le jour ou une
+# policy d'organisation voudrait fermer l'import : la fermer aurait coupe la
+# dictee, c'est-a-dire le produit lui-meme.
+#
+# D'ou deux routes qui appellent la **meme** fonction interne. Rien n'est
+# duplique — ni le moteur, ni le comptage d'usage, ni la gestion d'erreur — et
+# les deux usages redeviennent distinguables, ce qu'ils n'auraient jamais du
+# cesser d'etre.
+#
+#     /api/transcribe          dictee micro   — jamais gouvernee par l'import
+#     /api/import/transcribe   import fichier — gouvernee par `file_import_enabled`
+
+
+async def transcribe_audio(file: UploadFile, user: str) -> dict:
+    """Le moteur, appele par les deux routes."""
     audio = await file.read()
     async with httpx.AsyncClient(timeout=120) as client:
         r = await client.post(
@@ -6011,6 +6141,32 @@ async def transcribe(file: UploadFile, user: str = Depends(current_user)):
         raise HTTPException(502, "Moteur de transcription indisponible")
     count_usage(user, "transcription")
     return {"text": r.json().get("text", "")}
+
+
+@app.post("/api/transcribe")
+async def transcribe(file: UploadFile, user: str = Depends(current_user)):
+    """Dictee au micro.
+
+    **Aucune policy produit ne ferme cette route.** La dictee est le coeur de
+    Nova : une organisation qui la couperait par erreur de configuration
+    laisserait ses membres sans recours, et le support ne saurait pas
+    distinguer une panne d'une decision. Si ce besoin apparait un jour, il
+    demandera son propre examen — connexion, recuperation, hors ligne — pas
+    une case cochee par inadvertance dans un panneau d'import.
+    """
+    return await transcribe_audio(file, user)
+
+
+@app.post(
+    "/api/import/transcribe",
+    dependencies=[Depends(product_capability("fileTranscription", "file_import"))],
+)
+async def transcribe_import(file: UploadFile, user: str = Depends(current_user)):
+    """Import d'un fichier audio deja enregistre.
+
+    Meme moteur que la dictee, meme comptage — seule l'autorisation differe.
+    """
+    return await transcribe_audio(file, user)
 
 async def llm_complete(system_prompt: str, text: str) -> str:
     async with httpx.AsyncClient(timeout=120) as client:
@@ -6041,13 +6197,13 @@ async def reformulate(body: ReformulateRequest, user: str = Depends(current_user
     count_usage(user, "reformulation")
     return {"text": result}
 
-@app.post("/api/command")
+@app.post("/api/command", dependencies=[Depends(product_capability("commands", "voice_commands"))])
 async def command(body: CommandRequest, user: str = Depends(current_user)):
     instruction = clean_required(body.instruction, "instruction", 2000)
     system_prompt = command_prompt(instruction, vocabulary_context(user))
     return {"text": await llm_complete(system_prompt, body.text)}
 
-@app.post("/api/engineering-notes")
+@app.post("/api/engineering-notes", dependencies=[Depends(product_capability("engineeringNotes", "engineering_notes"))])
 async def engineering_notes(body: CommandRequest, user: str = Depends(current_user)):
     context, snippets = writing_context(user)
     source_text = apply_snippets(body.text, snippets)

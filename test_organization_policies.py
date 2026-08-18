@@ -11,6 +11,9 @@ raccourci rendrait verts des tests qui n'exercent plus le chemin reel.
 
 import inspect
 import json
+from pathlib import Path
+import tempfile
+import os
 import time
 import unittest
 from unittest.mock import patch
@@ -71,9 +74,27 @@ class PolicySchemaTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             main.validate_policy_settings({"ai_skills_enabled": 1})
 
-    def test_a_missing_key_falls_back_to_its_default(self):
+    def test_a_document_matching_the_defaults_stores_no_override(self):
+        """Depuis la Phase 30, seules les **surcharges** sont stockees.
+
+        Recopier les defauts en base les figerait : le jour ou un defaut
+        produit change, les organisations qui n'avaient rien demande
+        garderaient l'ancien comportement sans l'avoir choisi.
+        """
+        self.assertEqual(main.validate_policy_settings({}), {})
         self.assertEqual(
-            main.validate_policy_settings({}), main.DEFAULT_ORGANIZATION_POLICY
+            main.validate_policy_settings(dict(main.DEFAULT_ORGANIZATION_POLICY)), {}
+        )
+
+    def test_the_effective_document_still_carries_every_key(self):
+        self.assertEqual(
+            main.effective_policy_settings({}), main.DEFAULT_ORGANIZATION_POLICY
+        )
+
+    def test_a_value_differing_from_its_default_is_kept(self):
+        self.assertEqual(
+            main.validate_policy_settings({"ai_skills_enabled": False}),
+            {"ai_skills_enabled": False},
         )
 
     def test_a_non_dictionary_is_refused(self):
@@ -100,13 +121,17 @@ class PolicyReadResilienceTests(unittest.TestCase):
     def test_corrupted_storage_falls_back_to_defaults(self):
         for raw in ("", None, "pas du json", "[]", '"texte"', "null"):
             with self.subTest(raw=raw):
+                self.assertEqual(main.read_policy_settings(raw), {})
                 self.assertEqual(
-                    main.read_policy_settings(raw), main.DEFAULT_ORGANIZATION_POLICY
+                    main.effective_policy_settings(main.read_policy_settings(raw)),
+                    main.DEFAULT_ORGANIZATION_POLICY,
                 )
 
     def test_a_wrong_type_in_storage_falls_back_to_its_default(self):
-        settings = main.read_policy_settings(json.dumps({"ai_skills_enabled": "non"}))
-        self.assertTrue(settings["ai_skills_enabled"])
+        overrides = main.read_policy_settings(json.dumps({"ai_skills_enabled": "non"}))
+        self.assertEqual(overrides, {})
+        self.assertTrue(
+            main.effective_policy_settings(overrides)["ai_skills_enabled"])
 
 
 class EffectiveCapabilityTests(unittest.TestCase):
@@ -451,7 +476,12 @@ class PolicyEnforcementTests(AdminTestCase):
         user_token = self.sign_in("etudiant@example.com")
         response = self.client.get("/api/ai-skills", headers=self.auth(user_token))
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.json()["detail"], "CAPABILITY_NOT_AVAILABLE")
+        # Contrat commun depuis la Phase 30 : cinq fonctions se refusent pour
+        # la meme raison, et cinq codes differents auraient oblige la console a
+        # les traiter une par une.
+        self.assertEqual(response.json()["detail"]["code"],
+                         "ORGANIZATION_POLICY_DISABLED")
+        self.assertEqual(response.json()["detail"]["feature"], "ai_skills")
 
     def test_a_denied_policy_closes_the_announced_capability(self):
         self.deny_ai_skills()
@@ -680,6 +710,328 @@ class PolicyPrivacyTests(AdminTestCase):
                     "/api/control/organization/policy", headers=self.auth(token),
                     json={"expected_revision": 0, "settings": payload})
                 self.assertEqual(response.status_code, 400)
+
+
+class ModeCompositionTests(AdminTestCase):
+    """Policy d'organisation et restriction de mode se **composent**.
+
+    C'est l'invariant que la Phase 30 devait preserver : le mode `classroom`
+    ferme historiquement les commandes et les notes d'ingenierie. Une policy
+    permissive ne doit pas les rouvrir — sans quoi une migration aurait rendu a
+    des classes entieres des fonctions qu'un etablissement avait fermees.
+
+    La propriete ne repose sur aucune regle de priorite ecrite quelque part :
+    la restriction de mode vit dans la capacite de **base**, et l'intersection
+    la preserve parce que `False and True` vaut `False`. Il n'y a rien a se
+    rappeler.
+    """
+
+    def setUp(self):
+        super().setUp()
+        clear_policies()
+
+    def apply(self, **overrides):
+        token = self.admin_session()
+        response = self.client.put(
+            "/api/control/organization/policy", headers=self.auth(token),
+            json={"expected_revision": 0, "settings": overrides})
+        self.assertEqual(response.status_code, 200, response.text)
+
+    def effective(self, mode: str):
+        with patch.object(main, "EDUCATION_MODE", mode):
+            return main.public_campus_config()["capabilities"]
+
+    def test_classroom_keeps_commands_closed_whatever_the_policy(self):
+        for policy in (True, False):
+            with self.subTest(policy=policy):
+                clear_policies()
+                self.apply(voice_commands_enabled=policy)
+                self.assertFalse(self.effective("classroom")["commands"])
+
+    def test_classroom_keeps_engineering_notes_closed_whatever_the_policy(self):
+        for policy in (True, False):
+            with self.subTest(policy=policy):
+                clear_policies()
+                self.apply(engineering_notes_enabled=policy)
+                self.assertFalse(self.effective("classroom")["engineeringNotes"])
+
+    def test_normal_mode_follows_the_policy(self):
+        self.apply(voice_commands_enabled=True)
+        self.assertTrue(self.effective("normal")["commands"])
+        clear_policies()
+        self.apply(voice_commands_enabled=False)
+        self.assertFalse(self.effective("normal")["commands"])
+
+    def test_assessment_keeps_everything_closed(self):
+        capabilities = self.effective("assessment")
+        for name in ("commands", "engineeringNotes", "dictionary", "aiSkills",
+                     "fileTranscription"):
+            with self.subTest(name):
+                self.assertFalse(capabilities[name])
+
+    def test_a_policy_never_reopens_what_a_mode_closed(self):
+        """La formulation generale de l'invariant, sur toutes les cles."""
+        for setting in main.POLICY_SETTINGS.values():
+            if setting.capability is None:
+                continue
+            with self.subTest(setting.key):
+                effective = main.resolve_effective_product_capabilities(
+                    {setting.capability: False}, {setting.key: True})
+                self.assertFalse(effective[setting.capability])
+
+
+class DictationInvariantTests(AdminTestCase):
+    """La dictee au micro ne depend d'aucune policy produit.
+
+    Avant la Phase 30, l'import de fichier et la dictee partageaient
+    `/api/transcribe`. Gouverner l'import y aurait coupe la dictee — le produit
+    lui-meme — sur une case cochee dans un panneau d'import.
+    """
+
+    def setUp(self):
+        super().setUp()
+        clear_policies()
+
+    def deny_file_import(self):
+        token = self.admin_session()
+        response = self.client.put(
+            "/api/control/organization/policy", headers=self.auth(token),
+            json={"expected_revision": 0, "settings": {"file_import_enabled": False}})
+        self.assertEqual(response.status_code, 200, response.text)
+
+    def transcribe(self, path: str, token: str):
+        async def engine(file, user):
+            return {"text": "bonjour"}
+
+        with patch.object(main, "transcribe_audio", engine):
+            return self.client.post(
+                path, headers=self.auth(token),
+                files={"file": ("a.wav", b"RIFF0000WAVE", "audio/wav")})
+
+    def test_microphone_dictation_survives_a_closed_file_import(self):
+        """L'invariant P0 de cette phase."""
+        self.deny_file_import()
+        token = self.sign_in("etudiant@example.com")
+        self.assertEqual(self.transcribe("/api/transcribe", token).status_code, 200)
+
+    def test_file_import_is_refused_when_the_policy_closes_it(self):
+        self.deny_file_import()
+        token = self.sign_in("etudiant@example.com")
+        response = self.transcribe("/api/import/transcribe", token)
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["detail"]["code"],
+                         "ORGANIZATION_POLICY_DISABLED")
+        self.assertEqual(response.json()["detail"]["feature"], "file_import")
+
+    def test_file_import_works_by_default(self):
+        token = self.sign_in("etudiant@example.com")
+        self.assertEqual(
+            self.transcribe("/api/import/transcribe", token).status_code, 200)
+
+    def test_both_routes_share_one_engine(self):
+        """Deux routes, un moteur. Dupliquer le pipeline ferait diverger le
+        comptage d'usage et la gestion d'erreur."""
+        self.assertIn("transcribe_audio", inspect.getsource(main.transcribe))
+        self.assertIn("transcribe_audio", inspect.getsource(main.transcribe_import))
+
+    def test_no_policy_governs_the_dictation_route(self):
+        route = next(r for r in main.app.routes
+                     if getattr(r, "path", "") == "/api/transcribe")
+        self.assertNotIn("product_capability", repr(route.dependant.dependencies))
+
+
+class PolicyEnforcementMatrixTests(AdminTestCase):
+    """Chaque nouvelle policy refuse reellement, cote serveur."""
+
+    ROUTES = {
+        "organization_vocabulary_enabled": ("GET", "/api/vocabulary",
+                                            "organization_vocabulary"),
+        "voice_commands_enabled": ("POST", "/api/command", "voice_commands"),
+        "engineering_notes_enabled": ("POST", "/api/engineering-notes",
+                                      "engineering_notes"),
+    }
+
+    def setUp(self):
+        super().setUp()
+        clear_policies()
+
+    def call(self, method: str, path: str, token: str):
+        if method == "GET":
+            return self.client.get(path, headers=self.auth(token))
+        return self.client.post(path, headers=self.auth(token), json={})
+
+    def deny(self, key: str):
+        token = self.admin_session()
+        response = self.client.put(
+            "/api/control/organization/policy", headers=self.auth(token),
+            json={"expected_revision": 0, "settings": {key: False}})
+        self.assertEqual(response.status_code, 200, response.text)
+
+    def test_every_policy_closes_its_route(self):
+        for key, (method, path, feature) in self.ROUTES.items():
+            with self.subTest(key):
+                clear_policies()
+                self.deny(key)
+                user = self.sign_in("etudiant@example.com")
+                response = self.call(method, path, user)
+                self.assertEqual(response.status_code, 403, path)
+                self.assertEqual(response.json()["detail"]["code"],
+                                 "ORGANIZATION_POLICY_DISABLED")
+                self.assertEqual(response.json()["detail"]["feature"], feature)
+
+    def test_closing_one_policy_leaves_the_others_open(self):
+        """Une policy ne doit pas en fermer une autre par effet de bord."""
+        self.deny("voice_commands_enabled")
+        user = self.sign_in("etudiant@example.com")
+        self.assertNotEqual(
+            self.client.get("/api/vocabulary", headers=self.auth(user)).status_code,
+            403)
+
+    def test_the_error_contract_carries_nothing_else(self):
+        self.deny("voice_commands_enabled")
+        user = self.sign_in("etudiant@example.com")
+        detail = self.client.post("/api/command", headers=self.auth(user),
+                                  json={}).json()["detail"]
+        self.assertEqual(set(detail), {"code", "feature"})
+
+
+class PolicyOverrideStorageTests(AdminTestCase):
+    """Ce qui est stocke, et ce qui ne l'est pas."""
+
+    PATH = "/api/control/organization/policy"
+
+    def setUp(self):
+        super().setUp()
+        clear_policies()
+
+    def test_only_explicit_overrides_are_stored(self):
+        token = self.admin_session()
+        self.client.put(self.PATH, headers=self.auth(token),
+                        json={"expected_revision": 0,
+                              "settings": {**main.DEFAULT_ORGANIZATION_POLICY,
+                                           "voice_commands_enabled": False}})
+        self.assertEqual(json.loads(stored_policy()["settings"]),
+                         {"voice_commands_enabled": False})
+
+    def test_returning_a_value_to_its_default_removes_the_override(self):
+        """C'est ainsi qu'on revient au defaut, sans bouton dedie."""
+        token = self.admin_session()
+        self.client.put(self.PATH, headers=self.auth(token),
+                        json={"expected_revision": 0,
+                              "settings": {"voice_commands_enabled": False}})
+        self.client.put(self.PATH, headers=self.auth(token),
+                        json={"expected_revision": 1,
+                              "settings": {"voice_commands_enabled": True}})
+        self.assertEqual(json.loads(stored_policy()["settings"]), {})
+
+    def test_the_view_separates_effective_from_explicit(self):
+        token = self.admin_session()
+        self.client.put(self.PATH, headers=self.auth(token),
+                        json={"expected_revision": 0,
+                              "settings": {"voice_commands_enabled": False}})
+        view = self.client.get(self.PATH, headers=self.auth(token)).json()
+        self.assertEqual(view["overrides"], {"voice_commands_enabled": False})
+        self.assertEqual(set(view["settings"]), set(main.POLICY_SETTINGS))
+        self.assertEqual(view["defaults"], main.DEFAULT_ORGANIZATION_POLICY)
+
+    def test_a_no_op_save_creates_neither_revision_nor_audit(self):
+        """Enregistrer sans rien changer n'est pas un evenement.
+
+        Une revision qui avance sans qu'aucune valeur ne bouge rend le compteur
+        illisible, et un journal qui note des non-evenements finit par ne plus
+        etre lu.
+        """
+        token = self.admin_session()
+        self.client.put(self.PATH, headers=self.auth(token),
+                        json={"expected_revision": 0,
+                              "settings": {"voice_commands_enabled": False}})
+        with main.db() as conn:
+            before = conn.execute(
+                "SELECT COUNT(*) n FROM admin_audit_log "
+                "WHERE action='organization_policy.update'").fetchone()["n"]
+        response = self.client.put(
+            self.PATH, headers=self.auth(token),
+            json={"expected_revision": 1,
+                  "settings": {"voice_commands_enabled": False}})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["revision"], 1)
+        with main.db() as conn:
+            after = conn.execute(
+                "SELECT COUNT(*) n FROM admin_audit_log "
+                "WHERE action='organization_policy.update'").fetchone()["n"]
+        self.assertEqual(after, before)
+
+    def test_several_keys_change_in_one_revision(self):
+        token = self.admin_session()
+        response = self.client.put(
+            self.PATH, headers=self.auth(token),
+            json={"expected_revision": 0,
+                  "settings": {"voice_commands_enabled": False,
+                               "engineering_notes_enabled": False,
+                               "file_import_enabled": False}})
+        self.assertEqual(response.json()["revision"], 1)
+        with main.db() as conn:
+            metadata = json.loads(conn.execute(
+                "SELECT metadata FROM admin_audit_log "
+                "WHERE action='organization_policy.update' "
+                "ORDER BY created_at DESC LIMIT 1").fetchone()["metadata"])
+        self.assertEqual(metadata["changed_keys"],
+                         ["engineering_notes_enabled", "file_import_enabled",
+                          "voice_commands_enabled"])
+
+    def test_a_rejected_key_writes_nothing(self):
+        """Plusieurs interrupteurs modifies, une seule transaction."""
+        token = self.admin_session()
+        response = self.client.put(
+            self.PATH, headers=self.auth(token),
+            json={"expected_revision": 0,
+                  "settings": {"voice_commands_enabled": False, "invente": True}})
+        self.assertEqual(response.status_code, 400)
+        self.assertIsNone(stored_policy())
+
+
+class RecipeGuardTests(unittest.TestCase):
+    """Le garde-fou qui refuse la base reelle.
+
+    Ne du defaut de methode de la Phase 30 : deux verifications lancees par
+    `python -c "import main"` sans `NOVA_DB` ont applique la migration additive
+    a la base de production. Rien n'a ete perdu — la table est vide et les
+    defauts sont permissifs — mais la recette etait censee se derouler sur une
+    copie.
+
+    La lecon n'est pas « faire attention ». `import main` execute `init_db()`,
+    donc **importer est une operation mutante**, et une regle qui repose sur la
+    vigilance cede un jour de fatigue. D'ou un module qui refuse plutot qu'un
+    rappel qui previent.
+    """
+
+    def guard(self, value):
+        environment = dict(os.environ)
+        if value is None:
+            environment.pop("NOVA_DB", None)
+        else:
+            environment["NOVA_DB"] = value
+        with patch.dict(os.environ, environment, clear=True):
+            import recipe_env
+            return recipe_env.require_temporary_database()
+
+    def test_an_undefined_database_is_refused(self):
+        with self.assertRaises(Exception) as raised:
+            self.guard(None)
+        self.assertIn("NOVA_DB", str(raised.exception))
+
+    def test_the_real_database_is_refused(self):
+        with self.assertRaises(Exception):
+            self.guard(str(Path.cwd() / "nova.db"))
+
+    def test_a_path_outside_the_temporary_directory_is_refused(self):
+        """Une variable definie ne prouve rien si elle pointe ailleurs."""
+        with self.assertRaises(Exception):
+            self.guard(str(Path.cwd() / "ailleurs.db"))
+
+    def test_a_temporary_copy_is_accepted(self):
+        candidate = Path(tempfile.gettempdir()) / "nova-recette.db"
+        self.assertEqual(self.guard(str(candidate)), candidate.resolve())
 
 
 class BrowserReachabilityTests(unittest.TestCase):

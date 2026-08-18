@@ -256,10 +256,31 @@ export const t = {
     reload: "Reload",
     conflict:
       "The organization policy changed while you were editing it. Reload the latest configuration before saving.",
-    aiSkillsTitle: "AI Skills",
-    aiSkillsBody: "Allow members to use AI Skills in Nova.",
     enabled: "Enabled",
     disabled: "Disabled",
+    // Regroupement par usage plutot que par nom technique : un administrateur
+    // cherche « ce qui touche a l'ecriture », pas une cle de configuration.
+    groupAi: "AI",
+    groupWriting: "Writing",
+    groupInput: "Input",
+    aiSkillsTitle: "AI Skills",
+    aiSkillsBody: "Allow members to use AI Skills in Nova.",
+    vocabularyTitle: "Organization vocabulary",
+    vocabularyBody:
+      "Allow members to use the vocabulary and dictionary provided by this organization.",
+    commandsTitle: "Voice commands",
+    commandsBody: "Allow members to trigger voice commands in Nova.",
+    notesTitle: "Engineering notes",
+    notesBody: "Allow members to use engineering notes.",
+    fileImportTitle: "Audio file import",
+    // La phrase sur la dictee vit dans `dictationSafe`, ajoutee a l'affichage.
+    // La repeter ici la faisait apparaitre deux fois de suite a l'ecran.
+    fileImportBody: "Allow members to transcribe an existing audio file.",
+    // Dit a l'ecran, parce que c'est la question qu'un administrateur se pose
+    // en voyant un interrupteur d'import audio.
+    dictationSafe: "Microphone dictation always stays available.",
+    modeRestricted:
+      "Some features may still be unavailable because of this deployment's education mode.",
   },
 
   security: {
