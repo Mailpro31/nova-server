@@ -3,6 +3,7 @@ import base64
 import contextlib
 import hashlib
 import hmac
+import inspect
 import json
 import os
 import sqlite3
@@ -29,6 +30,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from pathlib import Path
 
+import admin_cli
 import main
 
 
@@ -204,7 +206,12 @@ class NovaServerTests(unittest.TestCase):
         self.assertEqual(page.status_code, 200)
         self.assertIn("Nova — Administration", page.text)
 
-        self.assertEqual(self.client.get("/api/admin/overview").status_code, 403)
+        # Sans identifiant : 401. Le refus « interdit » suppose de savoir qui
+        # demande, et ici on ne le sait pas.
+        self.assertEqual(self.client.get("/api/admin/overview").status_code, 401)
+        self.assertEqual(
+            self.client.get("/api/admin/overview",
+                            headers={"X-Admin-Token": "faux"}).status_code, 403)
         response = self.client.get(
             "/api/admin/overview",
             headers={"X-Admin-Token": "test-admin-token"},
@@ -3165,12 +3172,14 @@ class ProviderConfigLifecycleTests(unittest.TestCase):
         self.assertEqual(duplicate.status_code, 409)
         self.assertEqual(duplicate.json()["detail"], "PROVIDER_CONFIG_DUPLICATE")
 
-    def test_the_admin_api_requires_the_admin_token(self):
+    def test_the_admin_api_requires_an_administrator(self):
+        # Sans le moindre identifiant : 401, « on ne sait pas qui vous êtes ».
+        # Avec un mauvais jeton : 403, « on sait, et c'est non ».
         self.assertEqual(
-            self.client.get("/api/admin/provider-configs").status_code, 403)
+            self.client.get("/api/admin/provider-configs").status_code, 401)
         self.assertEqual(
             self.client.post("/api/admin/provider-configs",
-                             json={"provider_type": "oidc"}).status_code, 403)
+                             json={"provider_type": "oidc"}).status_code, 401)
         self.assertEqual(
             self.client.post("/api/admin/provider-configs",
                              headers={"X-Admin-Token": "mauvais-jeton"},
@@ -3838,10 +3847,13 @@ class OrganizationDiscoveryTests(unittest.TestCase):
             json={"status": "en-vacances"})
         self.assertEqual(response.status_code, 400)
 
-    def test_the_admin_api_requires_the_admin_token(self):
-        self.assertEqual(self.client.get("/api/admin/discovery").status_code, 403)
+    def test_the_admin_api_requires_an_administrator(self):
+        self.assertEqual(self.client.get("/api/admin/discovery").status_code, 401)
         self.assertEqual(
-            self.client.post("/api/admin/discovery", json={}).status_code, 403)
+            self.client.post("/api/admin/discovery", json={}).status_code, 401)
+        self.assertEqual(
+            self.client.post("/api/admin/discovery", json={},
+                             headers={"X-Admin-Token": "mauvais"}).status_code, 403)
 
     # -- amorçage -----------------------------------------------------------
 
@@ -3881,6 +3893,508 @@ class OrganizationDiscoveryTests(unittest.TestCase):
                     "SELECT discovery_enabled FROM organizations WHERE id=?",
                     (main.nova_organization_id(),)).fetchone()
         self.assertEqual(row["discovery_enabled"], 0)
+
+
+# ═══════════════════ Phase 22 — administration moderne ════════════════════
+
+
+class AdminTestCase(unittest.TestCase):
+    """Socle commun : un compte, une session Nova, un rôle attribué."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.client = TestClient(main.app)
+
+    def setUp(self):
+        with main.db() as conn:
+            conn.execute("DELETE FROM admin_sessions")
+            conn.execute("DELETE FROM admin_audit_log")
+            conn.execute(
+                "UPDATE organizations SET status='active' WHERE id=?",
+                (main.nova_organization_id(),),
+            )
+
+    def sign_in(self, email="admin@example.com", machine="poste-admin") -> str:
+        """Session Nova ordinaire, par le chemin normal."""
+        self.client.post("/api/auth/request", json={"email": email, "machine": machine})
+        with main.db() as conn:
+            code = conn.execute(
+                "SELECT code FROM auth_codes WHERE email=? ORDER BY expires_at DESC",
+                (email,),
+            ).fetchone()["code"]
+        response = self.client.post(
+            "/api/auth/verify",
+            json={"email": email, "code": code, "machine": machine},
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        return response.json()["token"]
+
+    def with_role(self, email: str, role: str):
+        with main.db() as conn:
+            conn.execute("UPDATE users SET security_role=? WHERE email=?", (role, email))
+
+    def admin_session(self, email="admin@example.com",
+                      role=main.SECURITY_ROLE_ORGANIZATION_ADMIN) -> str:
+        user_token = self.sign_in(email)
+        self.with_role(email, role)
+        response = self.client.post(
+            "/api/admin/session",
+            headers={"Authorization": f"Bearer {user_token}"},
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        return response.json()["token"]
+
+    def auth(self, token: str) -> dict:
+        return {"Authorization": f"Bearer {token}"}
+
+
+class SecurityRoleAuthorityTests(AdminTestCase):
+    """Nova décide des rôles. L'IdP prouve seulement qui est la personne."""
+
+    def test_a_new_account_is_never_an_administrator(self):
+        self.sign_in("nouveau@example.com")
+        with main.db() as conn:
+            row = conn.execute(
+                "SELECT * FROM users WHERE email=?", ("nouveau@example.com",)
+            ).fetchone()
+        self.assertEqual(main.security_role_for(row), main.SECURITY_ROLE_MEMBER)
+
+    def test_no_identity_provider_claim_can_grant_a_role(self):
+        """Le test qui compte : `role=admin`, `groups=admins`, `is_admin=true`
+        venus d'un IdP ne doivent produire aucun privilège. Nova ne lit qu'une
+        colonne, écrite par un opérateur."""
+        email = "revendique@example.com"
+        user_token = self.sign_in(email)
+        with main.db() as conn:
+            conn.execute(
+                "UPDATE users SET role=?, cohort=? WHERE email=?",
+                ("staff", "admins", email),
+            )
+        refused = self.client.post("/api/admin/session", headers=self.auth(user_token))
+        self.assertEqual(refused.status_code, 403)
+        self.assertEqual(refused.json()["detail"], "ADMIN_ROLE_REQUIRED")
+
+    def test_a_business_role_is_never_a_security_role(self):
+        # Un enseignant n'administre pas parce qu'il enseigne.
+        for business_role in ("teacher", "staff", "student", "partner"):
+            email = f"{business_role}@example.com"
+            token = self.sign_in(email)
+            with main.db() as conn:
+                conn.execute(
+                    "UPDATE users SET role=? WHERE email=?", (business_role, email)
+                )
+            response = self.client.post("/api/admin/session", headers=self.auth(token))
+            self.assertEqual(response.status_code, 403, business_role)
+
+    def test_an_unknown_stored_role_falls_back_to_member(self):
+        # Une colonne corrompue, ou écrite par une version future, n'accorde
+        # jamais plus que le minimum.
+        email = "bizarre@example.com"
+        self.sign_in(email)
+        self.with_role(email, "super_utilisateur_absolu")
+        with main.db() as conn:
+            row = conn.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
+        self.assertEqual(main.security_role_for(row), main.SECURITY_ROLE_MEMBER)
+
+    def test_the_capability_matrix_is_not_degenerate(self):
+        """Trois rôles qui autorisent la même chose seraient un seul rôle."""
+        org = main.capabilities_for_role(main.SECURITY_ROLE_ORGANIZATION_ADMIN)
+        it = main.capabilities_for_role(main.SECURITY_ROLE_IT_ADMIN)
+        read_only = main.capabilities_for_role(main.SECURITY_ROLE_READ_ONLY)
+        self.assertTrue(org - it, "organization_admin n'a rien en propre")
+        self.assertTrue(it - org, "it_admin n'a rien en propre")
+        self.assertTrue(read_only < org)
+        self.assertNotIn(main.CAPABILITY_PROVIDER_MANAGE, read_only)
+        self.assertEqual(main.capabilities_for_role(main.SECURITY_ROLE_MEMBER), frozenset())
+
+
+class AdminSessionTests(AdminTestCase):
+    """Ouverture, durée, révocation."""
+
+    def test_an_administrator_can_open_a_session(self):
+        token = self.sign_in()
+        self.with_role("admin@example.com", main.SECURITY_ROLE_ORGANIZATION_ADMIN)
+        response = self.client.post("/api/admin/session", headers=self.auth(token))
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["role"], main.SECURITY_ROLE_ORGANIZATION_ADMIN)
+        self.assertIn(main.CAPABILITY_PROVIDER_MANAGE, body["capabilities"])
+        self.assertGreater(body["expires_in"], 0)
+        # Rien d'inutile : ni e-mail, ni identifiant de session, ni empreinte.
+        self.assertEqual(
+            set(body), {"token", "role", "organization_id", "capabilities", "expires_in"}
+        )
+
+    def test_a_member_cannot_open_one(self):
+        token = self.sign_in("membre@example.com")
+        response = self.client.post("/api/admin/session", headers=self.auth(token))
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["detail"], "ADMIN_ROLE_REQUIRED")
+
+    def test_the_token_is_only_stored_hashed(self):
+        token = self.admin_session()
+        with main.db() as conn:
+            rows = conn.execute("SELECT * FROM admin_sessions").fetchall()
+        stored = {value for row in rows for value in tuple(row) if isinstance(value, str)}
+        self.assertNotIn(token, stored)
+        self.assertIn(main.hash_token(token), {row["token_hash"] for row in rows})
+
+    def test_the_token_never_reaches_the_logs(self):
+        with patch("builtins.print") as printed:
+            token = self.admin_session()
+            self.client.get("/api/control/organization", headers=self.auth(token))
+        for call in printed.call_args_list:
+            self.assertNotIn(token, str(call))
+
+    def test_an_expired_session_is_refused(self):
+        token = self.admin_session()
+        with main.db() as conn:
+            conn.execute("UPDATE admin_sessions SET expires_at=?", (time.time() - 1,))
+        response = self.client.get("/api/control/organization", headers=self.auth(token))
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.json()["detail"], "ADMIN_SESSION_EXPIRED")
+
+    def test_an_idle_session_expires(self):
+        token = self.admin_session()
+        with main.db() as conn:
+            conn.execute(
+                "UPDATE admin_sessions SET last_seen_at=?",
+                (time.time() - main.ADMIN_SESSION_IDLE_SECONDS - 60,),
+            )
+        response = self.client.get("/api/control/organization", headers=self.auth(token))
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.json()["detail"], "ADMIN_SESSION_EXPIRED")
+
+    def test_admin_logout_closes_the_session(self):
+        token = self.admin_session()
+        self.assertEqual(
+            self.client.post("/api/admin/session/logout",
+                             headers=self.auth(token)).status_code, 200)
+        response = self.client.get("/api/control/organization", headers=self.auth(token))
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.json()["detail"], "ADMIN_SESSION_REVOKED")
+
+    def test_user_logout_also_closes_admin_sessions(self):
+        """Une personne qui quitte Nova ne laisse pas un privilège ouvert
+        derrière elle."""
+        email = "partant@example.com"
+        user_token = self.sign_in(email)
+        self.with_role(email, main.SECURITY_ROLE_ORGANIZATION_ADMIN)
+        admin_token = self.client.post(
+            "/api/admin/session", headers=self.auth(user_token)).json()["token"]
+
+        self.client.post("/api/auth/logout", headers=self.auth(user_token))
+
+        response = self.client.get(
+            "/api/control/organization", headers=self.auth(admin_token))
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.json()["detail"], "ADMIN_SESSION_REVOKED")
+
+    def test_a_revoked_role_closes_the_door_on_the_next_call(self):
+        """Une session ne fige pas un privilège."""
+        email = "retrograde@example.com"
+        token = self.admin_session(email)
+        self.assertEqual(
+            self.client.get("/api/control/organization",
+                            headers=self.auth(token)).status_code, 200)
+        self.with_role(email, main.SECURITY_ROLE_MEMBER)
+        response = self.client.get("/api/control/organization", headers=self.auth(token))
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["detail"], "ADMIN_ROLE_REQUIRED")
+
+    def test_a_disabled_user_loses_admin_access_immediately(self):
+        email = "suspendu@example.com"
+        token = self.admin_session(email)
+        with main.db() as conn:
+            conn.execute("UPDATE users SET disabled=1 WHERE email=?", (email,))
+        response = self.client.get("/api/control/organization", headers=self.auth(token))
+        self.assertEqual(response.status_code, 403)
+
+    def test_a_suspended_organization_cannot_be_administered(self):
+        token = self.admin_session()
+        with main.db() as conn:
+            conn.execute(
+                "UPDATE organizations SET status='suspended' WHERE id=?",
+                (main.nova_organization_id(),),
+            )
+        response = self.client.get("/api/control/organization", headers=self.auth(token))
+        self.assertEqual(response.status_code, 403)
+
+    def test_set_security_role_revokes_open_sessions(self):
+        email = "revoque@example.com"
+        token = self.admin_session(email)
+        main.set_security_role(email, main.SECURITY_ROLE_MEMBER)
+        response = self.client.get("/api/control/organization", headers=self.auth(token))
+        self.assertIn(response.status_code, (401, 403))
+
+
+class UserTokenVersusAdminTokenTests(AdminTestCase):
+    """Séparation stricte des deux jetons."""
+
+    def test_a_user_token_opens_no_admin_route(self):
+        email = "double@example.com"
+        user_token = self.sign_in(email)
+        self.with_role(email, main.SECURITY_ROLE_ORGANIZATION_ADMIN)
+        # Même personne, même rôle : le jeton utilisateur ne suffit toujours pas.
+        for path in ("/api/control/organization", "/api/admin/discovery",
+                     "/api/admin/provider-configs"):
+            response = self.client.get(path, headers=self.auth(user_token))
+            self.assertEqual(response.status_code, 401, path)
+
+    def test_an_admin_token_opens_no_user_route(self):
+        admin_token = self.admin_session()
+        response = self.client.get("/api/me", headers=self.auth(admin_token))
+        self.assertEqual(response.status_code, 401)
+
+    def test_the_client_never_declares_that_its_token_is_admin(self):
+        # Aucun en-tête, aucun champ ne dit « ceci est un jeton admin » : le
+        # serveur le sait par sa table.
+        token = self.admin_session()
+        self.assertEqual(
+            self.client.get("/api/control/organization",
+                            headers=self.auth(token)).status_code, 200)
+
+
+class AdminAuthorizationMatrixTests(AdminTestCase):
+    """Ce que chaque rôle peut réellement faire."""
+
+    def test_read_only_cannot_mutate_anything(self):
+        token = self.admin_session("lecture@example.com", main.SECURITY_ROLE_READ_ONLY)
+        self.assertEqual(
+            self.client.get("/api/control/organization",
+                            headers=self.auth(token)).status_code, 200)
+        for path, payload in (
+            ("/api/admin/discovery", {"discovery_enabled": True}),
+            ("/api/admin/provider-configs", {"provider_type": "oidc"}),
+        ):
+            response = self.client.post(path, headers=self.auth(token), json=payload)
+            self.assertEqual(response.status_code, 403, path)
+            self.assertEqual(response.json()["detail"], "ADMIN_ROLE_REQUIRED")
+
+    def test_it_admin_manages_providers_and_discovery(self):
+        token = self.admin_session("it@example.com", main.SECURITY_ROLE_IT_ADMIN)
+        response = self.client.post(
+            "/api/admin/discovery", headers=self.auth(token),
+            json={"discovery_enabled": False})
+        self.assertEqual(response.status_code, 200)
+
+    def test_organization_admin_manages_providers_and_discovery(self):
+        token = self.admin_session()
+        response = self.client.post(
+            "/api/admin/discovery", headers=self.auth(token),
+            json={"discovery_enabled": False})
+        self.assertEqual(response.status_code, 200)
+
+    def test_the_refusal_does_not_say_which_role_was_missing(self):
+        token = self.admin_session("lecture2@example.com", main.SECURITY_ROLE_READ_ONLY)
+        response = self.client.post(
+            "/api/admin/discovery", headers=self.auth(token), json={})
+        self.assertEqual(response.json(), {"detail": "ADMIN_ROLE_REQUIRED"})
+
+
+class AdminTenantIsolationTests(AdminTestCase):
+    """Un identifiant d'organisation désigne ; il n'autorise pas."""
+
+    def test_an_administrator_reads_its_own_organization(self):
+        token = self.admin_session()
+        organization_id = main.nova_organization_id()
+        response = self.client.get(
+            f"/api/control/organizations/{organization_id}", headers=self.auth(token))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["organization"]["id"], organization_id)
+
+    def test_another_organization_is_invisible(self):
+        token = self.admin_session()
+        with main.db() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO organizations(id, slug, display_name, "
+                "org_type, status, created_at) VALUES (?,?,?,?,?,?)",
+                ("organisation-voisine", "voisine", "Voisine", "education",
+                 "active", time.time()))
+        response = self.client.get(
+            "/api/control/organizations/organisation-voisine", headers=self.auth(token))
+        # Pas même la confirmation qu'elle existe.
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["detail"], "ORGANIZATION_NOT_FOUND")
+        with main.db() as conn:
+            conn.execute("DELETE FROM organizations WHERE id='organisation-voisine'")
+
+    def test_a_client_supplied_organization_id_changes_nothing(self):
+        token = self.admin_session()
+        response = self.client.get(
+            "/api/control/organization",
+            headers={**self.auth(token), "X-Organization-Id": "organisation-voisine"},
+            params={"organization_id": "organisation-voisine"})
+        self.assertEqual(
+            response.json()["organization"]["id"], main.nova_organization_id())
+
+    def test_the_control_view_carries_no_secret(self):
+        clear_provider_configs()
+        with main.db() as conn:
+            conn.execute(
+                "INSERT INTO organization_provider_configs(id, organization_id, "
+                "provider_type, oidc_issuer, oidc_client_id, oidc_client_secret, "
+                "enabled, created_at) VALUES (?,?,?,?,?,?,?,?)",
+                (uuid.uuid4().hex, main.nova_organization_id(), "oidc",
+                 "https://idp.example.com", "client-public", "secret-tres-prive",
+                 1, time.time()))
+        token = self.admin_session()
+        raw = self.client.get("/api/control/organization", headers=self.auth(token)).text
+        self.assertNotIn("secret-tres-prive", raw)
+        self.assertNotIn("client-public", raw)
+        clear_provider_configs()
+
+
+class LegacyAdminTokenTests(AdminTestCase):
+    """Le jeton partagé : conservé, cadré, et déprécié."""
+
+    ADMIN = {"X-Admin-Token": "test-admin-token"}
+
+    def test_it_still_works_in_dedicated_mode(self):
+        self.assertEqual(
+            self.client.get("/api/admin/discovery", headers=self.ADMIN).status_code, 200)
+
+    def test_it_is_refused_when_disabled(self):
+        """Sur un Control Plane, ce jeton autoriserait son porteur à administrer
+        une organisation qui n'est pas la sienne — il y est donc éteint."""
+        with patch.object(main, "LEGACY_ADMIN_TOKEN_ENABLED", False):
+            response = self.client.get("/api/admin/discovery", headers=self.ADMIN)
+        self.assertEqual(response.status_code, 401)
+
+    def test_control_plane_mode_disables_it_by_construction(self):
+        # La constante est dérivée du mode : il n'existe aucune combinaison
+        # « control_plane + jeton hérité actif » atteignable par configuration.
+        source = inspect.getsource(main)
+        self.assertIn("and NOVA_SERVER_MODE == SERVER_MODE_DEDICATED", source)
+        self.assertEqual(main.NOVA_SERVER_MODE, main.SERVER_MODE_DEDICATED)
+
+    def test_it_is_scoped_to_the_served_organization(self):
+        response = self.client.get(
+            "/api/control/organizations/organisation-voisine", headers=self.ADMIN)
+        self.assertEqual(response.status_code, 404)
+
+    def test_it_has_no_admin_session_to_close(self):
+        response = self.client.post("/api/admin/session/logout", headers=self.ADMIN)
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"], "ADMIN_SESSION_NOT_APPLICABLE")
+
+    def test_a_wrong_token_is_refused(self):
+        self.assertEqual(
+            self.client.get("/api/admin/discovery",
+                            headers={"X-Admin-Token": "faux"}).status_code, 403)
+
+
+class AdminAuditLogTests(AdminTestCase):
+    """Ce que le journal retient, et surtout ce qu'il ne retient pas."""
+
+    def rows(self):
+        with main.db() as conn:
+            return conn.execute(
+                "SELECT * FROM admin_audit_log ORDER BY created_at").fetchall()
+
+    def test_opening_a_session_is_audited(self):
+        self.admin_session()
+        actions = [row["action"] for row in self.rows()]
+        self.assertIn("admin_session.create", actions)
+
+    def test_a_mutation_is_audited_with_actor_role_and_organization(self):
+        token = self.admin_session("auditee@example.com")
+        self.client.post("/api/admin/discovery", headers=self.auth(token),
+                         json={"discovery_enabled": False})
+        row = [r for r in self.rows() if r["action"] == "discovery.update"][-1]
+        self.assertEqual(row["actor_role"], main.SECURITY_ROLE_ORGANIZATION_ADMIN)
+        self.assertEqual(row["organization_id"], main.nova_organization_id())
+        self.assertTrue(row["actor_user_id"])
+        self.assertTrue(row["request_id"])
+        self.assertGreater(row["created_at"], 0)
+
+    def test_a_plain_read_is_not_audited(self):
+        token = self.admin_session()
+        before = len(self.rows())
+        self.client.get("/api/control/organization", headers=self.auth(token))
+        self.assertEqual(len(self.rows()), before)
+
+    def test_a_secret_never_reaches_the_audit_log(self):
+        clear_provider_configs()
+        token = self.admin_session()
+        self.client.post(
+            "/api/admin/provider-configs", headers=self.auth(token),
+            json={"provider_type": "oidc", "oidc_issuer": "https://idp.example.com",
+                  "oidc_client_id": "client", "oidc_client_secret": "secret-absolu"})
+        joined = " ".join(str(tuple(row)) for row in self.rows())
+        self.assertNotIn("secret-absolu", joined)
+        # Mais le fait qu'un secret existe est bien enregistré.
+        row = [r for r in self.rows() if r["action"] == "provider_config.create"][-1]
+        self.assertIn('"has_secret": true', row["metadata"])
+        clear_provider_configs()
+
+    def test_no_route_can_modify_or_delete_the_audit_log(self):
+        token = self.admin_session()
+        for method, path in (("get", "/api/admin/audit"), ("get", "/api/control/audit"),
+                             ("delete", "/api/admin/audit")):
+            response = getattr(self.client, method)(path, headers=self.auth(token))
+            self.assertIn(response.status_code, (404, 405), path)
+
+
+class AdminRegressionTests(AdminTestCase):
+    """La refonte de l'administration ne touche pas le chemin utilisateur."""
+
+    def test_a_member_still_reads_its_own_profile(self):
+        token = self.sign_in("membre-normal@example.com")
+        response = self.client.get("/api/me", headers=self.auth(token))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["membership"]["security_role"], "member")
+
+    def test_an_administrator_profile_announces_its_role(self):
+        email = "profil-admin@example.com"
+        token = self.sign_in(email)
+        self.with_role(email, main.SECURITY_ROLE_IT_ADMIN)
+        response = self.client.get("/api/me", headers=self.auth(token))
+        self.assertEqual(
+            response.json()["membership"]["security_role"], main.SECURITY_ROLE_IT_ADMIN)
+
+    def test_discovery_stays_public(self):
+        self.assertIn(
+            self.client.post("/api/discovery/organization",
+                             json={"organization": "inconnue"}).status_code,
+            (200, 404),
+        )
+
+
+class OperatorCliTests(AdminTestCase):
+    """L'attribution du premier administrateur : une commande locale."""
+
+    def test_grant_and_revoke(self):
+        email = "cli@example.com"
+        self.sign_in(email)
+        self.assertEqual(admin_cli.run(["grant", email, "it_admin"]), 0)
+        with main.db() as conn:
+            row = conn.execute(
+                "SELECT security_role FROM users WHERE email=?", (email,)).fetchone()
+        self.assertEqual(row["security_role"], "it_admin")
+        self.assertEqual(admin_cli.run(["revoke", email]), 0)
+        with main.db() as conn:
+            row = conn.execute(
+                "SELECT security_role FROM users WHERE email=?", (email,)).fetchone()
+        self.assertEqual(row["security_role"], "member")
+
+    def test_an_unknown_role_is_refused(self):
+        email = "cli2@example.com"
+        self.sign_in(email)
+        self.assertEqual(admin_cli.run(["grant", email, "root"]), 1)
+
+    def test_an_unknown_account_is_refused(self):
+        self.assertEqual(admin_cli.run(["grant", "fantome@example.com", "it_admin"]), 1)
+
+    def test_there_is_no_http_route_to_grant_oneself_a_role(self):
+        """La propriété la plus importante du bootstrap : aucune porte dérobée."""
+        token = self.sign_in("ambitieux@example.com")
+        for path in ("/api/admin/grant", "/api/admin/roles", "/api/admin/bootstrap",
+                     "/api/control/roles"):
+            response = self.client.post(
+                path, headers=self.auth(token),
+                json={"email": "ambitieux@example.com", "role": "organization_admin"})
+            self.assertIn(response.status_code, (404, 405), path)
 
 
 if __name__ == "__main__":

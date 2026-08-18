@@ -11,6 +11,7 @@ import random
 import re
 import base64
 import hashlib
+import hmac
 import ipaddress
 import json
 import secrets
@@ -150,6 +151,27 @@ ADMIN_TOKEN = os.getenv("NOVA_ADMIN_TOKEN", secrets.token_urlsafe(24))
 # oublie de le déclarer obtient le comportement le plus prudent, jamais le plus
 # bavard. Seul `development` autorise l'affichage d'un code de connexion.
 NOVA_ENV = os.getenv("NOVA_ENV", "production").strip().lower()
+
+# Mode de serveur. `dedicated` sert une organisation — c'est le mode déployé
+# aujourd'hui. `control_plane` en servira plusieurs : il n'existe pas encore
+# complètement, mais la distinction doit exister **avant** que du code suppose
+# partout qu'une seule organisation existe.
+SERVER_MODE_DEDICATED = "dedicated"
+SERVER_MODE_CONTROL_PLANE = "control_plane"
+NOVA_SERVER_MODE = os.getenv("NOVA_SERVER_MODE", SERVER_MODE_DEDICATED).strip().lower()
+if NOVA_SERVER_MODE not in {SERVER_MODE_DEDICATED, SERVER_MODE_CONTROL_PLANE}:
+    NOVA_SERVER_MODE = SERVER_MODE_DEDICATED
+
+# Le jeton d'administration partagé est **hérité**. Il authentifie une machine,
+# pas une personne : il ne peut ni être révoqué individuellement, ni figurer
+# dans un journal d'audit autrement que comme « quelqu'un qui le détenait ».
+# Il reste accepté en mode dédié pour ne pas casser les déploiements existants,
+# et jamais en mode Control Plane, où il autoriserait un porteur à administrer
+# des organisations qui ne sont pas la sienne.
+LEGACY_ADMIN_TOKEN_ENABLED = (
+    os.getenv("NOVA_LEGACY_ADMIN_TOKEN", "true").strip().lower() != "false"
+    and NOVA_SERVER_MODE == SERVER_MODE_DEDICATED
+)
 
 # ---------------------------------------------------------------- db
 @contextmanager
@@ -320,6 +342,50 @@ def init_db():
             -- différentes. Sans lui, la seconde écraserait la première.
             PRIMARY KEY (provider, external_issuer, external_subject)
         );
+
+        -- Sessions d'administration. Séparées des sessions utilisateur, et
+        -- c'est le point du design : être administrateur ne doit pas rendre
+        -- chaque session de dictée quotidienne capable de reconfigurer
+        -- l'organisation. Le privilège s'ouvre explicitement, pour une durée
+        -- courte, et se referme.
+        CREATE TABLE IF NOT EXISTS admin_sessions(
+            id TEXT PRIMARY KEY,               -- UUID, sert d'identifiant d'audit
+            user_id TEXT NOT NULL,
+            email TEXT NOT NULL,
+            organization_id TEXT NOT NULL,
+            -- Rôle au moment de l'ouverture. **Indicatif** : il est revérifié
+            -- en base à chaque appel. Une session ne fige pas un privilège.
+            security_role TEXT NOT NULL,
+            auth_provider TEXT,
+            token_hash TEXT NOT NULL,          -- empreinte seule, comme les sessions Nova
+            created_at REAL NOT NULL,
+            expires_at REAL NOT NULL,          -- expiration absolue
+            last_seen_at REAL,                 -- sert l'expiration d'inactivité
+            revoked_at REAL
+        );
+        CREATE INDEX IF NOT EXISTS idx_admin_sessions_user
+            ON admin_sessions(user_id, revoked_at);
+
+        -- Journal d'audit des actions d'administration. Ajout seul : aucune
+        -- route ne le modifie ni ne le supprime, et les horodatages viennent du
+        -- serveur. SQLite n'offre aucune immuabilité au niveau du stockage —
+        -- quiconque tient le fichier tient le journal.
+        CREATE TABLE IF NOT EXISTS admin_audit_log(
+            id TEXT PRIMARY KEY,
+            organization_id TEXT NOT NULL,
+            actor_user_id TEXT,                -- absent pour le jeton hérité
+            actor_role TEXT NOT NULL,
+            action TEXT NOT NULL,
+            target_type TEXT,
+            target_id TEXT,
+            request_id TEXT,
+            -- Métadonnées non sensibles uniquement : jamais un secret, jamais
+            -- un jeton, jamais de contenu dicté.
+            metadata TEXT,
+            created_at REAL NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_admin_audit_org
+            ON admin_audit_log(organization_id, created_at);
         """)
         migrate_schema(conn)
 
@@ -357,6 +423,15 @@ def migrate_schema(conn):
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_organizations_slug "
         "ON organizations(discovery_slug)"
     )
+
+    # Rôle de sécurité Nova. Une colonne écrite par un opérateur, lue par le
+    # serveur — jamais déduite d'un métier, d'un domaine d'adresse ou d'une
+    # revendication d'IdP. Le défaut vaut `member` : une base existante ne
+    # fabrique aucun administrateur en migrant.
+    if "security_role" not in columns("users"):
+        conn.execute(
+            "ALTER TABLE users ADD COLUMN security_role TEXT NOT NULL DEFAULT 'member'"
+        )
 
     if "verification" not in columns("federated_identities"):
         conn.execute(
@@ -1289,6 +1364,18 @@ def discovery_bootstrap_for(organization: dict) -> dict | None:
 
 init_db()
 
+# Le jeton d'administration partagé est une dette, pas une fonctionnalité. Un
+# déploiement qui s'y appuie encore hors développement doit le savoir en clair
+# au démarrage, plutôt que de le découvrir le jour où il faudra le révoquer.
+if LEGACY_ADMIN_TOKEN_ENABLED and NOVA_ENV != "development":
+    print(
+        "[admin] WARNING legacy X-Admin-Token enabled — deprecated, "
+        "authenticates a machine and not a person; set NOVA_LEGACY_ADMIN_TOKEN=false "
+        "once administrators have Nova security roles"
+    )
+print(f"[admin] server_mode={NOVA_SERVER_MODE} legacy_admin_token={LEGACY_ADMIN_TOKEN_ENABLED}")
+
+
 def touch_user(email: str):
     """Crée le profil s'il n'existe pas + met à jour last_seen."""
     # Résolu avant d'ouvrir la connexion : `nova_organization_id()` lit la base,
@@ -1310,6 +1397,69 @@ def touch_user(email: str):
 # `organization_id` ou un `member_type` — il ne fait que lire ce que cette
 # section produit.
 
+# ── Rôles de sécurité et capacités d'administration ──────────────────────
+#
+# Un rôle de sécurité dit ce qu'une personne a le droit de faire dans Nova. Il
+# est distinct du `member_type`, qui dit son métier : un enseignant n'est pas
+# administrateur parce qu'il enseigne, et un administrateur ne cesse pas de
+# dicter parce qu'il administre. Confondre les deux reviendrait à faire de
+# l'annuaire de l'établissement une source de privilèges.
+
+SECURITY_ROLE_MEMBER = "member"
+SECURITY_ROLE_ORGANIZATION_ADMIN = "organization_admin"
+SECURITY_ROLE_IT_ADMIN = "it_admin"
+SECURITY_ROLE_READ_ONLY = "read_only"
+
+# Capacités : ce que l'on vérifie réellement dans les routes. Les rôles sont
+# des noms commodes, les capacités sont la règle — sans quoi `if role ==` se
+# disperse dans quarante routes et la matrice devient impossible à relire.
+CAPABILITY_ORGANIZATION_READ = "organization_read"
+CAPABILITY_PROVIDER_MANAGE = "provider_manage"
+CAPABILITY_DISCOVERY_MANAGE = "discovery_manage"
+CAPABILITY_DEPLOYMENT_MANAGE = "deployment_manage"
+CAPABILITY_IDENTITY_MANAGE = "identity_manage"
+CAPABILITY_SECURITY_MANAGE = "security_manage"
+CAPABILITY_DIAGNOSTICS_READ = "diagnostics_read"
+
+# La matrice. Aucun rôle n'est un sur-ensemble des autres : `organization_admin`
+# gère les personnes, `it_admin` gère la machine. Les faire coïncider
+# reviendrait à n'avoir qu'un seul rôle déguisé en trois.
+CAPABILITIES_BY_ROLE: dict[str, frozenset[str]] = {
+    SECURITY_ROLE_ORGANIZATION_ADMIN: frozenset({
+        CAPABILITY_ORGANIZATION_READ,
+        CAPABILITY_PROVIDER_MANAGE,
+        CAPABILITY_DISCOVERY_MANAGE,
+        CAPABILITY_IDENTITY_MANAGE,
+        CAPABILITY_SECURITY_MANAGE,
+        CAPABILITY_DIAGNOSTICS_READ,
+    }),
+    SECURITY_ROLE_IT_ADMIN: frozenset({
+        CAPABILITY_ORGANIZATION_READ,
+        CAPABILITY_PROVIDER_MANAGE,
+        CAPABILITY_DISCOVERY_MANAGE,
+        CAPABILITY_DEPLOYMENT_MANAGE,
+        CAPABILITY_DIAGNOSTICS_READ,
+    }),
+    SECURITY_ROLE_READ_ONLY: frozenset({
+        CAPABILITY_ORGANIZATION_READ,
+        CAPABILITY_DIAGNOSTICS_READ,
+    }),
+    # Un membre n'a aucune capacité d'administration. La ligne est écrite
+    # explicitement : l'absence de clé se lirait comme un oubli.
+    SECURITY_ROLE_MEMBER: frozenset(),
+}
+
+SECURITY_ROLES = frozenset(CAPABILITIES_BY_ROLE)
+ADMIN_SECURITY_ROLES = frozenset(
+    role for role, caps in CAPABILITIES_BY_ROLE.items() if caps
+)
+
+
+def capabilities_for_role(role: str) -> frozenset[str]:
+    """Ce qu'un rôle autorise. Un rôle inconnu n'autorise rien."""
+    return CAPABILITIES_BY_ROLE.get((role or "").strip().lower(), frozenset())
+
+
 # `users.role` décrit un métier. La correspondance ne produit jamais de droit.
 MEMBER_TYPE_BY_ROLE = {
     "student": "student",
@@ -1326,16 +1476,22 @@ def member_type_for(role: str) -> str | None:
     return MEMBER_TYPE_BY_ROLE.get((role or "").strip().lower())
 
 
-def security_role_for(_row) -> str:
+def security_role_for(row) -> str:
     """Rôle de sécurité Nova.
 
-    Toujours `member`. Aucun métier, aucun groupe, aucun domaine d'adresse et
-    aucun champ envoyé par le client ne peut l'élever. Le panneau
-    d'administration s'authentifie par `X-Admin-Token`, hors du modèle
-    utilisateur : il ne fait de personne un `organization_admin`. Le jour où ce
-    rôle existera, il sera une colonne écrite par un administrateur, lue ici.
+    Lu dans une colonne écrite par un opérateur, et **uniquement** là. Aucun
+    métier, aucun groupe, aucun domaine d'adresse, aucune revendication d'IdP
+    (`role=admin`, `groups=admins`, `is_admin=true`) et aucun champ envoyé par
+    un client ne peut l'élever. Microsoft, Google et l'OIDC prouvent qui est la
+    personne ; Nova seul décide de ce qu'elle a le droit de faire.
+
+    Une valeur inconnue retombe sur `member` : une colonne corrompue ou écrite
+    par une version future ne doit jamais accorder plus que le minimum.
     """
-    return "member"
+    if "security_role" not in row.keys():
+        return SECURITY_ROLE_MEMBER
+    role = (row["security_role"] or "").strip().lower()
+    return role if role in SECURITY_ROLES else SECURITY_ROLE_MEMBER
 
 
 def groups_for(row) -> list[dict]:
@@ -1547,9 +1703,339 @@ def authenticated_token(authorization: str) -> str:
     return authorization.removeprefix("Bearer ").strip()
 
 def require_admin(x_admin_token: str = Header(default="")):
-    if x_admin_token != ADMIN_TOKEN:
+    """Jeton d'administration partagé — **hérité**, conservé pour compatibilité.
+
+    Voir `LEGACY_ADMIN_TOKEN_ENABLED` : refusé en mode Control Plane, où il
+    autoriserait un porteur à administrer une organisation qui n'est pas la
+    sienne. Les nouvelles routes utilisent `require_admin_capability`.
+    """
+    if not LEGACY_ADMIN_TOKEN_ENABLED:
+        raise auth_error(403, "ADMIN_REQUIRED")
+    if not x_admin_token or not hmac.compare_digest(x_admin_token, ADMIN_TOKEN):
         raise HTTPException(403, "Admin invalide")
     return True
+
+
+# ─────────────────────────── Administration moderne ───────────────────────
+#
+# ## Ce que cette section remplace
+#
+# `X-Admin-Token` authentifie **une machine, pas une personne**. Il ne se révoque
+# pas individuellement, ne dit pas qui a agi, ne distingue aucun rôle, et le même
+# secret circule entre tous ceux qui administrent. Un journal d'audit alimenté
+# par lui ne peut écrire qu'une chose : « quelqu'un qui détenait le jeton ».
+#
+# ## Le modèle
+#
+# L'identité vient du SSO de l'organisation — il n'existe aucun mot de passe
+# Nova, aucune table de mots de passe d'administration, aucune réinitialisation
+# maison. Microsoft, Google ou l'IdP OIDC prouvent qui est la personne ; Nova
+# décide de ce qu'elle peut faire, en lisant `users.security_role`.
+#
+# ## Pourquoi une session distincte
+#
+# Une session Nova ordinaire sert à dicter, toute la journée, sur un poste. Si
+# elle ouvrait aussi l'administration, le privilège élevé serait présent en
+# permanence, sur chaque poste, pendant trente jours. La session
+# d'administration s'ouvre donc explicitement depuis une session utilisateur
+# valide, vit quelques heures, et se referme.
+
+ADMIN_SESSION_TTL_SECONDS = int(
+    os.getenv("NOVA_ADMIN_SESSION_TTL_SECONDS", str(4 * 3600))
+)
+ADMIN_SESSION_IDLE_SECONDS = int(
+    os.getenv("NOVA_ADMIN_SESSION_IDLE_SECONDS", str(30 * 60))
+)
+
+
+class AdminPrincipal:
+    """Qui agit, sur quelle organisation, avec quel rôle.
+
+    Construit **par le serveur** à chaque appel, jamais désérialisé depuis une
+    requête : aucun client ne peut annoncer son rôle ni son organisation.
+    """
+
+    def __init__(
+        self,
+        user_id: str | None,
+        email: str | None,
+        organization_id: str,
+        security_role: str,
+        session_id: str | None,
+        auth_provider: str | None,
+        issued_at: float,
+    ):
+        self.user_id = user_id
+        self.email = email
+        self.organization_id = organization_id
+        self.security_role = security_role
+        self.session_id = session_id
+        self.auth_provider = auth_provider
+        self.issued_at = issued_at
+
+    @property
+    def capabilities(self) -> frozenset[str]:
+        return capabilities_for_role(self.security_role)
+
+    def can(self, capability: str) -> bool:
+        return capability in self.capabilities
+
+    @property
+    def is_legacy_token(self) -> bool:
+        return self.session_id is None
+
+
+def new_request_id() -> str:
+    """Identifiant de corrélation d'une action d'administration.
+
+    Volontairement local : rien ici ne prétend être un traçage distribué.
+    """
+    return uuid.uuid4().hex
+
+
+def record_admin_action(
+    principal: AdminPrincipal,
+    action: str,
+    target_type: str | None = None,
+    target_id: str | None = None,
+    metadata: dict | None = None,
+    request_id: str | None = None,
+):
+    """Écrit une ligne d'audit. Ajout seul.
+
+    `metadata` ne doit porter que des faits non sensibles — un type de
+    fournisseur, un booléen, un mode. Jamais un secret, un jeton, un code
+    d'autorisation, un `id_token`, un `nonce`, ni le moindre contenu dicté. Ce
+    que l'on n'écrit pas ne peut pas fuir par un journal.
+    """
+    with db() as conn:
+        conn.execute(
+            "INSERT INTO admin_audit_log(id, organization_id, actor_user_id, "
+            "actor_role, action, target_type, target_id, request_id, metadata, "
+            "created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (
+                uuid.uuid4().hex,
+                principal.organization_id,
+                principal.user_id,
+                principal.security_role,
+                action,
+                target_type,
+                target_id,
+                request_id or new_request_id(),
+                json.dumps(metadata, ensure_ascii=False) if metadata else None,
+                time.time(),
+            ),
+        )
+
+
+def create_admin_session(user_row, auth_provider: str | None) -> dict:
+    """Ouvre une session d'administration pour un utilisateur déjà authentifié.
+
+    Le jeton est opaque et de forte entropie — pas un JWT maison, dont la seule
+    fonction ici serait de porter un rôle que le serveur relit de toute façon en
+    base. Seule son empreinte est écrite : une copie de la base ne donne aucune
+    session utilisable.
+    """
+    now = time.time()
+    token = secrets.token_urlsafe(32)
+    session_id = uuid.uuid4().hex
+    role = security_role_for(user_row)
+    with db() as conn:
+        conn.execute(
+            "INSERT INTO admin_sessions(id, user_id, email, organization_id, "
+            "security_role, auth_provider, token_hash, created_at, expires_at, "
+            "last_seen_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (
+                session_id,
+                user_row["user_id"],
+                user_row["email"],
+                user_row["organization_id"] or nova_organization_id(),
+                role,
+                auth_provider,
+                hash_token(token),
+                now,
+                now + ADMIN_SESSION_TTL_SECONDS,
+                now,
+            ),
+        )
+    return {
+        "session_id": session_id,
+        "token": token,
+        "role": role,
+        "expires_at": now + ADMIN_SESSION_TTL_SECONDS,
+    }
+
+
+def revoke_admin_sessions_for_user(user_id: str, reason: str = "revoked"):
+    """Ferme toutes les sessions d'administration d'un utilisateur.
+
+    Appelée quand la personne se déconnecte de Nova : laisser une session
+    privilégiée ouverte derrière un utilisateur parti demanderait une
+    justification que nous n'avons pas.
+    """
+    if not user_id:
+        return
+    with db() as conn:
+        conn.execute(
+            "UPDATE admin_sessions SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL",
+            (time.time(), user_id),
+        )
+    print(f"[admin] session revoked reason={reason}")
+
+
+def set_security_role(email: str, role: str, organization_id: str | None = None) -> dict:
+    """Attribue, change ou retire un rôle de sécurité.
+
+    **Aucun endpoint ne l'expose.** Le premier administrateur d'une organisation
+    ne peut pas naître d'un appel HTTP : un endpoint « faites de moi un
+    administrateur » est une porte dérobée, quelles que soient les conditions
+    qu'on lui ajoute. Cette fonction est appelée par un opérateur ayant déjà
+    accès au serveur — voir `admin_cli.py`.
+
+    Retirer un rôle ferme immédiatement les sessions d'administration de la
+    personne : sans cela, la révocation ne prendrait effet qu'à l'expiration.
+    """
+    role = (role or "").strip().lower()
+    if role not in SECURITY_ROLES:
+        raise ValueError(f"rôle inconnu : {role}")
+    email = email.strip().lower()
+    organization_id = organization_id or nova_organization_id()
+    with db() as conn:
+        row = conn.execute(
+            "SELECT user_id, organization_id FROM users WHERE email=?", (email,)
+        ).fetchone()
+        if row is None:
+            raise LookupError(f"aucun compte : {email}")
+        if (row["organization_id"] or organization_id) != organization_id:
+            raise LookupError("ce compte appartient à une autre organisation")
+        conn.execute("UPDATE users SET security_role=? WHERE email=?", (role, email))
+    if role not in ADMIN_SECURITY_ROLES:
+        revoke_admin_sessions_for_user(row["user_id"], reason="role_revoked")
+    return {"email": email, "security_role": role, "user_id": row["user_id"]}
+
+
+def resolve_admin_session(token: str) -> AdminPrincipal:
+    """Valide un jeton d'administration, et **revérifie tout** au passage.
+
+    Le rôle inscrit dans la session est indicatif. Ce qui fait autorité, c'est
+    l'état actuel : compte actif, rôle toujours administrateur, organisation
+    active. Une session ne fige pas un privilège — retirer le rôle d'une
+    personne doit lui fermer la porte au prochain appel, pas au prochain mois.
+    """
+    now = time.time()
+    with db() as conn:
+        session = conn.execute(
+            "SELECT * FROM admin_sessions WHERE token_hash=?", (hash_token(token),)
+        ).fetchone()
+        if session is None:
+            raise auth_error(401, "ADMIN_REQUIRED")
+        if session["revoked_at"] is not None:
+            raise auth_error(401, "ADMIN_SESSION_REVOKED")
+        if session["expires_at"] < now:
+            raise auth_error(401, "ADMIN_SESSION_EXPIRED")
+        idle_since = session["last_seen_at"] or session["created_at"]
+        if now - idle_since > ADMIN_SESSION_IDLE_SECONDS:
+            conn.execute(
+                "UPDATE admin_sessions SET revoked_at=? WHERE id=?",
+                (now, session["id"]),
+            )
+            raise auth_error(401, "ADMIN_SESSION_EXPIRED")
+
+        user = conn.execute(
+            "SELECT * FROM users WHERE user_id=?", (session["user_id"],)
+        ).fetchone()
+        organization = conn.execute(
+            "SELECT status FROM organizations WHERE id=?",
+            (session["organization_id"],),
+        ).fetchone()
+
+    if user is None or account_status(user) != "active":
+        raise auth_error(403, "ADMIN_REQUIRED")
+    role = security_role_for(user)
+    if role not in ADMIN_SECURITY_ROLES:
+        # Le rôle a été retiré depuis l'ouverture de la session.
+        raise auth_error(403, "ADMIN_ROLE_REQUIRED")
+    if organization is not None and (organization["status"] or "active") != "active":
+        raise auth_error(403, "ADMIN_REQUIRED")
+
+    with db() as conn:
+        conn.execute(
+            "UPDATE admin_sessions SET last_seen_at=? WHERE id=?", (now, session["id"])
+        )
+    return AdminPrincipal(
+        user_id=session["user_id"],
+        email=session["email"],
+        organization_id=session["organization_id"],
+        security_role=role,
+        session_id=session["id"],
+        auth_provider=session["auth_provider"],
+        issued_at=session["created_at"],
+    )
+
+
+def admin_principal(
+    authorization: str = Header(default=""),
+    x_admin_token: str = Header(default=""),
+) -> AdminPrincipal:
+    """Identifie l'administrateur d'un appel.
+
+    Deux chemins, dans cet ordre : la session d'administration moderne, puis le
+    jeton hérité s'il est encore permis. Le client n'annonce jamais « ce jeton
+    est un jeton d'administration » — le serveur le sait par sa table. Un jeton
+    de session utilisateur présenté ici est simplement introuvable dans
+    `admin_sessions`, donc refusé : la séparation est stricte.
+    """
+    if authorization.startswith("Bearer "):
+        token = authorization.removeprefix("Bearer ").strip()
+        if token:
+            return resolve_admin_session(token)
+    if x_admin_token and LEGACY_ADMIN_TOKEN_ENABLED:
+        if not hmac.compare_digest(x_admin_token, ADMIN_TOKEN):
+            raise auth_error(403, "ADMIN_REQUIRED")
+        # Le jeton hérité ne porte aucune identité. Il est cadré à
+        # l'organisation servie par cette instance, et à elle seule.
+        return AdminPrincipal(
+            user_id=None,
+            email=None,
+            organization_id=nova_organization_id(),
+            security_role=SECURITY_ROLE_ORGANIZATION_ADMIN,
+            session_id=None,
+            auth_provider="legacy_admin_token",
+            issued_at=time.time(),
+        )
+    raise auth_error(401, "ADMIN_REQUIRED")
+
+
+def require_admin_capability(capability: str):
+    """Dépendance FastAPI exigeant une capacité précise.
+
+    Une seule porte pour toutes les routes d'administration : la matrice est
+    lisible en un endroit, et une route ne peut pas oublier une vérification
+    qu'elle n'a pas à écrire.
+    """
+
+    def dependency(principal: AdminPrincipal = Depends(admin_principal)) -> AdminPrincipal:
+        if not principal.can(capability):
+            # Le refus ne dit pas quel rôle manquait : c'est inutile à un
+            # administrateur légitime, et informatif pour quiconque sonde.
+            raise auth_error(403, "ADMIN_ROLE_REQUIRED")
+        return principal
+
+    return dependency
+
+
+def require_organization_access(principal: AdminPrincipal, organization_id: str) -> str:
+    """L'organisation demandée est-elle celle que ce principal administre ?
+
+    L'`organization_id` d'une URL est une **désignation**, jamais une
+    autorisation. Sans cette vérification, il suffirait d'en changer dans le
+    chemin pour administrer le voisin.
+    """
+    if organization_id != principal.organization_id:
+        # Même réponse qu'une organisation inexistante : un administrateur n'a
+        # pas à découvrir quelles autres organisations existent.
+        raise auth_error(404, "ORGANIZATION_NOT_FOUND")
+    return organization_id
 
 # ---------------------------------------------------------------- schemas
 class RequestCode(BaseModel):
@@ -1755,6 +2241,12 @@ def auth_logout(
             "UPDATE tokens SET active=0 WHERE token_hash=? AND email=?",
             (hash_token(token), user),
         )
+        row = conn.execute("SELECT user_id FROM users WHERE email=?", (user,)).fetchone()
+    # Une personne qui se déconnecte de Nova ne devrait pas laisser derrière elle
+    # une session privilégiée ouverte. La session d'administration est dérivée de
+    # la session utilisateur : elle en suit le sort.
+    if row is not None:
+        revoke_admin_sessions_for_user(row["user_id"], reason="user_logout")
     return {"revoked": True}
 
 @app.post("/api/auth/entra/start")
@@ -2838,7 +3330,9 @@ def admin_provider_view(config: dict) -> dict:
 
 
 @app.get("/api/admin/provider-configs")
-def admin_list_provider_configs(_: bool = Depends(require_admin)):
+def admin_list_provider_configs(
+    _: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_ORGANIZATION_READ)),
+):
     """Toutes les configurations de l'organisation active, cassées comprises."""
     configs = provider_configs_for_organization(
         nova_organization_id(), only_usable=False
@@ -2848,7 +3342,8 @@ def admin_list_provider_configs(_: bool = Depends(require_admin)):
 
 @app.post("/api/admin/provider-configs")
 def admin_create_provider_config(
-    body: ProviderConfigRequest, _: bool = Depends(require_admin)
+    body: ProviderConfigRequest,
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_PROVIDER_MANAGE)),
 ):
     if body.provider_type not in PROVIDER_TYPES:
         raise auth_error(400, "PROVIDER_UNKNOWN")
@@ -2884,12 +3379,27 @@ def admin_create_provider_config(
         except sqlite3.IntegrityError:
             raise auth_error(409, "PROVIDER_CONFIG_DUPLICATE")
     created = provider_config_by_id(config_id, nova_organization_id())
+    # Le type et l'existence d'un secret — jamais le secret lui-même.
+    # « Admin » ne veut pas dire « voir les secrets », et un journal d'audit
+    # est exactement l'endroit où un secret survivrait le plus longtemps.
+    record_admin_action(
+        principal,
+        "provider_config.create",
+        target_type="provider_config",
+        target_id=config_id,
+        metadata={
+            "provider_type": body.provider_type,
+            "has_secret": bool(body.oidc_client_secret),
+        },
+    )
     return admin_provider_view(created)
 
 
 @app.post("/api/admin/provider-configs/{config_id}")
 def admin_update_provider_config(
-    config_id: str, body: ProviderConfigRequest, _: bool = Depends(require_admin)
+    config_id: str,
+    body: ProviderConfigRequest,
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_PROVIDER_MANAGE)),
 ):
     organization_id = nova_organization_id()
     existing = provider_config_by_id(config_id, organization_id)
@@ -2922,11 +3432,26 @@ def admin_update_provider_config(
             f"WHERE id=? AND organization_id=?",
             (*updates.values(), config_id, organization_id),
         )
+    record_admin_action(
+        principal,
+        "provider_config.update",
+        target_type="provider_config",
+        target_id=config_id,
+        metadata={
+            "fields": sorted(updates),
+            # Que le secret ait été remplacé est un fait d'audit ; sa valeur,
+            # ni l'ancienne ni la nouvelle, n'en est un.
+            "secret_replaced": bool(body.oidc_client_secret),
+        },
+    )
     return admin_provider_view(provider_config_by_id(config_id, organization_id))
 
 
 @app.post("/api/admin/provider-configs/{config_id}/disable")
-def admin_disable_provider_config(config_id: str, _: bool = Depends(require_admin)):
+def admin_disable_provider_config(
+    config_id: str,
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_PROVIDER_MANAGE)),
+):
     """Désactive plutôt que supprime.
 
     Une configuration désactivée cesse d'être annoncée et de servir, mais reste
@@ -2942,6 +3467,12 @@ def admin_disable_provider_config(config_id: str, _: bool = Depends(require_admi
             "WHERE id=? AND organization_id=?",
             (time.time(), config_id, organization_id),
         )
+    record_admin_action(
+        principal,
+        "provider_config.disable",
+        target_type="provider_config",
+        target_id=config_id,
+    )
     return admin_provider_view(provider_config_by_id(config_id, organization_id))
 
 
@@ -2976,7 +3507,9 @@ def discover_organization(body: DiscoveryRequest):
 
 
 @app.get("/api/admin/discovery")
-def admin_read_discovery(_: bool = Depends(require_admin)):
+def admin_read_discovery(
+    _: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_ORGANIZATION_READ)),
+):
     with db() as conn:
         row = conn.execute(
             "SELECT * FROM organizations WHERE id=?", (nova_organization_id(),)
@@ -3005,7 +3538,8 @@ class DiscoverySettings(BaseModel):
 
 @app.post("/api/admin/discovery")
 def admin_update_discovery(
-    body: DiscoverySettings, _: bool = Depends(require_admin)
+    body: DiscoverySettings,
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_DISCOVERY_MANAGE)),
 ):
     """Modifie la configuration de découverte de l'organisation active.
 
@@ -3053,7 +3587,166 @@ def admin_update_discovery(
                 f"UPDATE organizations SET {assignments} WHERE id=?",
                 (*updates.values(), organization_id),
             )
-    return admin_read_discovery(True)
+        # Les *noms* des champs modifiés, pas leurs valeurs : savoir que
+        # l'adresse de service a changé suffit à l'audit.
+        record_admin_action(
+            principal,
+            "discovery.update",
+            target_type="organization",
+            target_id=organization_id,
+            metadata={"fields": sorted(updates)},
+        )
+    return admin_read_discovery(principal)
+
+
+# ───────────────────── Session d'administration et Control Plane ──────────
+#
+# Séparation des routes : `/api/discovery/*`, `/api/auth/*` et `/api/me` sont
+# publiques ou destinées au poste. `/api/admin/*` et `/api/control/*` exigent un
+# principal d'administration. Aucune route d'administration ne se cache dans les
+# chemins publics historiques.
+
+
+@app.post("/api/admin/session")
+def open_admin_session(user: str = Depends(current_user)):
+    """Ouvre une session d'administration depuis une session Nova valide.
+
+    Aucun client ne demande un rôle : il présente son jeton utilisateur, et le
+    serveur regarde en base ce que cette personne est autorisée à faire. Un
+    membre ordinaire obtient un refus, quoi que raconte son IdP.
+
+    ## Dette assumée : pas de step-up
+
+    Idéalement, ouvrir une session d'administration exigerait une
+    authentification récente ou un second facteur au moment de l'élévation.
+    Nova ne peut pas l'offrir honnêtement aujourd'hui : le second facteur vit
+    chez l'IdP, et rien dans le flux actuel ne prouve à Nova qu'il vient d'être
+    présenté. Plutôt que de simuler un MFA que nous ne contrôlons pas, la
+    session est **courte**, ouverte depuis une session utilisateur valide, et
+    revérifiée à chaque appel. Le step-up réel — `max_age` / `prompt=login` puis
+    lecture de `auth_time` — est documenté comme dette.
+    """
+    with db() as conn:
+        row = conn.execute("SELECT * FROM users WHERE email=?", (user,)).fetchone()
+    if row is None:
+        raise auth_error(403, "ADMIN_ROLE_REQUIRED")
+    role = security_role_for(row)
+    if role not in ADMIN_SECURITY_ROLES:
+        # Même refus pour un membre inconnu et pour un membre connu sans rôle :
+        # « existe mais n'est pas administrateur » n'est une information utile
+        # qu'à celui qui sonde.
+        raise auth_error(403, "ADMIN_ROLE_REQUIRED")
+    if account_status(row) != "active":
+        raise auth_error(403, "ADMIN_ROLE_REQUIRED")
+
+    session = create_admin_session(row, row["identity_provider"])
+    principal = AdminPrincipal(
+        user_id=row["user_id"],
+        email=row["email"],
+        organization_id=row["organization_id"] or nova_organization_id(),
+        security_role=session["role"],
+        session_id=session["session_id"],
+        auth_provider=row["identity_provider"],
+        issued_at=time.time(),
+    )
+    record_admin_action(
+        principal, "admin_session.create",
+        target_type="admin_session", target_id=session["session_id"],
+    )
+    # Le jeton n'est jamais journalisé, ici pas plus qu'ailleurs.
+    print(f"[admin] session opened role={session['role']}")
+    return {
+        "token": session["token"],
+        "role": session["role"],
+        "organization_id": principal.organization_id,
+        "capabilities": sorted(capabilities_for_role(session["role"])),
+        "expires_in": int(session["expires_at"] - time.time()),
+    }
+
+
+@app.post("/api/admin/session/logout")
+def close_admin_session(principal: AdminPrincipal = Depends(admin_principal)):
+    """Ferme la session d'administration courante."""
+    if principal.session_id is None:
+        # Le jeton hérité n'a pas de session à fermer : le dire est plus honnête
+        # qu'un succès sans effet.
+        raise auth_error(400, "ADMIN_SESSION_NOT_APPLICABLE")
+    with db() as conn:
+        conn.execute(
+            "UPDATE admin_sessions SET revoked_at=? WHERE id=? AND revoked_at IS NULL",
+            (time.time(), principal.session_id),
+        )
+    return {"revoked": True}
+
+
+def control_organization_view(organization_id: str) -> dict:
+    """Vue d'administration d'une organisation. Des résumés, jamais de secrets."""
+    with db() as conn:
+        row = conn.execute(
+            "SELECT * FROM organizations WHERE id=?", (organization_id,)
+        ).fetchone()
+        configs = conn.execute(
+            "SELECT provider_type, enabled FROM organization_provider_configs "
+            "WHERE organization_id=?",
+            (organization_id,),
+        ).fetchall()
+    if row is None:
+        raise auth_error(404, "ORGANIZATION_NOT_FOUND")
+    return {
+        "organization": {
+            "id": row["id"],
+            "slug": row["slug"],
+            "display_name": row["display_name"],
+            "org_type": row["org_type"],
+            "status": row["status"] or "active",
+        },
+        "deployment": {
+            "server_mode": NOVA_SERVER_MODE,
+            "deployment_mode": row["deployment_mode"] or DEPLOYMENT_MODE_DEDICATED,
+        },
+        "discovery": {
+            "enabled": bool(row["discovery_enabled"]),
+            "slug": row["discovery_slug"],
+            "service_endpoint": row["service_endpoint"] or "",
+        },
+        # Un résumé par type : combien sont déclarés, combien servent. Ni
+        # identifiant client, ni émetteur, ni secret — la vue détaillée existe
+        # déjà, sous `provider_manage`.
+        "providers": [
+            {
+                "provider_type": provider_type,
+                "count": sum(1 for c in configs if c["provider_type"] == provider_type),
+                "enabled_count": sum(
+                    1 for c in configs
+                    if c["provider_type"] == provider_type and c["enabled"]
+                ),
+            }
+            for provider_type in sorted({c["provider_type"] for c in configs})
+        ],
+    }
+
+
+@app.get("/api/control/organization")
+def control_read_own_organization(
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_ORGANIZATION_READ)),
+):
+    """Raccourci vers l'organisation que ce principal administre."""
+    return control_organization_view(principal.organization_id)
+
+
+@app.get("/api/control/organizations/{organization_id}")
+def control_read_organization(
+    organization_id: str,
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_ORGANIZATION_READ)),
+):
+    """Lecture d'une organisation par son identifiant.
+
+    La forme cible du Control Plane : l'organisation est **désignée** par le
+    chemin et **autorisée** par le principal. Fournir l'identifiant d'une autre
+    organisation ne donne rien — pas même la confirmation qu'elle existe.
+    """
+    require_organization_access(principal, organization_id)
+    return control_organization_view(organization_id)
 
 
 # --- profil de l'utilisateur connecté (pour l'app)
@@ -3439,7 +4132,9 @@ async def engineering_notes(body: CommandRequest, user: str = Depends(current_us
 
 # ================================================================ ADMIN
 @app.get("/api/admin/overview")
-def admin_overview(_: bool = Depends(require_admin)):
+def admin_overview(
+    _: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_DIAGNOSTICS_READ)),
+):
     with db() as conn:
         users = conn.execute("""
             SELECT u.email, u.role, u.cohort, u.note, u.disabled, u.created_at, u.last_seen,
@@ -3462,7 +4157,10 @@ def admin_overview(_: bool = Depends(require_admin)):
     }
 
 @app.get("/api/admin/user/{email}")
-def admin_user_detail(email: str, _: bool = Depends(require_admin)):
+def admin_user_detail(
+    email: str,
+    _: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_IDENTITY_MANAGE)),
+):
     """Profil complet : infos + appareils + historique d'usage (30 jours, compteurs)."""
     email = email.lower()
     with db() as conn:
@@ -3481,8 +4179,17 @@ def admin_user_detail(email: str, _: bool = Depends(require_admin)):
             "usage_30d": [dict(h) for h in history]}
 
 @app.post("/api/admin/user/{email}")
-def admin_user_update(email: str, body: UserUpdate, _: bool = Depends(require_admin)):
-    """L'admin a tous les droits : rôle, cohorte, note, suspension."""
+def admin_user_update(
+    email: str,
+    body: UserUpdate,
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_IDENTITY_MANAGE)),
+):
+    """Rôle métier, cohorte, note, suspension.
+
+    Ce que cette route ne peut **pas** faire : attribuer un rôle de sécurité.
+    `users.role` décrit un métier ; le privilège vit dans `users.security_role`,
+    qu'aucun endpoint n'écrit — voir `set_security_role` et `admin_cli.py`.
+    """
     email = email.lower()
     fields, vals = [], []
     if body.role is not None:
@@ -3501,18 +4208,30 @@ def admin_user_update(email: str, body: UserUpdate, _: bool = Depends(require_ad
         conn.execute("INSERT OR IGNORE INTO users(email, created_at) VALUES (?,?)",
                      (email, time.time()))
         conn.execute(f"UPDATE users SET {', '.join(fields)} WHERE email=?", (*vals, email))
+    record_admin_action(
+        principal, "user.update", target_type="user", target_id=email,
+        metadata={"fields": sorted(f.rstrip("=?") for f in fields)},
+    )
     return {"updated": True}
 
 @app.post("/api/admin/user/{email}/revoke-machines")
-def admin_revoke_machines(email: str, _: bool = Depends(require_admin)):
+def admin_revoke_machines(
+    email: str,
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_IDENTITY_MANAGE)),
+):
     """Déconnecte l'utilisateur de tous ses appareils (il devra refaire un code email)."""
     with db() as conn:
         n = conn.execute("UPDATE tokens SET active=0 WHERE email=?",
                          (email.lower(),)).rowcount
+    record_admin_action(
+        principal, "user.revoke_machines", target_type="user", target_id=email.lower())
     return {"revoked_tokens": n}
 
 @app.delete("/api/admin/user/{email}")
-def admin_user_delete(email: str, _: bool = Depends(require_admin)):
+def admin_user_delete(
+    email: str,
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_IDENTITY_MANAGE)),
+):
     """Supprime complètement l'utilisateur (profil, tokens, compteurs)."""
     email = email.lower()
     with db() as conn:
@@ -3520,13 +4239,20 @@ def admin_user_delete(email: str, _: bool = Depends(require_admin)):
         conn.execute("DELETE FROM users WHERE email=?", (email,))
         conn.execute("DELETE FROM usage WHERE email=?", (email,))
         conn.execute("DELETE FROM auth_codes WHERE email=?", (email,))
+    record_admin_action(principal, "user.delete", target_type="user", target_id=email)
     return {"deleted": email}
 
 @app.post("/api/admin/cohort/{cohort}/disable")
-def admin_cohort_disable(cohort: str, _: bool = Depends(require_admin)):
+def admin_cohort_disable(
+    cohort: str,
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_IDENTITY_MANAGE)),
+):
     """Suspend toute une cohorte (ex. fin d'année scolaire)."""
     with db() as conn:
         n = conn.execute("UPDATE users SET disabled=1 WHERE cohort=?", (cohort,)).rowcount
+    record_admin_action(
+        principal, "cohort.disable", target_type="cohort", target_id=cohort,
+        metadata={"affected": n})
     return {"disabled_users": n}
 
 # ---------------------------------------------------------------- admin UI
