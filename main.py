@@ -1084,12 +1084,83 @@ def normalize_discovery_slug(value: str) -> str:
     return value.strip().lower()
 
 
+def host_is_publicly_routable(host: str, require_resolvable: bool) -> tuple[bool, str]:
+    """L'hôte désigne-t-il uniquement des adresses publiquement routables ?
+
+    Politique réseau commune à la découverte et à l'adaptateur OIDC. Les deux
+    répondent à la même question — « cet hôte est-il la machine elle-même, ou son
+    voisinage immédiat ? » — et deux implémentations divergentes de cette
+    question finiraient par ne plus refuser les mêmes choses.
+
+    `require_resolvable` est la seule différence entre les deux appelants, et
+    elle est délibérée :
+
+    - **OIDC** va réellement contacter l'hôte. Un nom qu'il ne résout pas est
+      inutilisable, et le refuser ne coûte rien ;
+    - **la découverte** ne contacte pas l'adresse : elle l'annonce à des postes
+      qui, eux, peuvent la résoudre sur un réseau que ce serveur ne voit pas.
+      Refuser sur une non-résolution rendrait la découverte indisponible pour
+      un déploiement parfaitement sain.
+
+    Ce que la non-résolution n'excuse pas : une IP littérale interne et un nom
+    local sont refusés sans qu'aucun DNS n'ait à répondre.
+    """
+    name = host.strip().strip("[]").rstrip(".").lower()
+    if not name:
+        return False, "missing_host"
+    # Refusés par leur nom : aucun DNS n'a besoin de coopérer pour cela, et un
+    # résolveur menteur ne peut pas les faire passer.
+    if name == "localhost" or name.endswith(".localhost"):
+        return False, "internal_address"
+
+    literal = None
+    try:
+        literal = ipaddress.ip_address(name)
+    except ValueError:
+        pass
+
+    if literal is not None:
+        addresses = [literal]
+    else:
+        try:
+            addresses = [
+                ipaddress.ip_address(info[4][0]) for info in socket.getaddrinfo(host, None)
+            ]
+        except (socket.gaierror, ValueError, UnicodeError):
+            addresses = []
+        if not addresses:
+            return (False, "unresolvable_host") if require_resolvable else (True, "ok")
+
+    # Toutes les adresses doivent être acceptables : un nom qui résout à la fois
+    # vers une adresse publique et vers une adresse interne servirait de pont.
+    for address in addresses:
+        if (
+            address.is_loopback
+            or address.is_private
+            or address.is_link_local
+            or address.is_reserved
+            or address.is_multicast
+            or address.is_unspecified
+        ):
+            return False, "internal_address"
+    return True, "ok"
+
+
 def service_endpoint_is_allowed(endpoint: str, allow_insecure: bool) -> tuple[bool, str]:
     """L'adresse annoncée est-elle acceptable ?
 
     Le poste va s'y connecter et lui confier une session : une réponse de
     découverte qui l'enverrait ailleurs serait une redirection d'authentification.
     D'où une validation stricte, côté serveur **et** côté poste.
+
+    Le poste refuse déjà les adresses locales, et c'est la barrière qui compte —
+    c'est lui qui détient la session. Le contrôle ici attrape une faute
+    différente : une configuration d'exploitation qui annoncerait une adresse
+    interne à des postes qui ne pourraient jamais la joindre, ou pire, à des
+    postes du même réseau.
+
+    `allow_insecure` est un paramètre **du serveur**. Une valeur venue de la
+    découverte publique ne peut pas l'activer : elle n'est jamais lue ici.
     """
     try:
         parsed = urlparse(endpoint)
@@ -1105,6 +1176,9 @@ def service_endpoint_is_allowed(endpoint: str, allow_insecure: bool) -> tuple[bo
         return False, "not_a_base_url"
     if not parsed.hostname:
         return False, "missing_host"
+    if not allow_insecure:
+        # Sans résolution obligatoire : voir `host_is_publicly_routable`.
+        return host_is_publicly_routable(parsed.hostname, require_resolvable=False)
     return True, "ok"
 
 
@@ -2095,34 +2169,12 @@ def issuer_url_is_allowed(issuer: str, allow_private: bool) -> tuple[bool, str]:
     if not host:
         return False, "missing_host"
 
-    addresses = []
-    try:
-        addresses = [
-            ipaddress.ip_address(info[4][0])
-            for info in socket.getaddrinfo(host, None)
-        ]
-    except (socket.gaierror, ValueError):
-        try:
-            addresses = [ipaddress.ip_address(host)]
-        except ValueError:
-            return False, "unresolvable_host"
-
-    if not addresses:
-        return False, "unresolvable_host"
-
-    # Toutes les adresses doivent être acceptables : un nom qui résout à la fois
-    # vers une adresse publique et vers une adresse interne servirait de pont.
-    for address in addresses:
-        internal = (
-            address.is_loopback
-            or address.is_private
-            or address.is_link_local
-            or address.is_reserved
-            or address.is_multicast
-            or address.is_unspecified
-        )
-        if internal and not allow_private:
-            return False, "internal_address"
+    # Même politique réseau que la découverte — voir `host_is_publicly_routable`.
+    # Un émetteur doit être joignable par ce serveur : un nom qu'il ne résout
+    # pas est refusé, là où la découverte se contente d'annoncer une adresse.
+    public, reason = host_is_publicly_routable(host, require_resolvable=True)
+    if not public and not (allow_private and reason == "internal_address"):
+        return False, reason
     return True, "ok"
 
 

@@ -3559,6 +3559,81 @@ class DiscoveryEndpointSecurityTests(unittest.TestCase):
     def test_a_missing_host_is_refused(self):
         self.assertFalse(self.allowed("https://")[0])
 
+    # ── Nature de l'hôte ────────────────────────────────────────────────
+    #
+    # Le poste refusait déjà ces adresses ; le serveur ne le faisait pas, alors
+    # que la documentation promettait les deux contrôles. Ces tests ferment
+    # l'écart et l'empêchent de se rouvrir.
+
+    def test_local_and_private_addresses_are_refused(self):
+        for endpoint in (
+            "https://localhost",
+            "https://nova.localhost",
+            "https://127.0.0.1",
+            "https://127.1.2.3",
+            "https://[::1]",
+            "https://10.0.0.5",
+            "https://192.168.1.20",
+            "https://172.16.4.4",
+            "https://169.254.169.254",
+            "https://[fe80::1]",  # link-local IPv6
+            "https://[::]",  # unspecified
+            "https://224.0.0.1",  # multicast
+        ):
+            ok, reason = self.allowed(endpoint)
+            self.assertFalse(ok, endpoint)
+            self.assertEqual(reason, "internal_address", endpoint)
+
+    def test_public_addresses_next_to_private_ranges_stay_accepted(self):
+        # Les voisins immédiats des plages privées : se tromper d'un bit ici
+        # reviendrait à refuser des adresses parfaitement publiques.
+        for endpoint in ("https://11.0.0.1", "https://172.32.0.1", "https://9.255.255.255"):
+            ok, reason = self.allowed(endpoint)
+            self.assertTrue(ok, f"{endpoint}: {reason}")
+
+    def test_a_hostname_resolving_to_a_private_address_is_refused(self):
+        with patch.object(
+            main.socket, "getaddrinfo",
+            return_value=[(2, 1, 6, "", ("10.0.0.5", 0))],
+        ):
+            ok, reason = self.allowed("https://interne.example.edu")
+        self.assertFalse(ok)
+        self.assertEqual(reason, "internal_address")
+
+    def test_one_private_result_among_public_ones_is_enough_to_refuse(self):
+        # Un nom qui résout à la fois vers une adresse publique et vers une
+        # adresse interne servirait de pont : toutes doivent être acceptables.
+        with patch.object(
+            main.socket, "getaddrinfo",
+            return_value=[
+                (2, 1, 6, "", ("93.184.216.34", 0)),
+                (2, 1, 6, "", ("127.0.0.1", 0)),
+            ],
+        ):
+            ok, reason = self.allowed("https://double.example.edu")
+        self.assertFalse(ok)
+        self.assertEqual(reason, "internal_address")
+
+    def test_a_hostname_the_server_cannot_resolve_is_still_accepted(self):
+        """Le serveur annonce cette adresse, il ne la contacte pas.
+
+        Un endpoint peut n'être résolvable que depuis le réseau des postes.
+        Refuser sur une non-résolution rendrait la découverte indisponible pour
+        un déploiement sain — c'est la seule différence avec la politique OIDC,
+        qui exige la résolution parce qu'elle va réellement contacter l'hôte.
+        """
+        with patch.object(
+            main.socket, "getaddrinfo", side_effect=main.socket.gaierror("no dns"),
+        ):
+            ok, reason = self.allowed("https://interne.exemple.edu")
+        self.assertTrue(ok, reason)
+
+    def test_a_local_endpoint_is_accepted_only_when_the_operator_opts_in(self):
+        # L'exception de développement couvre le schéma **et** l'hôte, et reste
+        # un paramètre du serveur : rien venu du réseau ne peut l'activer.
+        self.assertFalse(self.allowed("https://127.0.0.1:8787")[0])
+        self.assertTrue(self.allowed("https://127.0.0.1:8787", allow_insecure=True)[0])
+
 
 class OrganizationDiscoveryTests(unittest.TestCase):
     """L'endpoint public de découverte.
@@ -3647,6 +3722,12 @@ class OrganizationDiscoveryTests(unittest.TestCase):
         with main.db() as conn:
             conn.execute(
                 "UPDATE organizations SET service_endpoint='ftp://ailleurs.test'")
+        responses.append(self.discover(self.SLUG))
+        # 6. adresse de service interne — refusée par la politique réseau, et
+        #    refusée de la même manière que tout le reste : une organisation mal
+        #    configurée ne doit pas se distinguer d'une organisation inconnue.
+        with main.db() as conn:
+            conn.execute("UPDATE organizations SET service_endpoint='https://10.0.0.5'")
         responses.append(self.discover(self.SLUG))
 
         for response in responses:
