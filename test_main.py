@@ -87,6 +87,18 @@ def read_sso_flow(flow_id):
     return dict(row) if row else None
 
 
+def insert_user(conn, email, organization_id=None, **fields):
+    """Crée un compte conforme au schéma tenant-scopé (Phase 23).
+
+    Les tests fabriquaient auparavant leurs comptes avec un `INSERT` portant la
+    seule adresse : c'était possible tant qu'elle était clé primaire. Ils passent
+    désormais par le même chemin que le serveur.
+    """
+    return main.create_user(
+        conn, organization_id or main.nova_organization_id(), email, **fields
+    )
+
+
 def clear_provider_configs():
     with main.db() as conn:
         conn.execute("DELETE FROM organization_provider_configs")
@@ -478,10 +490,7 @@ class IdentityFoundationTests(unittest.TestCase):
         """Compte inséré comme le faisait l'ancien code : sans user_id, sans
         organisation, sans provider."""
         with main.db() as conn:
-            conn.execute(
-                "INSERT INTO users(email, role, cohort, created_at) VALUES (?,?,?,?)",
-                ("ancien@example.com", "teacher", "AERO2", 0.0),
-            )
+            insert_user(conn, "ancien@example.com", role="teacher", cohort="AERO2")
             main.migrate_schema(conn)
 
         headers = self.sign_in("ancien@example.com")
@@ -540,16 +549,14 @@ class IdentityFoundationTests(unittest.TestCase):
     def test_no_business_role_ever_becomes_an_admin(self):
         for role in ("student", "teacher", "staff", "partner", "employee", "manager"):
             with main.db() as conn:
+                organization_id = main.nova_organization_id()
+                if main.user_by_email(conn, organization_id, "membre@example.com") is None:
+                    insert_user(conn, "membre@example.com")
+                row = main.user_by_email(conn, organization_id, "membre@example.com")
                 conn.execute(
-                    "INSERT OR IGNORE INTO users(email, created_at) VALUES (?,?)",
-                    ("membre@example.com", 0.0),
+                    "UPDATE users SET role=? WHERE user_id=?", (role, row["user_id"])
                 )
-                conn.execute(
-                    "UPDATE users SET role=? WHERE email=?", (role, "membre@example.com")
-                )
-                row = conn.execute(
-                    "SELECT * FROM users WHERE email=?", ("membre@example.com",)
-                ).fetchone()
+                row = main.user_by_id(conn, row["user_id"])
             self.assertEqual(
                 main.security_role_for(row),
                 "member",
@@ -1553,12 +1560,7 @@ class EntraPkceTests(unittest.TestCase):
 
     def test_a_legacy_account_is_linked_under_controlled_conditions(self):
         with main.db() as conn:
-            conn.execute(
-                "INSERT INTO users(email, role, cohort, created_at, organization_id) "
-                "VALUES (?,?,?,?,?)",
-                ("etudiant@example.com", "student", "AERO2", time.time(),
-                 main.nova_organization_id()),
-            )
+            insert_user(conn, "etudiant@example.com", role="student", cohort="AERO2")
         flow_id = self.start_flow().json()["flow_id"]
         response = self.exchange(flow_id)
         self.assertEqual(response.status_code, 200)
@@ -1574,10 +1576,7 @@ class EntraPkceTests(unittest.TestCase):
         """Une autre identité Microsoft occupe déjà ce compte : on refuse plutôt
         que de rattacher deux personnes au même compte."""
         with main.db() as conn:
-            conn.execute(
-                "INSERT INTO users(email, created_at, organization_id) VALUES (?,?,?)",
-                ("etudiant@example.com", time.time(), main.nova_organization_id()),
-            )
+            insert_user(conn, "etudiant@example.com")
             conn.execute(
                 "INSERT INTO federated_identities(provider, external_subject, "
                 "external_tenant_id, organization_id, email, verification, created_at, "
@@ -1592,23 +1591,39 @@ class EntraPkceTests(unittest.TestCase):
         self.assertEqual(response.json()["detail"], "IDENTITY_CONFLICT")
 
     def test_an_account_of_another_organization_is_never_taken_over(self):
+        """Depuis la Phase 23, la garantie est plus forte qu'un refus.
+
+        Une même adresse peut légitimement exister dans deux organisations —
+        ce sont deux personnes. Ce qui doit être impossible, c'est qu'une
+        connexion dans l'organisation A **reprenne** le compte de B. Le compte
+        de B doit rester exactement ce qu'il était.
+        """
         with main.db() as conn:
-            conn.execute(
-                "INSERT INTO users(email, created_at, organization_id) VALUES (?,?,?)",
-                ("etudiant@example.com", time.time(), self.ORGANIZATION_B),
-            )
+            other = insert_user(
+                conn, "etudiant@example.com", organization_id=self.ORGANIZATION_B)
         flow_id = self.start_flow().json()["flow_id"]
         response = self.exchange(flow_id)
-        self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.json()["detail"], "ORGANIZATION_MISMATCH")
+        self.assertEqual(response.status_code, 200, response.text)
+
+        with main.db() as conn:
+            untouched = main.user_by_id(conn, other)
+            here = main.user_by_email(
+                conn, main.nova_organization_id(), "etudiant@example.com")
+        # Le compte de l'autre organisation n'a pas bougé, et celui d'ici est
+        # une personne distincte.
+        self.assertEqual(untouched["organization_id"], self.ORGANIZATION_B)
+        self.assertIsNotNone(here)
+        self.assertNotEqual(here["user_id"], other)
+        # Et l'identité fédérée n'a été rattachée qu'ici.
+        with main.db() as conn:
+            identities = conn.execute(
+                "SELECT organization_id FROM federated_identities").fetchall()
+        self.assertNotIn(
+            self.ORGANIZATION_B, [r["organization_id"] for r in identities])
 
     def test_a_disabled_account_cannot_sign_in_through_sso(self):
         with main.db() as conn:
-            conn.execute(
-                "INSERT INTO users(email, created_at, organization_id, disabled) "
-                "VALUES (?,?,?,1)",
-                ("etudiant@example.com", time.time(), main.nova_organization_id()),
-            )
+            insert_user(conn, "etudiant@example.com", disabled=True)
         flow_id = self.start_flow().json()["flow_id"]
         response = self.exchange(flow_id)
         self.assertEqual(response.status_code, 403)
@@ -1616,11 +1631,7 @@ class EntraPkceTests(unittest.TestCase):
 
     def test_a_deprovisioned_account_cannot_sign_in_through_sso(self):
         with main.db() as conn:
-            conn.execute(
-                "INSERT INTO users(email, created_at, organization_id, status) "
-                "VALUES (?,?,?,'deprovisioned')",
-                ("etudiant@example.com", time.time(), main.nova_organization_id()),
-            )
+            insert_user(conn, "etudiant@example.com", status="deprovisioned")
         flow_id = self.start_flow().json()["flow_id"]
         self.assertEqual(self.exchange(flow_id).status_code, 403)
 

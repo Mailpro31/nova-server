@@ -187,22 +187,43 @@ def db():
 def init_db():
     with db() as conn:
         conn.executescript("""
+        -- État d'authentification antérieur à l'identité : à ce stade, seule
+        -- l'adresse est connue. Elle est donc cadrée par l'organisation.
         CREATE TABLE IF NOT EXISTS auth_codes(
-            email TEXT, code TEXT, expires_at REAL, attempts INTEGER DEFAULT 0
+            email TEXT, code TEXT, expires_at REAL, attempts INTEGER DEFAULT 0,
+            organization_id TEXT
         );
+        -- Sessions Nova. Rattachées à `user_id` : l'e-mail n'est qu'un repère
+        -- lisible, et changer d'adresse ne doit déconnecter personne.
         CREATE TABLE IF NOT EXISTS tokens(
             token TEXT PRIMARY KEY, email TEXT, machine TEXT,
+            user_id TEXT, organization_id TEXT,
             active INTEGER DEFAULT 1, created_at REAL, expires_at REAL
         );
+        -- Comptes. `user_id` est l'identité stable ; l'adresse e-mail n'est
+        -- qu'un attribut, unique **dans une organisation** et non globalement.
+        -- Voir `docs/architecture/multi-tenant-user-identity.md`.
         CREATE TABLE IF NOT EXISTS users(
-            email TEXT PRIMARY KEY,
+            user_id TEXT PRIMARY KEY,          -- UUID Nova, attribué une fois
+            organization_id TEXT NOT NULL,
+            email TEXT NOT NULL,               -- tel que saisi : casse d'affichage
+            normalized_email TEXT NOT NULL,    -- forme de recherche et d'unicité
             role TEXT DEFAULT 'student',       -- student | teacher | staff | partner
+            security_role TEXT NOT NULL DEFAULT 'member',
             cohort TEXT DEFAULT '',            -- ex. "Promo 2028"
             note TEXT DEFAULT '',              -- note libre de l'admin
             disabled INTEGER DEFAULT 0,        -- compte suspendu
+            status TEXT DEFAULT 'active',
+            identity_provider TEXT,
+            external_subject TEXT,
+            external_tenant_id TEXT,
             created_at REAL,
+            updated_at REAL,
             last_seen REAL
         );
+        -- L'index unique (organization_id, normalized_email) est créé par
+        -- `migrate_schema` : sur une base antérieure, les deux colonnes
+        -- n'existent pas encore à cet instant.
         -- compteurs d'usage UNIQUEMENT (jamais de contenu audio/texte)
         CREATE TABLE IF NOT EXISTS usage(
             email TEXT, day TEXT,
@@ -389,6 +410,267 @@ def init_db():
         """)
         migrate_schema(conn)
 
+def normalize_email(value: str) -> str:
+    """Forme canonique d'une adresse, pour la recherche et l'unicité.
+
+    **Espaces retirés, casse abaissée. Rien d'autre.**
+
+    La tentation serait d'aller plus loin : ignorer les points de Gmail, couper
+    au `+alias`, appliquer les règles de tel ou tel fournisseur. Ce serait une
+    faute. Ces règles sont propres à un opérateur, changent sans préavis, et ne
+    valent pas pour un domaine d'entreprise : `prenom.nom@exemple.fr` et
+    `prenomnom@exemple.fr` y désignent deux personnes différentes. Normaliser
+    au-delà du sûr reviendrait à fusionner des comptes distincts.
+
+    `lower()` plutôt que `casefold()` : ce dernier applique des replis
+    linguistiques (`ß` → `ss`) qui, sur une adresse, changent le destinataire.
+    """
+    return (value or "").strip().lower()
+
+
+class UserIdentityCollision(RuntimeError):
+    """Deux comptes se disputent la même adresse dans la même organisation.
+
+    La migration s'arrête. Choisir un gagnant reviendrait à décider, à la place
+    de l'exploitant, quel compte perd son historique — et personne ne s'en
+    apercevrait avant longtemps.
+    """
+
+
+def _email_fingerprint(value: str) -> str:
+    """Empreinte courte pour un diagnostic de migration.
+
+    Un message d'erreur qui listerait des adresses en clair les recopierait dans
+    les journaux d'exploitation. L'empreinte suffit à retrouver la ligne en base.
+    """
+    return hashlib.sha256(normalize_email(value).encode()).hexdigest()[:12]
+
+
+def migrate_users_to_tenant_scoped_identity(conn, organization_id: str):
+    """Fait de `user_id` la clé primaire, et de l'e-mail un attribut de tenant.
+
+    ## Ce que corrige cette migration
+
+    `users.email` était la clé primaire **globale**. Deux organisations ne
+    pouvaient donc pas compter chacune une `alex@example.com` — alors que ce
+    sont deux personnes, sans le moindre rapport. Tant qu'une instance servait
+    une organisation, le défaut restait invisible ; il rendait simplement tout
+    Control Plane multi-tenant impossible.
+
+    ## Propriétés
+
+    - **idempotente** : au second démarrage, elle constate et sort ;
+    - **fail-closed** : toute collision arrête la migration, rien n'est écrit ;
+    - **sans perte** : chaque ligne est recopiée, aucun `user_id` existant n'est
+      régénéré, aucune session n'est invalidée.
+    """
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(users)")}
+    if not columns:
+        return
+    if "normalized_email" in columns:
+        # Déjà migrée. On maintient seulement l'invariant sur d'éventuelles
+        # lignes écrites par du code plus ancien.
+        conn.execute(
+            "UPDATE users SET normalized_email=lower(trim(email)) "
+            "WHERE normalized_email IS NULL OR normalized_email=''"
+        )
+        return
+
+    rows = [dict(row) for row in conn.execute("SELECT * FROM users").fetchall()]
+
+    # ── Contrôles préalables, avant toute écriture ──────────────────────
+    seen_keys: dict[tuple[str, str], str] = {}
+    seen_user_ids: set[str] = set()
+    for row in rows:
+        email = (row.get("email") or "").strip()
+        if not email:
+            raise UserIdentityCollision(
+                "migration impossible : un compte sans adresse e-mail existe "
+                f"(user_id={row.get('user_id') or 'absent'})"
+            )
+        org = (row.get("organization_id") or "").strip() or organization_id
+        key = (org, normalize_email(email))
+        if key in seen_keys:
+            raise UserIdentityCollision(
+                "migration impossible : deux comptes partagent la même adresse "
+                f"dans la même organisation (empreinte={_email_fingerprint(email)}). "
+                "Fusionnez ou renommez l'un des deux avant de redémarrer."
+            )
+        seen_keys[key] = email
+        user_id = (row.get("user_id") or "").strip()
+        if user_id:
+            if user_id in seen_user_ids:
+                raise UserIdentityCollision(
+                    f"migration impossible : user_id dupliqué ({user_id})"
+                )
+            seen_user_ids.add(user_id)
+
+    # ── Reconstruction ─────────────────────────────────────────────────
+    #
+    # SQLite ne sait pas changer une clé primaire : il faut reconstruire. La
+    # table de correspondance e-mail → user_id est calculée d'abord, car les
+    # tables qui référencent les comptes en ont besoin après la bascule.
+    now = time.time()
+    mapping: dict[str, str] = {}
+    prepared = []
+    for row in rows:
+        email = (row.get("email") or "").strip()
+        # Un `user_id` existant n'est **jamais** régénéré : c'est l'identité
+        # d'une personne, y compris de celle validée en Phase 16.
+        user_id = (row.get("user_id") or "").strip() or str(uuid.uuid4())
+        mapping[normalize_email(email)] = user_id
+        prepared.append((
+            user_id,
+            (row.get("organization_id") or "").strip() or organization_id,
+            email,
+            normalize_email(email),
+            row.get("role") or "student",
+            row.get("security_role") or SECURITY_ROLE_MEMBER,
+            row.get("cohort") or "",
+            row.get("note") or "",
+            row.get("disabled") or 0,
+            row.get("status") or "active",
+            row.get("identity_provider"),
+            row.get("external_subject"),
+            row.get("external_tenant_id"),
+            row.get("created_at") or now,
+            now,
+            row.get("last_seen"),
+        ))
+
+    conn.execute("DROP TABLE IF EXISTS users_migrated")
+    conn.execute("""
+        CREATE TABLE users_migrated(
+            user_id TEXT PRIMARY KEY,
+            organization_id TEXT NOT NULL,
+            email TEXT NOT NULL,
+            normalized_email TEXT NOT NULL,
+            role TEXT DEFAULT 'student',
+            security_role TEXT NOT NULL DEFAULT 'member',
+            cohort TEXT DEFAULT '',
+            note TEXT DEFAULT '',
+            disabled INTEGER DEFAULT 0,
+            status TEXT DEFAULT 'active',
+            identity_provider TEXT,
+            external_subject TEXT,
+            external_tenant_id TEXT,
+            created_at REAL,
+            updated_at REAL,
+            last_seen REAL
+        )
+    """)
+    conn.executemany(
+        "INSERT INTO users_migrated VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", prepared
+    )
+
+    migrated = conn.execute("SELECT COUNT(*) c FROM users_migrated").fetchone()["c"]
+    if migrated != len(rows):
+        # Ceinture et bretelles : la contrainte d'unicité aurait déjà levé.
+        raise UserIdentityCollision(
+            f"migration incohérente : {len(rows)} comptes lus, {migrated} écrits"
+        )
+
+    conn.execute("DROP TABLE users")
+    conn.execute("ALTER TABLE users_migrated RENAME TO users")
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_org_email "
+        "ON users(organization_id, normalized_email)"
+    )
+    link_user_references(conn, mapping, organization_id)
+    # ASCII strictement : la console Windows par défaut est en cp1252, et une
+    # flèche « → » y fait lever `UnicodeEncodeError` — au milieu d'une
+    # migration, donc au pire moment possible.
+    print(f"[migration] users to user_id accounts={len(rows)}")
+
+
+def backfill_user_references(conn, organization_id: str):
+    """Rattache à un compte toute ligne restée sans `user_id`.
+
+    Appelée à chaque démarrage, et idempotente : elle ne touche que les lignes
+    dont le `user_id` est absent. Sans elle, une session héritée — écrite avant
+    que les jetons portent une identité — deviendrait inutilisable, puisque le
+    contrôle d'authentification joint désormais par `user_id` et non par
+    adresse. Une session valide ne doit pas se perdre dans une migration.
+    """
+    tables = ("auth_codes", "tokens", "usage", "personal_dictionary",
+              "snippets", "formatting_rules", "federated_identities")
+    for table in tables:
+        existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if "email" not in existing:
+            continue
+        # Les colonnes sont garanties ici, et pas seulement lors de la
+        # migration : une base créée de zéro doit avoir exactement la même forme
+        # qu'une base migrée, sans quoi les deux divergeraient en silence.
+        if "user_id" not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN user_id TEXT")
+            existing.add("user_id")
+        if "organization_id" not in existing and table != "federated_identities":
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN organization_id TEXT")
+            existing.add("organization_id")
+        conn.execute(
+            f"CREATE INDEX IF NOT EXISTS idx_{table}_user ON {table}(user_id)"
+        )
+        conn.execute(
+            f"UPDATE {table} SET user_id=("
+            f"  SELECT u.user_id FROM users u"
+            f"  WHERE u.normalized_email=lower(trim({table}.email))"
+            f"    AND u.organization_id=?"
+            f") WHERE user_id IS NULL OR user_id=''",
+            (organization_id,),
+        )
+        if "organization_id" in existing and table != "federated_identities":
+            conn.execute(
+                f"UPDATE {table} SET organization_id=? "
+                f"WHERE organization_id IS NULL OR organization_id=''",
+                (organization_id,),
+            )
+
+
+def link_user_references(conn, mapping: dict[str, str], organization_id: str):
+    """Rattache les tables liées à `user_id` plutôt qu'à une adresse.
+
+    L'adresse reste présente là où elle sert de repère lisible, mais elle cesse
+    d'être le lien d'intégrité : une personne qui change d'adresse ne doit pas
+    perdre ses sessions, ses appareils ni son dictionnaire.
+
+    Les lignes orphelines — un e-mail sans compte — gardent un `user_id` vide
+    plutôt que d'être supprimées : détruire des données pendant une migration
+    est le meilleur moyen de perdre ce qu'on ne comprenait pas encore.
+    """
+    linked = {
+        "auth_codes": "email",
+        "tokens": "email",
+        "usage": "email",
+        "personal_dictionary": "email",
+        "snippets": "email",
+        "formatting_rules": "email",
+        "federated_identities": "email",
+    }
+    for table, email_column in linked.items():
+        existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if not existing:
+            continue
+        if "user_id" not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN user_id TEXT")
+        if "organization_id" not in existing and table != "federated_identities":
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN organization_id TEXT")
+        for normalized, user_id in mapping.items():
+            conn.execute(
+                f"UPDATE {table} SET user_id=? WHERE lower(trim({email_column}))=? "
+                f"AND (user_id IS NULL OR user_id='')",
+                (user_id, normalized),
+            )
+        if table != "federated_identities":
+            conn.execute(
+                f"UPDATE {table} SET organization_id=? "
+                f"WHERE organization_id IS NULL OR organization_id=''",
+                (organization_id,),
+            )
+        conn.execute(
+            f"CREATE INDEX IF NOT EXISTS idx_{table}_user ON {table}(user_id)"
+        )
+
+
 def migrate_schema(conn):
     """Migrations additives uniquement : aucune colonne n'est supprimée, aucun
     compte existant n'est perdu, et une base d'avant cette phase reste lisible
@@ -504,6 +786,13 @@ def migrate_schema(conn):
     )
     # `status` suit `disabled` pour les comptes déjà suspendus.
     conn.execute("UPDATE users SET status='disabled' WHERE disabled=1 AND status='active'")
+
+    migrate_users_to_tenant_scoped_identity(conn, organization_id)
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_org_email "
+        "ON users(organization_id, normalized_email)"
+    )
+    backfill_user_references(conn, organization_id)
 
     bootstrap_provider_configs(conn, organization_id)
     bootstrap_discovery(conn, organization_id)
@@ -647,6 +936,13 @@ def migrate_tokens_to_hashes(conn):
     plus de secret : elle reçoit `h:<empreinte>`, valeur unique qui préserve la
     clé primaire tout en étant inutilisable pour s'authentifier.
     """
+    # Un jeton hérité ne porte pas encore de `user_id` : le lui donner fait
+    # partie de sa migration. Le contrôle d'authentification joint désormais par
+    # identité, et une session valide ne doit pas se perdre en chemin.
+    user_columns = {row["name"] for row in conn.execute("PRAGMA table_info(users)")}
+    if {"user_id", "normalized_email"} <= user_columns:
+        backfill_user_references(conn, nova_organization_id())
+
     pending = conn.execute(
         "SELECT token FROM tokens WHERE token_hash IS NULL AND token IS NOT NULL"
     ).fetchall()
@@ -1376,18 +1672,89 @@ if LEGACY_ADMIN_TOKEN_ENABLED and NOVA_ENV != "development":
 print(f"[admin] server_mode={NOVA_SERVER_MODE} legacy_admin_token={LEGACY_ADMIN_TOKEN_ENABLED}")
 
 
-def touch_user(email: str):
-    """Crée le profil s'il n'existe pas + met à jour last_seen."""
+# ────────────────────── Accès aux comptes ─────────────────────────────────
+#
+# Un seul endroit sait comment on retrouve, crée et modifie un compte. Le SQL
+# dispersé était tenable tant que l'e-mail était une clé globale ; il ne l'est
+# plus : chaque requête doit désormais porter son organisation, et un oubli
+# passerait inaperçu jusqu'au jour où deux tenants partagent une base.
+
+
+def user_by_id(conn, user_id: str):
+    """Le compte, par son identité stable."""
+    return conn.execute("SELECT * FROM users WHERE user_id=?", (user_id,)).fetchone()
+
+
+def user_by_email(conn, organization_id: str, email: str):
+    """Le compte d'une organisation, par son adresse.
+
+    L'organisation est un **paramètre obligatoire**, sans valeur par défaut.
+    Une signature qui l'aurait rendue facultative aurait produit exactement le
+    défaut que cette phase corrige.
+    """
+    if not organization_id:
+        raise ValueError("user_by_email exige une organisation")
+    return conn.execute(
+        "SELECT * FROM users WHERE organization_id=? AND normalized_email=?",
+        (organization_id, normalize_email(email)),
+    ).fetchone()
+
+
+def create_user(conn, organization_id: str, email: str, **fields):
+    """Crée un compte, et lui attribue son identité une fois pour toutes."""
+    now = time.time()
+    user_id = str(uuid.uuid4())
+    conn.execute(
+        "INSERT INTO users(user_id, organization_id, email, normalized_email, "
+        "role, security_role, cohort, note, disabled, status, created_at, "
+        "updated_at, last_seen) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            user_id, organization_id, email.strip(), normalize_email(email),
+            fields.get("role", "student"),
+            fields.get("security_role", SECURITY_ROLE_MEMBER),
+            fields.get("cohort", ""), fields.get("note", ""),
+            1 if fields.get("disabled") else 0,
+            fields.get("status", "active"), now, now, fields.get("last_seen"),
+        ),
+    )
+    return user_id
+
+
+def update_user_email(conn, user_id: str, email: str):
+    """Change l'adresse d'un compte **sans toucher à son identité**.
+
+    C'est la propriété que la clé primaire globale rendait impossible : le
+    `user_id` ne bouge pas, donc les sessions, les identités fédérées, les
+    appareils, le dictionnaire et le journal d'audit restent rattachés à la même
+    personne. L'interface de changement d'adresse n'existe pas encore ; le
+    modèle, lui, le permet.
+    """
+    conn.execute(
+        "UPDATE users SET email=?, normalized_email=?, updated_at=? WHERE user_id=?",
+        (email.strip(), normalize_email(email), time.time(), user_id),
+    )
+
+
+def touch_user(email: str, organization_id: str | None = None):
+    """Crée le profil s'il n'existe pas, et met à jour `last_seen`.
+
+    `INSERT OR IGNORE` ne convient plus : il s'appuyait sur l'e-mail comme clé
+    primaire globale. Depuis que l'unicité est celle du couple
+    (organisation, adresse), la même instruction créerait un compte de plus à
+    chaque connexion.
+    """
     # Résolu avant d'ouvrir la connexion : `nova_organization_id()` lit la base,
     # et l'imbriquer dans une transaction en écriture exposerait à un verrou.
-    organization_id = nova_organization_id()
+    organization_id = organization_id or nova_organization_id()
     with db() as conn:
+        existing = user_by_email(conn, organization_id, email)
+        if existing is None:
+            create_user(conn, organization_id, email, last_seen=time.time())
+            return
         conn.execute(
-            "INSERT OR IGNORE INTO users(email, created_at, user_id, organization_id) "
-            "VALUES (?,?,?,?)",
-            (email, time.time(), str(uuid.uuid4()), organization_id),
+            "UPDATE users SET last_seen=? WHERE user_id=?",
+            (time.time(), existing["user_id"]),
         )
-        conn.execute("UPDATE users SET last_seen=? WHERE email=?", (time.time(), email))
 
 
 # ---------------------------------------------------------------- identité
@@ -1640,47 +2007,102 @@ def current_user(authorization: str = Header(default="")) -> str:
     # La base ne contient que des empreintes : on compare des empreintes.
     token_hash = hash_token(token)
     with db() as conn:
-        row = conn.execute(
-            """SELECT t.email, t.expires_at, u.disabled, u.status FROM tokens t
-               LEFT JOIN users u ON u.email = t.email
-               WHERE t.token_hash=? AND t.active=1""", (token_hash,)
+        # Le jeton porte son identité et son organisation : il mène directement
+        # au compte, sans passer par une recherche d'adresse qui, en
+        # multi-tenant, pourrait tomber sur l'homonyme d'un autre tenant.
+        session = conn.execute(
+            "SELECT email, user_id, organization_id, expires_at FROM tokens "
+            "WHERE token_hash=? AND active=1", (token_hash,)
         ).fetchone()
-    if not row:
-        raise HTTPException(401, "Token invalide ou révoqué")
-    if row["disabled"] or (row["status"] or "active") != "active":
-        raise HTTPException(403, "Compte suspendu — contactez votre administrateur")
-    if row["expires_at"] and row["expires_at"] < time.time():
+        if not session:
+            raise HTTPException(401, "Token invalide ou révoqué")
+        organization_id = session["organization_id"] or nova_organization_id()
+        account = (
+            user_by_id(conn, session["user_id"]) if session["user_id"]
+            # Jeton antérieur à cette phase, dont le compte n'a jamais été
+            # créé : la recherche reste **cadrée par l'organisation du jeton**.
+            else user_by_email(conn, organization_id, session["email"])
+        )
+    if account is not None:
+        if account["disabled"] or (account["status"] or "active") != "active":
+            raise HTTPException(403, "Compte suspendu — contactez votre administrateur")
+    if session["expires_at"] and session["expires_at"] < time.time():
         with db() as conn:
             conn.execute("UPDATE tokens SET active=0 WHERE token_hash=?", (token_hash,))
         raise HTTPException(401, "Session expiree")
-    touch_user(row["email"])
-    return row["email"]
+    email = account["email"] if account is not None else session["email"]
+    # Le profil se crée à la volée s'il n'existe pas encore : comportement
+    # historique, conservé.
+    touch_user(email, organization_id)
+    return email
 
-def issue_token(email: str, machine: str) -> dict:
-    """Create a time-limited Nova session for a verified user."""
-    email = email.lower()
-    now = time.time()
+def current_account(authorization: str = Header(default="")):
+    """Le **compte** que désigne le jeton, et non seulement son adresse.
+
+    `current_user` renvoie une adresse — c'est ce qu'attendent quarante routes,
+    et le contrat ne change pas. Mais une adresse ne suffit plus à retrouver
+    quelqu'un : il faut savoir dans quelle organisation chercher. Les routes qui
+    ont besoin du compte lui-même passent donc par ici, où le jeton mène
+    directement à son `user_id`.
+    """
+    if not REQUIRE_AUTH:
+        return None
+    email = current_user(authorization)
+    token_hash = hash_token(authorization.removeprefix("Bearer ").strip())
     with db() as conn:
+        session = conn.execute(
+            "SELECT user_id, organization_id FROM tokens WHERE token_hash=? AND active=1",
+            (token_hash,),
+        ).fetchone()
+        if session and session["user_id"]:
+            account = user_by_id(conn, session["user_id"])
+            if account is not None:
+                return account
+        return user_by_email(
+            conn,
+            (session["organization_id"] if session else None) or nova_organization_id(),
+            email,
+        )
+
+
+def issue_token(email: str, machine: str, organization_id: str | None = None) -> dict:
+    """Ouvre une session Nova pour un utilisateur vérifié.
+
+    La session est rattachée à un `user_id`, pas à une adresse : changer
+    d'adresse ne doit pas déconnecter quelqu'un, et l'homonyme d'une autre
+    organisation ne doit jamais partager ses compteurs d'appareils.
+    """
+    email = email.lower()
+    organization_id = organization_id or nova_organization_id()
+    now = time.time()
+    # Le compte doit exister avant la session : c'est lui qui porte l'identité.
+    touch_user(email, organization_id)
+    with db() as conn:
+        account = user_by_email(conn, organization_id, email)
+        user_id = account["user_id"]
         # Reconnecting the same workstation replaces its previous session
         # instead of consuming another device slot.
         conn.execute(
-            "UPDATE tokens SET active=0 WHERE email=? AND machine=?",
-            (email, machine),
+            "UPDATE tokens SET active=0 WHERE user_id=? AND machine=?",
+            (user_id, machine),
         )
         already_active = conn.execute(
-            "SELECT 1 FROM tokens WHERE email=? AND active=1 AND "
+            "SELECT 1 FROM tokens WHERE user_id=? AND active=1 AND "
             "(expires_at IS NULL OR expires_at>?) LIMIT 1",
-            (email, now),
+            (user_id, now),
         ).fetchone()
+        # Les sièges se comptent par personne — donc par `user_id`, et dans
+        # l'organisation concernée.
         seats = conn.execute(
-            "SELECT COUNT(DISTINCT email) c FROM tokens WHERE active=1 AND "
-            "(expires_at IS NULL OR expires_at>?)", (now,)
+            "SELECT COUNT(DISTINCT user_id) c FROM tokens WHERE active=1 AND "
+            "organization_id=? AND (expires_at IS NULL OR expires_at>?)",
+            (organization_id, now),
         ).fetchone()["c"]
         if not already_active and seats >= MAX_SEATS:
             raise HTTPException(403, "Nombre maximal d'utilisateurs atteint")
         machines = conn.execute(
-            "SELECT COUNT(*) c FROM tokens WHERE email=? AND active=1 AND "
-            "(expires_at IS NULL OR expires_at>?)", (email, now)
+            "SELECT COUNT(*) c FROM tokens WHERE user_id=? AND active=1 AND "
+            "(expires_at IS NULL OR expires_at>?)", (user_id, now)
         ).fetchone()["c"]
         if machines >= MAX_MACHINES_PER_EMAIL:
             raise HTTPException(403, "Nombre maximal d'appareils atteint")
@@ -1690,11 +2112,11 @@ def issue_token(email: str, machine: str) -> dict:
         digest = hash_token(token)
         expires_at = now + TOKEN_TTL_SECONDS
         conn.execute(
-            "INSERT INTO tokens(token,token_hash,email,machine,active,created_at,expires_at) "
-            "VALUES (?,?,?,?,?,?,?)",
-            (f"{TOKEN_HASH_MARKER}{digest}", digest, email, machine, 1, now, expires_at),
+            "INSERT INTO tokens(token,token_hash,email,user_id,organization_id,"
+            "machine,active,created_at,expires_at) VALUES (?,?,?,?,?,?,?,?,?)",
+            (f"{TOKEN_HASH_MARKER}{digest}", digest, email, user_id,
+             organization_id, machine, 1, now, expires_at),
         )
-    touch_user(email)
     return {"token": token, "expires_in": TOKEN_TTL_SECONDS}
 
 def authenticated_token(authorization: str) -> str:
@@ -1901,14 +2323,15 @@ def set_security_role(email: str, role: str, organization_id: str | None = None)
     email = email.strip().lower()
     organization_id = organization_id or nova_organization_id()
     with db() as conn:
-        row = conn.execute(
-            "SELECT user_id, organization_id FROM users WHERE email=?", (email,)
-        ).fetchone()
+        # Cadré à l'organisation : « le premier alex@example.com trouvé » n'est
+        # pas une personne, c'est une coïncidence.
+        row = user_by_email(conn, organization_id, email)
         if row is None:
             raise LookupError(f"aucun compte : {email}")
-        if (row["organization_id"] or organization_id) != organization_id:
-            raise LookupError("ce compte appartient à une autre organisation")
-        conn.execute("UPDATE users SET security_role=? WHERE email=?", (role, email))
+        conn.execute(
+            "UPDATE users SET security_role=?, updated_at=? WHERE user_id=?",
+            (role, time.time(), row["user_id"]),
+        )
     if role not in ADMIN_SECURITY_ROLES:
         revoke_admin_sessions_for_user(row["user_id"], reason="role_revoked")
     return {"email": email, "security_role": role, "user_id": row["user_id"]}
@@ -2199,14 +2622,16 @@ def auth_request(body: RequestCode):
     if domain not in ALLOWED_DOMAINS:
         return {"sent": True}   # réponse identique : ne pas révéler les domaines
     with db() as conn:
-        user = conn.execute("SELECT disabled FROM users WHERE email=?", (email,)).fetchone()
+        user = user_by_email(conn, nova_organization_id(), email)
     if user and user["disabled"]:
         return {"sent": True}   # compte suspendu : on ne dit rien
     code = f"{random.randint(0, 999999):06d}"
     with db() as conn:
         conn.execute("DELETE FROM auth_codes WHERE email=?", (email,))
-        conn.execute("INSERT INTO auth_codes VALUES (?,?,?,0)",
-                     (email, code, time.time() + CODE_TTL_SECONDS))
+        conn.execute("INSERT INTO auth_codes(email, code, expires_at, attempts, "
+                     "organization_id) VALUES (?,?,?,0,?)",
+                     (email, code, time.time() + CODE_TTL_SECONDS,
+                      nova_organization_id()))
     try:
         send_code_email(email, code)
     except Exception as e:
@@ -2237,11 +2662,11 @@ def auth_logout(
 ):
     token = authenticated_token(authorization)
     with db() as conn:
+        row = user_by_email(conn, nova_organization_id(), user)
         conn.execute(
-            "UPDATE tokens SET active=0 WHERE token_hash=? AND email=?",
-            (hash_token(token), user),
+            "UPDATE tokens SET active=0 WHERE token_hash=? AND user_id=?",
+            (hash_token(token), row["user_id"] if row else None),
         )
-        row = conn.execute("SELECT user_id FROM users WHERE email=?", (user,)).fetchone()
     # Une personne qui se déconnecte de Nova ne devrait pas laisser derrière elle
     # une session privilégiée ouverte. La session d'administration est dérivée de
     # la session utilisateur : elle en suit le sort.
@@ -2965,10 +3390,10 @@ def resolve_member_for_identity(
                 raise auth_error(403, "ORGANIZATION_MISMATCH")
             return existing["email"]
 
-        user = conn.execute(
-            "SELECT email, organization_id, disabled, status FROM users WHERE email=?",
-            (email,),
-        ).fetchone()
+        # Recherche **dans l'organisation du flux**. Chercher globalement
+        # rattacherait une identité fédérée au compte homonyme d'un autre
+        # tenant : deux personnes sans rapport, fusionnées en silence.
+        user = user_by_email(conn, organization_id, email)
 
         if user:
             if user["organization_id"] and user["organization_id"] != organization_id:
@@ -2978,18 +3403,23 @@ def resolve_member_for_identity(
             # identité Google peut coexister avec une identité Microsoft.
             conflicting = conn.execute(
                 "SELECT external_subject FROM federated_identities "
-                "WHERE provider=? AND external_issuer=? AND email=? "
-                "AND external_subject<>?",
-                (provider, external_issuer, email, external_subject),
+                "WHERE provider=? AND external_issuer=? AND organization_id=? "
+                "AND lower(trim(email))=? AND external_subject<>?",
+                (provider, external_issuer, organization_id,
+                 normalize_email(email), external_subject),
             ).fetchone()
             if conflicting:
                 raise auth_error(409, "IDENTITY_CONFLICT")
             return user["email"]
 
     # Nouveau membre : même politique d'admission que le code e-mail.
+    #
+    # Le compte naît **dans l'organisation du flux**. Qu'une autre organisation
+    # compte déjà quelqu'un à cette adresse n'y change rien : ce sont deux
+    # personnes, et c'est précisément ce que le modèle multi-tenant permet.
     if email.split("@")[-1] not in ALLOWED_DOMAINS:
         raise auth_error(403, "MEMBERSHIP_NOT_FOUND")
-    touch_user(email)
+    touch_user(email, organization_id)
     return email
 
 
@@ -3223,13 +3653,13 @@ async def exchange_sso_code(provider: str, body: SsoExchangeRequest) -> dict:
     )
 
     with db() as conn:
-        account = conn.execute(
-            "SELECT disabled, status FROM users WHERE email=?", (resolved_email,)
-        ).fetchone()
+        account = user_by_email(conn, organization["id"], resolved_email)
     if account and (account["disabled"] or (account["status"] or "active") != "active"):
         raise auth_error(403, "ACCOUNT_DISABLED")
 
-    session = issue_token(resolved_email, flow["machine"] or "poste inconnu")
+    session = issue_token(
+        resolved_email, flow["machine"] or "poste inconnu", organization["id"]
+    )
     # La tentative n'est marquée consommée qu'une fois la session émise : avant
     # cela, elle est « en cours d'échange », donc déjà inutilisable par un autre
     # worker, mais l'état dit ce qui s'est réellement passé.
@@ -3627,7 +4057,7 @@ def open_admin_session(user: str = Depends(current_user)):
     lecture de `auth_time` — est documenté comme dette.
     """
     with db() as conn:
-        row = conn.execute("SELECT * FROM users WHERE email=?", (user,)).fetchone()
+        row = user_by_email(conn, nova_organization_id(), user)
     if row is None:
         raise auth_error(403, "ADMIN_ROLE_REQUIRED")
     role = security_role_for(row)
@@ -3751,7 +4181,7 @@ def control_read_organization(
 
 # --- profil de l'utilisateur connecté (pour l'app)
 @app.get("/api/me")
-def me(user: str = Depends(current_user)):
+def me(user: str = Depends(current_user), u=Depends(current_account)):
     """Profil du membre connecté.
 
     **Strictement additif.** Les trois champs historiques `email`, `role` et
@@ -3762,15 +4192,17 @@ def me(user: str = Depends(current_user)):
     Les données structurées vivent donc dans des champs nouveaux, et la forme
     du contrat est annoncée par `contract_version`.
     """
-    organization_id = nova_organization_id()
+    if u is None:
+        return {"email": user}
+    # L'organisation vient de la ligne du membre — jamais d'une entrée client,
+    # et plus de l'organisation active : en multi-tenant, ce ne serait pas
+    # forcément la sienne.
+    organization_id = u["organization_id"] or nova_organization_id()
     with db() as conn:
-        u = conn.execute("SELECT * FROM users WHERE email=?", (user,)).fetchone()
         organization = conn.execute(
             "SELECT id, display_name, org_type FROM organizations WHERE id=?",
             (organization_id,),
         ).fetchone()
-    if not u:
-        return {"email": user}
 
     capabilities = public_campus_config()["capabilities"]
     return {
@@ -4164,11 +4596,12 @@ def admin_user_detail(
     """Profil complet : infos + appareils + historique d'usage (30 jours, compteurs)."""
     email = email.lower()
     with db() as conn:
-        u = conn.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
+        u = user_by_email(conn, nova_organization_id(), email)
         if not u:
             raise HTTPException(404, "Utilisateur inconnu")
         machines = conn.execute(
-            "SELECT machine, active, created_at FROM tokens WHERE email=?", (email,)
+            "SELECT machine, active, created_at FROM tokens WHERE user_id=?",
+            (u["user_id"],)
         ).fetchall()
         history = conn.execute(
             "SELECT day, transcriptions, reformulations, audio_seconds FROM usage "
@@ -4204,10 +4637,18 @@ def admin_user_update(
         fields.append("disabled=?"); vals.append(1 if body.disabled else 0)
     if not fields:
         return {"updated": False}
+    organization_id = nova_organization_id()
     with db() as conn:
-        conn.execute("INSERT OR IGNORE INTO users(email, created_at) VALUES (?,?)",
-                     (email, time.time()))
-        conn.execute(f"UPDATE users SET {', '.join(fields)} WHERE email=?", (*vals, email))
+        existing = user_by_email(conn, organization_id, email)
+        if existing is None:
+            # Créer un compte depuis une route d'administration reste possible,
+            # mais il naît désormais avec une identité, pas avec une adresse.
+            create_user(conn, organization_id, email)
+            existing = user_by_email(conn, organization_id, email)
+        conn.execute(
+            f"UPDATE users SET {', '.join(fields)}, updated_at=? WHERE user_id=?",
+            (*vals, time.time(), existing["user_id"]),
+        )
     record_admin_action(
         principal, "user.update", target_type="user", target_id=email,
         metadata={"fields": sorted(f.rstrip("=?") for f in fields)},
@@ -4221,8 +4662,13 @@ def admin_revoke_machines(
 ):
     """Déconnecte l'utilisateur de tous ses appareils (il devra refaire un code email)."""
     with db() as conn:
-        n = conn.execute("UPDATE tokens SET active=0 WHERE email=?",
-                         (email.lower(),)).rowcount
+        existing = user_by_email(conn, nova_organization_id(), email)
+        if existing is None:
+            raise HTTPException(404, "Utilisateur inconnu")
+        # Par `user_id` : révoquer les appareils d'une personne ne doit jamais
+        # atteindre son homonyme dans une autre organisation.
+        n = conn.execute("UPDATE tokens SET active=0 WHERE user_id=?",
+                         (existing["user_id"],)).rowcount
     record_admin_action(
         principal, "user.revoke_machines", target_type="user", target_id=email.lower())
     return {"revoked_tokens": n}
@@ -4234,11 +4680,21 @@ def admin_user_delete(
 ):
     """Supprime complètement l'utilisateur (profil, tokens, compteurs)."""
     email = email.lower()
+    organization_id = nova_organization_id()
     with db() as conn:
-        conn.execute("DELETE FROM tokens WHERE email=?", (email,))
-        conn.execute("DELETE FROM users WHERE email=?", (email,))
-        conn.execute("DELETE FROM usage WHERE email=?", (email,))
-        conn.execute("DELETE FROM auth_codes WHERE email=?", (email,))
+        # Jamais `DELETE ... WHERE email=?` seul : cela effacerait aussi
+        # l'homonyme d'une autre organisation.
+        existing = user_by_email(conn, organization_id, email)
+        if existing is None:
+            raise HTTPException(404, "Utilisateur inconnu")
+        user_id = existing["user_id"]
+        conn.execute("DELETE FROM tokens WHERE user_id=?", (user_id,))
+        conn.execute("DELETE FROM users WHERE user_id=?", (user_id,))
+        conn.execute("DELETE FROM usage WHERE user_id=?", (user_id,))
+        conn.execute(
+            "DELETE FROM auth_codes WHERE lower(trim(email))=? AND organization_id=?",
+            (normalize_email(email), organization_id),
+        )
     record_admin_action(principal, "user.delete", target_type="user", target_id=email)
     return {"deleted": email}
 
