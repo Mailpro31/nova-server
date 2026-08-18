@@ -3293,6 +3293,11 @@ class SsoFlowStoreTests(unittest.TestCase):
         self.assertEqual(
             set(row) - {"flow_id_hash", "provider_type", "provider_config_id",
                         "organization_id", "nonce_hash", "redirect_uri", "machine",
+                        # Le but et l'identité attendue d'un step-up : ni l'un ni
+                        # l'autre n'est un secret, et les deux sont nécessaires
+                        # pour qu'un retour ne serve pas à autre chose que ce
+                        # qui a été demandé.
+                        "purpose", "expected_user_id",
                         "status", "created_at", "expires_at", "exchanging_at",
                         "consumed_at"},
             set())
@@ -3910,20 +3915,72 @@ class OrganizationDiscoveryTests(unittest.TestCase):
 
 
 class AdminTestCase(unittest.TestCase):
-    """Socle commun : un compte, une session Nova, un rôle attribué."""
+    """Socle commun : un compte, une session Nova, un rôle, un step-up réel.
+
+    Depuis la Phase 24, obtenir une session d'administration passe par une
+    réauthentification auprès de l'IdP. Les tests ne la contournent pas : ils
+    la jouent, avec un fournisseur Microsoft simulé dont les jetons sont signés
+    localement. Un raccourci ici rendrait verts des tests qui n'exercent plus le
+    chemin réel.
+    """
+
+    TENANT = "33333333-3333-4333-8333-333333333333"
+    CLIENT_ID = "cccccccc-dddd-4eee-8fff-999999999999"
+    NONCE = "nonce-step-up-0123456789"
+    REDIRECT = "http://127.0.0.1:53400/callback"
 
     @classmethod
     def setUpClass(cls):
         cls.client = TestClient(main.app)
+        cls.private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 
     def setUp(self):
         with main.db() as conn:
-            conn.execute("DELETE FROM admin_sessions")
-            conn.execute("DELETE FROM admin_audit_log")
+            # Comptes et sessions compris : un test qui suspend un compte ne
+            # doit pas empêcher le suivant de se connecter.
+            for table in ("admin_sessions", "admin_audit_log",
+                          "federated_identities", "users", "tokens", "auth_codes"):
+                conn.execute(f"DELETE FROM {table}")
             conn.execute(
-                "UPDATE organizations SET status='active' WHERE id=?",
-                (main.nova_organization_id(),),
+                "UPDATE organizations SET status='active', entra_tenant_id=? WHERE id=?",
+                (self.TENANT, main.nova_organization_id()),
             )
+        clear_sso_flows()
+        clear_provider_configs()
+        main.JWKS_CACHE.clear()
+        self.config_id = ensure_provider_config(
+            "microsoft_entra", display_name="Microsoft", entra_tenant_id=self.TENANT)
+        self.seed_jwks()
+
+    # -- IdP simulé --------------------------------------------------------
+
+    def seed_jwks(self, kid="step-up-key"):
+        jwk = json.loads(
+            jwt.algorithms.RSAAlgorithm.to_jwk(self.private_key.public_key()))
+        jwk.update({"kid": kid, "use": "sig", "alg": "RS256"})
+        uri = main.ADAPTERS["microsoft_entra"]["jwks_uri"]({"tid": self.TENANT})
+        main.JWKS_CACHE[uri] = {"jwks": {"keys": [jwk]}, "fetched_at": time.time()}
+
+    def id_token(self, subject="oid-admin", email="admin@example.com",
+                 auth_time="fresh", **overrides) -> str:
+        now = int(time.time())
+        if auth_time == "fresh":
+            auth_time = now - 5
+        claims = {
+            "iss": f"https://login.microsoftonline.com/{self.TENANT}/v2.0",
+            "aud": self.CLIENT_ID,
+            "exp": now + 600, "iat": now, "nbf": now - 10,
+            "sub": "sub-app", "oid": subject, "tid": self.TENANT,
+            "nonce": self.NONCE, "preferred_username": email,
+            "auth_time": auth_time,
+        }
+        claims.update(overrides)
+        for empty in [k for k, v in claims.items() if v is None]:
+            claims.pop(empty)
+        return jwt.encode(claims, self.private_key, algorithm="RS256",
+                          headers={"kid": "step-up-key"})
+
+    # -- comptes et rôles --------------------------------------------------
 
     def sign_in(self, email="admin@example.com", machine="poste-admin") -> str:
         """Session Nova ordinaire, par le chemin normal."""
@@ -3942,16 +3999,60 @@ class AdminTestCase(unittest.TestCase):
 
     def with_role(self, email: str, role: str):
         with main.db() as conn:
-            conn.execute("UPDATE users SET security_role=? WHERE email=?", (role, email))
+            conn.execute(
+                "UPDATE users SET security_role=? WHERE normalized_email=? "
+                "AND organization_id=?",
+                (role, main.normalize_email(email), main.nova_organization_id()))
+
+    def with_federated_identity(self, email: str, subject="oid-admin"):
+        """Identité Microsoft vérifiée, comme après une vraie connexion SSO."""
+        with main.db() as conn:
+            account = main.user_by_email(conn, main.nova_organization_id(), email)
+            conn.execute(
+                "INSERT OR REPLACE INTO federated_identities(provider, external_subject, "
+                "external_tenant_id, organization_id, email, user_id, verification, "
+                "external_issuer, created_at, last_seen) "
+                "VALUES ('microsoft_entra',?,?,?,?,?,'verified','',?,?)",
+                (subject, self.TENANT, main.nova_organization_id(), email,
+                 account["user_id"], time.time(), time.time()))
+        return account["user_id"]
+
+    # -- step-up -----------------------------------------------------------
+
+    def step_up_start(self, user_token: str, redirect_uri=None):
+        with patch.object(main, "ENTRA_CLIENT_ID", self.CLIENT_ID):
+            return self.client.post(
+                "/api/admin/step-up/start",
+                headers=self.auth(user_token),
+                json={"code_challenge": "a" * 43, "nonce": self.NONCE,
+                      "redirect_uri": redirect_uri or self.REDIRECT,
+                      "machine": "poste-admin"})
+
+    def step_up_complete(self, user_token: str, flow_id: str, token=None,
+                         redirect_uri=None):
+        async def fake_redeem(config, body):
+            return {"id_token": token if token is not None else self.id_token()}
+
+        with patch.object(main, "ENTRA_CLIENT_ID", self.CLIENT_ID), patch.object(
+            main, "redeem_authorization_code", fake_redeem
+        ):
+            return self.client.post(
+                "/api/admin/step-up/complete",
+                headers=self.auth(user_token),
+                json={"flow_id": flow_id, "code": "code-microsoft",
+                      "code_verifier": "v" * 64,
+                      "redirect_uri": redirect_uri or self.REDIRECT})
 
     def admin_session(self, email="admin@example.com",
-                      role=main.SECURITY_ROLE_ORGANIZATION_ADMIN) -> str:
+                      role=main.SECURITY_ROLE_ORGANIZATION_ADMIN,
+                      subject="oid-admin") -> str:
+        """Le parcours complet : connexion, rôle, identité, step-up."""
         user_token = self.sign_in(email)
         self.with_role(email, role)
-        response = self.client.post(
-            "/api/admin/session",
-            headers={"Authorization": f"Bearer {user_token}"},
-        )
+        self.with_federated_identity(email, subject)
+        flow_id = self.step_up_start(user_token).json()["flow_id"]
+        response = self.step_up_complete(user_token, flow_id,
+                                         token=self.id_token(subject, email))
         self.assertEqual(response.status_code, 200, response.text)
         return response.json()["token"]
 
@@ -4023,10 +4124,13 @@ class AdminSessionTests(AdminTestCase):
     """Ouverture, durée, révocation."""
 
     def test_an_administrator_can_open_a_session(self):
-        token = self.sign_in()
-        self.with_role("admin@example.com", main.SECURITY_ROLE_ORGANIZATION_ADMIN)
-        response = self.client.post("/api/admin/session", headers=self.auth(token))
-        self.assertEqual(response.status_code, 200)
+        email = "admin@example.com"
+        user_token = self.sign_in(email)
+        self.with_role(email, main.SECURITY_ROLE_ORGANIZATION_ADMIN)
+        self.with_federated_identity(email)
+        flow_id = self.step_up_start(user_token).json()["flow_id"]
+        response = self.step_up_complete(user_token, flow_id)
+        self.assertEqual(response.status_code, 200, response.text)
         body = response.json()
         self.assertEqual(body["role"], main.SECURITY_ROLE_ORGANIZATION_ADMIN)
         self.assertIn(main.CAPABILITY_PROVIDER_MANAGE, body["capabilities"])
@@ -4038,9 +4142,24 @@ class AdminSessionTests(AdminTestCase):
 
     def test_a_member_cannot_open_one(self):
         token = self.sign_in("membre@example.com")
+        for path in ("/api/admin/session", "/api/admin/step-up/start"):
+            response = self.client.post(
+                path, headers=self.auth(token),
+                json={"code_challenge": "a" * 43, "nonce": self.NONCE,
+                      "redirect_uri": self.REDIRECT})
+            self.assertEqual(response.status_code, 403, path)
+            self.assertEqual(response.json()["detail"], "ADMIN_ROLE_REQUIRED", path)
+
+    def test_the_old_route_no_longer_issues_a_session(self):
+        """La route qui ouvrait une session depuis un simple jeton utilisateur
+        indique désormais le chemin, sans plus rien accorder."""
+        email = "ancienne-route@example.com"
+        token = self.sign_in(email)
+        self.with_role(email, main.SECURITY_ROLE_ORGANIZATION_ADMIN)
         response = self.client.post("/api/admin/session", headers=self.auth(token))
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.json()["detail"], "ADMIN_ROLE_REQUIRED")
+        self.assertEqual(response.json()["detail"], "ADMIN_STEP_UP_REQUIRED")
+        self.assertNotIn("token", response.json())
 
     def test_the_token_is_only_stored_hashed(self):
         token = self.admin_session()
@@ -4091,8 +4210,11 @@ class AdminSessionTests(AdminTestCase):
         email = "partant@example.com"
         user_token = self.sign_in(email)
         self.with_role(email, main.SECURITY_ROLE_ORGANIZATION_ADMIN)
-        admin_token = self.client.post(
-            "/api/admin/session", headers=self.auth(user_token)).json()["token"]
+        self.with_federated_identity(email)
+        flow_id = self.step_up_start(user_token).json()["flow_id"]
+        admin_token = self.step_up_complete(
+            user_token, flow_id,
+            token=self.id_token(email=email)).json()["token"]
 
         self.client.post("/api/auth/logout", headers=self.auth(user_token))
 
@@ -4240,6 +4362,9 @@ class AdminTenantIsolationTests(AdminTestCase):
             response.json()["organization"]["id"], main.nova_organization_id())
 
     def test_the_control_view_carries_no_secret(self):
+        # La session est ouverte d'abord : le step-up a besoin de la
+        # configuration Microsoft que le test s'apprête à remplacer.
+        token = self.admin_session()
         clear_provider_configs()
         with main.db() as conn:
             conn.execute(
@@ -4249,7 +4374,6 @@ class AdminTenantIsolationTests(AdminTestCase):
                 (uuid.uuid4().hex, main.nova_organization_id(), "oidc",
                  "https://idp.example.com", "client-public", "secret-tres-prive",
                  1, time.time()))
-        token = self.admin_session()
         raw = self.client.get("/api/control/organization", headers=self.auth(token)).text
         self.assertNotIn("secret-tres-prive", raw)
         self.assertNotIn("client-public", raw)
@@ -4326,8 +4450,8 @@ class AdminAuditLogTests(AdminTestCase):
         self.assertEqual(len(self.rows()), before)
 
     def test_a_secret_never_reaches_the_audit_log(self):
-        clear_provider_configs()
         token = self.admin_session()
+        clear_provider_configs()
         self.client.post(
             "/api/admin/provider-configs", headers=self.auth(token),
             json={"provider_type": "oidc", "oidc_issuer": "https://idp.example.com",
@@ -4406,6 +4530,491 @@ class OperatorCliTests(AdminTestCase):
                 path, headers=self.auth(token),
                 json={"email": "ambitieux@example.com", "role": "organization_admin"})
             self.assertIn(response.status_code, (404, 405), path)
+
+
+# ═══════════════ Phase 24 — réauthentification d'administration ═══════════
+
+
+class AuthenticationFreshnessTests(unittest.TestCase):
+    """`auth_time`, et pourquoi il ne suffit pas qu'un jeton soit récent."""
+
+    def test_a_fresh_authentication_is_accepted(self):
+        ok, reason = main.authentication_is_fresh(time.time() - 10)
+        self.assertTrue(ok, reason)
+
+    def test_a_missing_auth_time_is_refused(self):
+        """Le refus le plus important. Sans `auth_time`, « le jeton vient
+        d'être émis » ne dit rien : un IdP peut le réémettre depuis une session
+        vieille de plusieurs jours sans rien demander à personne."""
+        ok, reason = main.authentication_is_fresh(None)
+        self.assertFalse(ok)
+        self.assertEqual(reason, "auth_time_missing")
+
+    def test_an_old_authentication_is_refused(self):
+        ok, reason = main.authentication_is_fresh(
+            time.time() - main.ADMIN_STEP_UP_MAX_AGE_SECONDS
+            - main.ADMIN_STEP_UP_CLOCK_SKEW_SECONDS - 10)
+        self.assertFalse(ok)
+        self.assertEqual(reason, "auth_time_too_old")
+
+    def test_an_authentication_in_the_future_is_refused(self):
+        ok, reason = main.authentication_is_fresh(
+            time.time() + main.ADMIN_STEP_UP_CLOCK_SKEW_SECONDS + 60)
+        self.assertFalse(ok)
+        self.assertEqual(reason, "auth_time_in_future")
+
+    def test_a_small_clock_difference_is_tolerated(self):
+        # Les horloges d'un IdP et d'un serveur divergent : exiger la seconde
+        # près produirait des refus inexplicables.
+        self.assertTrue(main.authentication_is_fresh(time.time() + 5)[0])
+        self.assertTrue(
+            main.authentication_is_fresh(
+                time.time() - main.ADMIN_STEP_UP_MAX_AGE_SECONDS + 5)[0])
+
+    def test_a_nonsense_value_is_refused(self):
+        for value in ("plus tard", [], {}):
+            self.assertFalse(main.authentication_is_fresh(value)[0], value)
+
+    def test_the_window_stays_within_safe_bounds(self):
+        self.assertGreaterEqual(main.ADMIN_STEP_UP_MAX_AGE_SECONDS, 60)
+        self.assertLessEqual(main.ADMIN_STEP_UP_MAX_AGE_SECONDS, 900)
+
+
+class AdminStepUpTests(AdminTestCase):
+    """Le parcours de réauthentification, de bout en bout."""
+
+    EMAIL = "admin@example.com"
+
+    def prepared(self, role=main.SECURITY_ROLE_ORGANIZATION_ADMIN):
+        user_token = self.sign_in(self.EMAIL)
+        self.with_role(self.EMAIL, role)
+        user_id = self.with_federated_identity(self.EMAIL)
+        return user_token, user_id
+
+    # -- la demande --------------------------------------------------------
+
+    def test_the_authorization_url_asks_for_a_recent_authentication(self):
+        user_token, _ = self.prepared()
+        url = self.step_up_start(user_token).json()["authorization_url"]
+        # `max_age` est ce qui oblige l'OP à renvoyer `auth_time` : c'est lui
+        # qui rend la fraîcheur vérifiable, pas `prompt`.
+        self.assertIn(f"max_age={main.ADMIN_STEP_UP_MAX_AGE_SECONDS}", url)
+        self.assertIn("prompt=login", url)
+        self.assertIn("code_challenge_method=S256", url)
+        self.assertNotIn("client_secret", url)
+
+    def test_a_normal_login_never_asks_for_max_age(self):
+        # Redemander une authentification à chaque dictée serait absurde.
+        with patch.object(main, "ENTRA_CLIENT_ID", self.CLIENT_ID):
+            response = self.client.post(
+                "/api/auth/sso/microsoft_entra/start",
+                json={"code_challenge": "a" * 43, "nonce": self.NONCE,
+                      "redirect_uri": self.REDIRECT, "machine": "poste"})
+        self.assertNotIn("max_age", response.json()["authorization_url"])
+        self.assertNotIn("prompt=login", response.json()["authorization_url"])
+
+    def test_the_client_cannot_choose_the_provider(self):
+        """Le fournisseur vient de l'identité vérifiée du compte. Le laisser au
+        client permettrait de contourner l'IdP réel de l'organisation."""
+        user_token, _ = self.prepared()
+        response = self.step_up_start(user_token)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(set(response.json()),
+                         {"flow_id", "authorization_url", "expires_in"})
+        # Aucun champ du corps ne nomme un fournisseur.
+        self.assertIn("login.microsoftonline.com",
+                      response.json()["authorization_url"])
+
+    # -- la preuve ---------------------------------------------------------
+
+    def test_a_complete_step_up_opens_an_admin_session(self):
+        user_token, _ = self.prepared()
+        flow_id = self.step_up_start(user_token).json()["flow_id"]
+        response = self.step_up_complete(user_token, flow_id)
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertEqual(body["role"], main.SECURITY_ROLE_ORGANIZATION_ADMIN)
+        self.assertEqual(
+            set(body),
+            {"token", "role", "organization_id", "capabilities", "expires_in"})
+        # Et la session ouverte fonctionne vraiment.
+        self.assertEqual(
+            self.client.get("/api/control/organization",
+                            headers=self.auth(body["token"])).status_code, 200)
+
+    def test_an_admin_session_keeps_the_phase_22_lifetime(self):
+        """Une authentification fraîche n'achète pas une session éternelle."""
+        user_token, _ = self.prepared()
+        flow_id = self.step_up_start(user_token).json()["flow_id"]
+        body = self.step_up_complete(user_token, flow_id).json()
+        self.assertLessEqual(body["expires_in"], main.ADMIN_SESSION_TTL_SECONDS)
+
+    # -- fraîcheur ---------------------------------------------------------
+
+    def test_an_id_token_without_auth_time_is_refused(self):
+        """Le test qui porte toute la phase : le jeton vient d'être émis, il est
+        parfaitement valide, et il ne prouve pourtant aucune présence."""
+        user_token, _ = self.prepared()
+        flow_id = self.step_up_start(user_token).json()["flow_id"]
+        response = self.step_up_complete(
+            user_token, flow_id, token=self.id_token(auth_time=None))
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.json()["detail"], "ADMIN_STEP_UP_TOO_OLD")
+
+    def test_an_old_authentication_is_refused_even_with_a_fresh_token(self):
+        # Le navigateur était déjà connecté à Microsoft : l'OP a réémis un jeton
+        # sans rien redemander. C'est exactement ce que `max_age` doit empêcher.
+        user_token, _ = self.prepared()
+        flow_id = self.step_up_start(user_token).json()["flow_id"]
+        response = self.step_up_complete(
+            user_token, flow_id,
+            token=self.id_token(auth_time=int(time.time()) - 86400))
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.json()["detail"], "ADMIN_STEP_UP_TOO_OLD")
+
+    def test_an_authentication_in_the_future_is_refused(self):
+        user_token, _ = self.prepared()
+        flow_id = self.step_up_start(user_token).json()["flow_id"]
+        response = self.step_up_complete(
+            user_token, flow_id,
+            token=self.id_token(auth_time=int(time.time()) + 3600))
+        self.assertEqual(response.status_code, 401)
+
+    # -- même personne -----------------------------------------------------
+
+    def test_another_identity_of_the_same_organization_is_refused(self):
+        """Le navigateur est connecté à un autre compte Microsoft. Même
+        organisation, même domaine : cela ne suffit pas."""
+        user_token, _ = self.prepared()
+        # Un second compte, avec sa propre identité vérifiée.
+        self.sign_in("autre@example.com", machine="poste-2")
+        self.with_federated_identity("autre@example.com", subject="oid-autre")
+        flow_id = self.step_up_start(user_token).json()["flow_id"]
+        response = self.step_up_complete(
+            user_token, flow_id,
+            token=self.id_token(subject="oid-autre", email="autre@example.com"))
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["detail"],
+                         "ADMIN_STEP_UP_IDENTITY_MISMATCH")
+
+    def test_the_same_email_with_another_subject_is_refused(self):
+        """Même adresse, autre `oid` : ce n'est pas la même personne, et
+        l'adresse n'a jamais été un identifiant."""
+        user_token, _ = self.prepared()
+        flow_id = self.step_up_start(user_token).json()["flow_id"]
+        response = self.step_up_complete(
+            user_token, flow_id,
+            token=self.id_token(subject="oid-inconnu", email=self.EMAIL))
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["detail"],
+                         "ADMIN_STEP_UP_IDENTITY_MISMATCH")
+
+    def test_an_unknown_identity_is_never_linked(self):
+        """Une élévation de privilège est le pire endroit pour rattacher un
+        compte. Aucune identité n'est créée, aucun compte non plus."""
+        user_token, _ = self.prepared()
+        with main.db() as conn:
+            before = conn.execute(
+                "SELECT COUNT(*) c FROM federated_identities").fetchone()["c"]
+            accounts = conn.execute("SELECT COUNT(*) c FROM users").fetchone()["c"]
+        flow_id = self.step_up_start(user_token).json()["flow_id"]
+        self.step_up_complete(
+            user_token, flow_id,
+            token=self.id_token(subject="oid-jamais-vu", email="nouveau@example.com"))
+        with main.db() as conn:
+            after = conn.execute(
+                "SELECT COUNT(*) c FROM federated_identities").fetchone()["c"]
+            accounts_after = conn.execute("SELECT COUNT(*) c FROM users").fetchone()["c"]
+        self.assertEqual(before, after)
+        self.assertEqual(accounts, accounts_after)
+
+    def test_a_wrong_tenant_is_refused(self):
+        """Une preuve signée, fraîche et bien formée, mais venue d'un tenant que
+        l'organisation n'a pas déclaré."""
+        user_token, _ = self.prepared()
+        flow_id = self.step_up_start(user_token).json()["flow_id"]
+        other_tenant = "44444444-4444-4444-8444-444444444444"
+        # Le JWKS de l'autre tenant est servi par la même clé : le refus doit
+        # venir du contrôle de tenant, pas d'une signature invalide.
+        jwk = json.loads(
+            jwt.algorithms.RSAAlgorithm.to_jwk(self.private_key.public_key()))
+        jwk.update({"kid": "step-up-key", "use": "sig", "alg": "RS256"})
+        uri = main.ADAPTERS["microsoft_entra"]["jwks_uri"]({"tid": other_tenant})
+        main.JWKS_CACHE[uri] = {"jwks": {"keys": [jwk]}, "fetched_at": time.time()}
+
+        response = self.step_up_complete(
+            user_token, flow_id,
+            token=self.id_token(
+                tid=other_tenant,
+                iss=f"https://login.microsoftonline.com/{other_tenant}/v2.0"))
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["detail"], "TENANT_NOT_ALLOWED")
+
+    def test_a_flow_opened_by_someone_else_cannot_be_completed(self):
+        user_token, _ = self.prepared()
+        flow_id = self.step_up_start(user_token).json()["flow_id"]
+        # Une autre personne, administratrice elle aussi, tente de finir le
+        # parcours ouvert par la première.
+        other_token = self.sign_in("autre-admin@example.com", machine="poste-3")
+        self.with_role("autre-admin@example.com",
+                       main.SECURITY_ROLE_ORGANIZATION_ADMIN)
+        self.with_federated_identity("autre-admin@example.com", subject="oid-autre-2")
+        response = self.step_up_complete(other_token, flow_id)
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["detail"],
+                         "ADMIN_STEP_UP_IDENTITY_MISMATCH")
+
+    # -- rejeu et buts -----------------------------------------------------
+
+    def test_a_proof_is_single_use(self):
+        user_token, _ = self.prepared()
+        flow_id = self.step_up_start(user_token).json()["flow_id"]
+        self.assertEqual(
+            self.step_up_complete(user_token, flow_id).status_code, 200)
+        replayed = self.step_up_complete(user_token, flow_id)
+        self.assertEqual(replayed.status_code, 400)
+        self.assertEqual(replayed.json()["detail"], "AUTH_TIMEOUT")
+
+    def test_a_login_flow_is_not_an_admin_proof(self):
+        """Un retour de connexion ordinaire ne devient jamais une preuve
+        d'administration, même présenté par un administrateur."""
+        user_token, _ = self.prepared()
+        with patch.object(main, "ENTRA_CLIENT_ID", self.CLIENT_ID):
+            login_flow = self.client.post(
+                "/api/auth/sso/microsoft_entra/start",
+                json={"code_challenge": "a" * 43, "nonce": self.NONCE,
+                      "redirect_uri": self.REDIRECT,
+                      "machine": "poste"}).json()["flow_id"]
+        response = self.step_up_complete(user_token, login_flow)
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"], "FLOW_PURPOSE_MISMATCH")
+
+    def test_an_admin_flow_is_not_a_login(self):
+        user_token, _ = self.prepared()
+        flow_id = self.step_up_start(user_token).json()["flow_id"]
+
+        async def fake_redeem(config, body):
+            return {"id_token": self.id_token()}
+
+        with patch.object(main, "ENTRA_CLIENT_ID", self.CLIENT_ID), patch.object(
+            main, "redeem_authorization_code", fake_redeem
+        ):
+            response = self.client.post(
+                "/api/auth/sso/microsoft_entra/exchange",
+                json={"flow_id": flow_id, "code": "c", "code_verifier": "v" * 64,
+                      "redirect_uri": self.REDIRECT})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"], "FLOW_PURPOSE_MISMATCH")
+
+    def test_two_concurrent_step_ups_stay_independent(self):
+        user_token, _ = self.prepared()
+        first = self.step_up_start(user_token).json()["flow_id"]
+        second = self.step_up_start(user_token).json()["flow_id"]
+        self.assertNotEqual(first, second)
+        self.assertEqual(self.step_up_complete(user_token, first).status_code, 200)
+        # Le second reste utilisable : les tentatives ne se partagent rien.
+        self.assertEqual(self.step_up_complete(user_token, second).status_code, 200)
+
+    # -- l'état revérifié à la fin -----------------------------------------
+
+    def test_a_role_revoked_mid_flow_yields_no_session(self):
+        """La réauthentification réussit, et ne rattrape pas un privilège retiré
+        entre-temps."""
+        user_token, _ = self.prepared()
+        flow_id = self.step_up_start(user_token).json()["flow_id"]
+        self.with_role(self.EMAIL, main.SECURITY_ROLE_MEMBER)
+        response = self.step_up_complete(user_token, flow_id)
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["detail"], "ADMIN_ROLE_REQUIRED")
+        with main.db() as conn:
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) c FROM admin_sessions "
+                             "WHERE revoked_at IS NULL").fetchone()["c"], 0)
+
+    def test_a_disabled_account_mid_flow_yields_no_session(self):
+        user_token, _ = self.prepared()
+        flow_id = self.step_up_start(user_token).json()["flow_id"]
+        with main.db() as conn:
+            conn.execute("UPDATE users SET disabled=1 WHERE normalized_email=?",
+                         (self.EMAIL,))
+        self.assertEqual(
+            self.step_up_complete(user_token, flow_id).status_code, 403)
+
+    def test_a_suspended_organization_mid_flow_yields_no_session(self):
+        user_token, _ = self.prepared()
+        flow_id = self.step_up_start(user_token).json()["flow_id"]
+        with main.db() as conn:
+            conn.execute("UPDATE organizations SET status='suspended' WHERE id=?",
+                         (main.nova_organization_id(),))
+        try:
+            self.assertEqual(
+                self.step_up_complete(user_token, flow_id).status_code, 403)
+        finally:
+            with main.db() as conn:
+                conn.execute("UPDATE organizations SET status='active' WHERE id=?",
+                             (main.nova_organization_id(),))
+
+    def test_a_provider_disabled_mid_flow_yields_no_session(self):
+        user_token, _ = self.prepared()
+        flow_id = self.step_up_start(user_token).json()["flow_id"]
+        with main.db() as conn:
+            conn.execute("UPDATE organization_provider_configs SET enabled=0")
+        response = self.step_up_complete(user_token, flow_id)
+        self.assertEqual(response.status_code, 503)
+
+    # -- identités qui ne permettent pas de step-up ------------------------
+
+    def test_a_legacy_email_code_account_cannot_step_up(self):
+        """Un code à usage unique reçu par courriel n'est pas une
+        réauthentification d'entreprise. Le compromis est assumé : un
+        administrateur doit passer par Microsoft, Google ou OIDC."""
+        email = "otp-seul@example.com"
+        user_token = self.sign_in(email, machine="poste-otp")
+        self.with_role(email, main.SECURITY_ROLE_ORGANIZATION_ADMIN)
+        response = self.step_up_start(user_token)
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"], "ADMIN_STEP_UP_UNSUPPORTED")
+
+    def test_an_unverified_identity_cannot_step_up(self):
+        """Le Device Code hérité produit des revendications lues sans vérifier
+        la signature : elles ne prouvent rien."""
+        email = "device-code@example.com"
+        user_token = self.sign_in(email, machine="poste-device")
+        self.with_role(email, main.SECURITY_ROLE_ORGANIZATION_ADMIN)
+        with main.db() as conn:
+            account = main.user_by_email(conn, main.nova_organization_id(), email)
+            conn.execute(
+                "INSERT INTO federated_identities(provider, external_subject, "
+                "organization_id, email, user_id, verification, external_issuer, "
+                "created_at, last_seen) VALUES "
+                "('microsoft_entra','oid-device',?,?,?,'transport_only','',?,?)",
+                (main.nova_organization_id(), email, account["user_id"],
+                 time.time(), time.time()))
+        response = self.step_up_start(user_token)
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"], "ADMIN_STEP_UP_UNSUPPORTED")
+
+    # -- le modèle de menace -----------------------------------------------
+
+    def test_a_stolen_user_session_alone_grants_no_admin_session(self):
+        """La propriété centrale de la phase.
+
+        L'attaquant détient le jeton de session d'un administrateur — rien de
+        plus. Il peut commencer un step-up : cela ne lui donne qu'une URL. Sans
+        pouvoir s'authentifier auprès de l'IdP en tant que cette personne, il
+        n'obtient aucune session d'administration.
+        """
+        user_token, _ = self.prepared()
+        stolen = user_token
+
+        # Ce que le jeton volé permet : demander, et rien d'autre.
+        started = self.step_up_start(stolen)
+        self.assertEqual(started.status_code, 200)
+        self.assertNotIn("token", started.json())
+
+        # Ce qu'il ne permet pas : produire une preuve d'identité.
+        for forged in (self.id_token(subject="oid-attaquant"),
+                       self.id_token(auth_time=None),
+                       self.id_token(subject="oid-attaquant", auth_time=None)):
+            response = self.step_up_complete(
+                stolen, started.json()["flow_id"], token=forged)
+            self.assertNotEqual(response.status_code, 200)
+            self.assertNotIn("token", response.json())
+
+        with main.db() as conn:
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) c FROM admin_sessions").fetchone()["c"],
+                0)
+
+    def test_no_admin_route_is_reachable_without_the_step_up(self):
+        user_token, _ = self.prepared()
+        for path in ("/api/control/organization", "/api/admin/discovery",
+                     "/api/admin/provider-configs"):
+            self.assertEqual(
+                self.client.get(path, headers=self.auth(user_token)).status_code,
+                401, path)
+
+    # -- journalisation et audit -------------------------------------------
+
+    def test_the_audit_log_records_the_step_up(self):
+        user_token, _ = self.prepared()
+        flow_id = self.step_up_start(user_token).json()["flow_id"]
+        self.step_up_complete(user_token, flow_id)
+        with main.db() as conn:
+            rows = conn.execute("SELECT * FROM admin_audit_log").fetchall()
+        actions = [row["action"] for row in rows]
+        self.assertIn("admin_step_up.success", actions)
+        self.assertIn("admin_session.create", actions)
+        joined = " ".join(str(tuple(row)) for row in rows)
+        # Ni jeton, ni code, ni date d'authentification exacte.
+        self.assertNotIn("code-microsoft", joined)
+        self.assertNotIn("auth_time", joined)
+
+    # -- sélection du fournisseur ------------------------------------------
+
+    def test_the_provider_comes_from_the_verified_identity(self):
+        """Google et OIDC empruntent exactement le même chemin : le fournisseur
+        est celui de l'identité vérifiée du compte, quel qu'il soit."""
+        email = "multi@example.com"
+        self.sign_in(email, machine="poste-multi")
+        self.with_role(email, main.SECURITY_ROLE_ORGANIZATION_ADMIN)
+        with main.db() as conn:
+            account = main.user_by_email(conn, main.nova_organization_id(), email)
+            for provider, subject, issuer in (
+                ("google_workspace", "sub-google", ""),
+                ("oidc", "sub-okta", "https://idp.example.com"),
+            ):
+                conn.execute(
+                    "INSERT INTO federated_identities(provider, external_subject, "
+                    "organization_id, email, user_id, verification, external_issuer, "
+                    "created_at, last_seen) VALUES (?,?,?,?,?,'verified',?,?,?)",
+                    (provider, subject, main.nova_organization_id(), email,
+                     account["user_id"], issuer, time.time(), time.time()))
+        identity = main.step_up_identity_for(account)
+        self.assertIn(identity["provider"], ("google_workspace", "oidc"))
+        self.assertEqual(identity["user_id"], account["user_id"])
+
+    def test_an_identity_of_another_account_is_never_selected(self):
+        email = "a@example.com"
+        self.sign_in(email, machine="poste-a")
+        self.sign_in("b@example.com", machine="poste-b")
+        self.with_federated_identity("b@example.com", subject="oid-b")
+        with main.db() as conn:
+            account = main.user_by_email(conn, main.nova_organization_id(), email)
+        self.assertIsNone(main.step_up_identity_for(account))
+
+    def test_an_oidc_identity_is_scoped_by_issuer(self):
+        """Deux IdP OIDC peuvent attribuer le même `sub` à deux personnes.
+        L'émetteur fait donc partie de la clé, ici comme à la connexion."""
+        email = "oidc@example.com"
+        self.sign_in(email, machine="poste-oidc")
+        with main.db() as conn:
+            account = main.user_by_email(conn, main.nova_organization_id(), email)
+            conn.execute(
+                "INSERT INTO federated_identities(provider, external_subject, "
+                "organization_id, email, user_id, verification, external_issuer, "
+                "created_at, last_seen) VALUES "
+                "('oidc','sub-partage',?,?,?,'verified','https://a.example.com',?,?)",
+                (main.nova_organization_id(), email, account["user_id"],
+                 time.time(), time.time()))
+            # Le même sujet, chez un autre émetteur : une autre personne.
+            other = conn.execute(
+                "SELECT * FROM federated_identities WHERE external_issuer=? "
+                "AND external_subject=?",
+                ("https://b.example.com", "sub-partage")).fetchone()
+        self.assertIsNone(other)
+        identity = main.step_up_identity_for(account)
+        self.assertEqual(identity["external_issuer"], "https://a.example.com")
+
+    def test_no_secret_reaches_the_logs(self):
+        user_token, _ = self.prepared()
+        with patch("builtins.print") as printed:
+            flow_id = self.step_up_start(user_token).json()["flow_id"]
+            body = self.step_up_complete(user_token, flow_id).json()
+        printed_text = " ".join(str(call) for call in printed.call_args_list)
+        for secret in (body["token"], flow_id, self.NONCE, "code-microsoft",
+                       self.EMAIL):
+            self.assertNotIn(secret, printed_text)
 
 
 if __name__ == "__main__":

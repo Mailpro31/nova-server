@@ -296,6 +296,14 @@ def init_db():
             nonce_hash TEXT NOT NULL,          -- empreinte : jamais relu en clair
             redirect_uri TEXT NOT NULL,
             machine TEXT,
+            -- À quoi sert cette tentative. Un retour de connexion ordinaire ne
+            -- doit jamais pouvoir servir de preuve d'administration, et
+            -- réciproquement : le but fait partie de la tentative, il n'est pas
+            -- déduit de l'appelant.
+            purpose TEXT NOT NULL DEFAULT 'login',
+            -- Pour un step-up : l'identité que la réauthentification doit
+            -- prouver. Renseignée à l'ouverture, comparée à l'arrivée.
+            expected_user_id TEXT,
             status TEXT NOT NULL DEFAULT 'pending',
             created_at REAL NOT NULL,
             expires_at REAL NOT NULL,
@@ -714,6 +722,17 @@ def migrate_schema(conn):
         conn.execute(
             "ALTER TABLE users ADD COLUMN security_role TEXT NOT NULL DEFAULT 'member'"
         )
+
+    # But de la tentative : les tentatives déjà en base sont des connexions
+    # ordinaires, et le défaut le dit. Aucune ne devient rétroactivement une
+    # preuve d'administration.
+    flow_columns = columns("sso_flows")
+    if "purpose" not in flow_columns:
+        conn.execute(
+            "ALTER TABLE sso_flows ADD COLUMN purpose TEXT NOT NULL DEFAULT 'login'"
+        )
+    if "expected_user_id" not in flow_columns:
+        conn.execute("ALTER TABLE sso_flows ADD COLUMN expected_user_id TEXT")
 
     if "verification" not in columns("federated_identities"):
         conn.execute(
@@ -1264,6 +1283,12 @@ SSO_FLOW_STATUS_PENDING = "pending"
 SSO_FLOW_STATUS_EXCHANGING = "exchanging"
 SSO_FLOW_STATUS_CONSUMED = "consumed"
 
+# À quoi sert une tentative. Une connexion ordinaire et une réauthentification
+# d'administration empruntent le même moteur, mais ne sont pas interchangeables :
+# un retour de connexion ne doit jamais devenir une preuve d'administration.
+FLOW_PURPOSE_LOGIN = "login"
+FLOW_PURPOSE_ADMIN_STEP_UP = "admin_step_up"
+
 # Au-delà, la tentative est perdue. Assez large pour une authentification
 # multifacteur, assez court pour qu'un état oublié ne traîne pas.
 SSO_FLOW_TTL_SECONDS = 600
@@ -1312,6 +1337,8 @@ class DatabaseSsoFlowStore(SsoFlowStore):
         redirect_uri: str,
         machine: str,
         ttl_seconds: int = SSO_FLOW_TTL_SECONDS,
+        purpose: str = FLOW_PURPOSE_LOGIN,
+        expected_user_id: str | None = None,
     ) -> str:
         """Ouvre une tentative et renvoie son identifiant **en clair**.
 
@@ -1326,8 +1353,9 @@ class DatabaseSsoFlowStore(SsoFlowStore):
         with db() as conn:
             conn.execute(
                 "INSERT INTO sso_flows(flow_id_hash, provider_type, provider_config_id, "
-                "organization_id, nonce_hash, redirect_uri, machine, status, "
-                "created_at, expires_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                "organization_id, nonce_hash, redirect_uri, machine, purpose, "
+                "expected_user_id, status, created_at, expires_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     hash_token(flow_id),
                     provider_type,
@@ -1336,6 +1364,8 @@ class DatabaseSsoFlowStore(SsoFlowStore):
                     hash_token(nonce),
                     redirect_uri,
                     machine,
+                    purpose,
+                    expected_user_id,
                     SSO_FLOW_STATUS_PENDING,
                     now,
                     now + ttl_seconds,
@@ -1915,16 +1945,22 @@ def record_federated_identity(
     now = time.time()
     organization_id = nova_organization_id()
     with db() as conn:
+        # L'identité pointe vers le compte, pas seulement vers son adresse :
+        # c'est ce qui permet à une réauthentification de prouver qu'elle
+        # concerne bien la même personne, et non un homonyme.
+        account = user_by_email(conn, organization_id, email)
+        user_id = account["user_id"] if account is not None else None
         conn.execute(
             "INSERT OR IGNORE INTO federated_identities(provider, external_subject, "
-            "external_tenant_id, organization_id, email, verification, external_issuer, "
-            "created_at, last_seen) VALUES (?,?,?,?,?,?,?,?,?)",
+            "external_tenant_id, organization_id, email, user_id, verification, "
+            "external_issuer, created_at, last_seen) VALUES (?,?,?,?,?,?,?,?,?,?)",
             (
                 provider,
                 external_subject,
                 external_tenant_id,
                 organization_id,
                 email,
+                user_id,
                 verification,
                 external_issuer,
                 now,
@@ -1933,9 +1969,10 @@ def record_federated_identity(
         )
         conn.execute(
             "UPDATE federated_identities SET last_seen=?, email=?, external_tenant_id=?, "
-            "verification=? WHERE provider=? AND external_issuer=? AND external_subject=?",
-            (now, email, external_tenant_id, verification, provider, external_issuer,
-             external_subject),
+            "verification=?, user_id=COALESCE(?, user_id) "
+            "WHERE provider=? AND external_issuer=? AND external_subject=?",
+            (now, email, external_tenant_id, verification, user_id, provider,
+             external_issuer, external_subject),
         )
         conn.execute(
             "UPDATE users SET identity_provider=?, external_subject=?, external_tenant_id=? "
@@ -2168,6 +2205,57 @@ ADMIN_SESSION_TTL_SECONDS = int(
 ADMIN_SESSION_IDLE_SECONDS = int(
     os.getenv("NOVA_ADMIN_SESSION_IDLE_SECONDS", str(30 * 60))
 )
+
+# ── Réauthentification (step-up) ─────────────────────────────────────────
+#
+# Une session utilisateur valide ne prouve **pas** qu'une personne est devant le
+# poste. Elle prouve qu'une authentification a eu lieu, peut-être il y a trois
+# semaines, et qu'un jeton en est resté. C'est suffisant pour dicter ; ce ne
+# l'est pas pour reconfigurer l'organisation.
+#
+# Nova n'invente aucun second facteur : il redemande une authentification à
+# l'IdP et vérifie qu'elle est **récente**. Ce que l'IdP exige alors — mot de
+# passe, MFA, clé d'accès, accès conditionnel — le regarde seul.
+
+# Fenêtre de fraîcheur exigée. Cinq minutes : assez pour traverser un parcours
+# MFA sans se presser, trop court pour qu'une session de navigateur oubliée la
+# veille passe pour une présence.
+ADMIN_STEP_UP_MAX_AGE_SECONDS = max(
+    60, min(900, int(os.getenv("NOVA_ADMIN_STEP_UP_MAX_AGE_SECONDS", "300")))
+)
+# Tolérance d'horloge. Les horloges d'un IdP et d'un serveur divergent de
+# quelques secondes ; les faire coïncider à la seconde produirait des refus
+# inexplicables. Au-delà, un `auth_time` dans le futur n'est pas une horloge qui
+# dérive, c'est une revendication qui ment.
+ADMIN_STEP_UP_CLOCK_SKEW_SECONDS = 60
+
+
+def authentication_is_fresh(auth_time, now: float | None = None) -> tuple[bool, str]:
+    """L'authentification annoncée est-elle récente ?
+
+    Trois refus distincts, et le premier est le plus important :
+
+    - **`auth_time` absent** : le fournisseur n'a pas répondu à `max_age`, que la
+      spécification OpenID Connect rend pourtant obligatoire dans ce cas. Sans
+      cette revendication, « le jeton vient d'être émis » ne dit rien de la
+      date à laquelle la personne s'est authentifiée — un IdP peut réémettre un
+      jeton depuis une session vieille de plusieurs jours, sans rien demander à
+      personne. On refuse : la sécurité passe avant la compatibilité ;
+    - **trop ancienne** : la session d'IdP a servi telle quelle ;
+    - **dans le futur** : au-delà de la tolérance d'horloge, la valeur est fausse.
+    """
+    if auth_time is None:
+        return False, "auth_time_missing"
+    try:
+        auth_time = float(auth_time)
+    except (TypeError, ValueError):
+        return False, "auth_time_invalid"
+    now = time.time() if now is None else now
+    if auth_time > now + ADMIN_STEP_UP_CLOCK_SKEW_SECONDS:
+        return False, "auth_time_in_future"
+    if now - auth_time > ADMIN_STEP_UP_MAX_AGE_SECONDS + ADMIN_STEP_UP_CLOCK_SKEW_SECONDS:
+        return False, "auth_time_too_old"
+    return True, "ok"
 
 
 class AdminPrincipal:
@@ -3462,7 +3550,13 @@ def entra_pkce_available():
     }
 
 
-async def start_sso_flow(provider: str, body: SsoStartRequest) -> dict:
+async def start_sso_flow(
+    provider: str,
+    body: SsoStartRequest,
+    purpose: str = FLOW_PURPOSE_LOGIN,
+    expected_user_id: str | None = None,
+    provider_type_override: str | None = None,
+) -> dict:
     """Prépare une tentative et renvoie l'URL d'autorisation.
 
     Le serveur retient le `nonce` attendu : c'est lui qui le confrontera au
@@ -3508,6 +3602,8 @@ async def start_sso_flow(provider: str, body: SsoStartRequest) -> dict:
         nonce=body.nonce,
         redirect_uri=body.redirect_uri,
         machine=body.machine,
+        purpose=purpose,
+        expected_user_id=expected_user_id,
     )
 
     parameters = {
@@ -3522,6 +3618,20 @@ async def start_sso_flow(provider: str, body: SsoStartRequest) -> dict:
     }
     if config["provider_type"] == "microsoft_entra":
         parameters["response_mode"] = "query"
+
+    if purpose == FLOW_PURPOSE_ADMIN_STEP_UP:
+        # `max_age` est le paramètre qui compte, et c'est un paramètre du
+        # standard OpenID Connect : il oblige l'OP à réauthentifier si la
+        # dernière authentification est plus ancienne, **et** à renvoyer
+        # `auth_time`. C'est cette obligation qui rend la fraîcheur vérifiable ;
+        # `prompt=login` seul demanderait une interaction sans rien prouver.
+        parameters["max_age"] = ADMIN_STEP_UP_MAX_AGE_SECONDS
+        # `prompt=login` en complément : Microsoft comme Google le documentent,
+        # et il évite qu'un OP interprète `max_age` avec largesse. Les deux
+        # ensemble demandent l'interaction *et* rendent la fraîcheur prouvable —
+        # mais c'est `auth_time` que le serveur vérifie, jamais la présence du
+        # paramètre, qu'un IdP hostile pourrait ignorer.
+        parameters["prompt"] = "login"
 
     return {
         "flow_id": flow_id,
@@ -3597,6 +3707,12 @@ async def exchange_sso_code(provider: str, body: SsoExchangeRequest) -> dict:
         raise auth_error(400, "STATE_MISMATCH")
     if flow["redirect_uri"] != body.redirect_uri:
         raise auth_error(400, "REDIRECT_URI_INVALID")
+    # Le but fait partie de la tentative. Une réauthentification
+    # d'administration présentée à la route de connexion ordinaire ouvrirait une
+    # session utilisateur — ce n'est pas ce qu'elle demandait, et la tentative
+    # serait consommée pour rien.
+    if (flow["purpose"] or FLOW_PURPOSE_LOGIN) != FLOW_PURPOSE_LOGIN:
+        raise auth_error(400, "FLOW_PURPOSE_MISMATCH")
 
     config = provider_config_by_id(flow["provider_config_id"], flow["organization_id"])
     if config is None or not config["enabled"]:
@@ -4037,54 +4153,255 @@ def admin_update_discovery(
 # chemins publics historiques.
 
 
-@app.post("/api/admin/session")
-def open_admin_session(user: str = Depends(current_user)):
-    """Ouvre une session d'administration depuis une session Nova valide.
+class AdminStepUpStartRequest(BaseModel):
+    """Ouverture d'une réauthentification. Mêmes paramètres qu'une connexion.
 
-    Aucun client ne demande un rôle : il présente son jeton utilisateur, et le
-    serveur regarde en base ce que cette personne est autorisée à faire. Un
-    membre ordinaire obtient un refus, quoi que raconte son IdP.
-
-    ## Dette assumée : pas de step-up
-
-    Idéalement, ouvrir une session d'administration exigerait une
-    authentification récente ou un second facteur au moment de l'élévation.
-    Nova ne peut pas l'offrir honnêtement aujourd'hui : le second facteur vit
-    chez l'IdP, et rien dans le flux actuel ne prouve à Nova qu'il vient d'être
-    présenté. Plutôt que de simuler un MFA que nous ne contrôlons pas, la
-    session est **courte**, ouverte depuis une session utilisateur valide, et
-    revérifiée à chaque appel. Le step-up réel — `max_age` / `prompt=login` puis
-    lecture de `auth_time` — est documenté comme dette.
+    Le client ne choisit **ni** le fournisseur **ni** l'utilisateur : le serveur
+    les déduit de la session présentée et de l'identité fédérée existante.
     """
+
+    code_challenge: str
+    nonce: str
+    redirect_uri: str
+    machine: str = "poste inconnu"
+
+
+class AdminStepUpCompleteRequest(BaseModel):
+    flow_id: str
+    code: str
+    code_verifier: str
+    redirect_uri: str
+
+
+def admin_candidate(email: str):
+    """Le compte, s'il peut prétendre à une session d'administration.
+
+    Rôle, statut du compte et statut de l'organisation sont vérifiés ici **et**
+    de nouveau à la fin du parcours : entre les deux, un administrateur peut
+    avoir été révoqué, et une réauthentification réussie ne doit pas rattraper
+    un privilège retiré entre-temps.
+    """
+    organization_id = nova_organization_id()
     with db() as conn:
-        row = user_by_email(conn, nova_organization_id(), user)
-    if row is None:
-        raise auth_error(403, "ADMIN_ROLE_REQUIRED")
-    role = security_role_for(row)
-    if role not in ADMIN_SECURITY_ROLES:
-        # Même refus pour un membre inconnu et pour un membre connu sans rôle :
-        # « existe mais n'est pas administrateur » n'est une information utile
-        # qu'à celui qui sonde.
+        row = user_by_email(conn, organization_id, email)
+        organization = conn.execute(
+            "SELECT status FROM organizations WHERE id=?", (organization_id,)
+        ).fetchone()
+    # Un seul et même refus, quelle qu'en soit la raison : « ce compte existe
+    # mais n'est pas administrateur » n'est une information utile qu'à celui qui
+    # sonde.
+    if row is None or security_role_for(row) not in ADMIN_SECURITY_ROLES:
         raise auth_error(403, "ADMIN_ROLE_REQUIRED")
     if account_status(row) != "active":
         raise auth_error(403, "ADMIN_ROLE_REQUIRED")
+    if organization is not None and (organization["status"] or "active") != "active":
+        raise auth_error(403, "ADMIN_ROLE_REQUIRED")
+    return row
 
-    session = create_admin_session(row, row["identity_provider"])
+
+def step_up_identity_for(user_row):
+    """L'identité fédérée que la réauthentification devra reprouver.
+
+    Le fournisseur n'est **pas** choisi par le client : il est déterminé par
+    l'identité vérifiée que ce compte possède déjà. Laisser le client le choisir
+    permettrait de contourner l'IdP réel de l'organisation en désignant un
+    fournisseur plus complaisant.
+
+    Seules les identités `verified` comptent. Le Device Code hérité produit du
+    `transport_only` — des revendications lues sans vérification de signature —
+    et ne prouve donc rien ; une session ouverte ainsi devra passer par le
+    parcours moderne du même fournisseur, s'il en existe une trace vérifiée.
+    """
+    with db() as conn:
+        return conn.execute(
+            "SELECT * FROM federated_identities WHERE user_id=? AND organization_id=? "
+            "AND verification='verified' ORDER BY last_seen DESC LIMIT 1",
+            (user_row["user_id"], user_row["organization_id"]),
+        ).fetchone()
+
+
+@app.post("/api/admin/session")
+def open_admin_session(user: str = Depends(current_user)):
+    """Cette route n'émet plus de session : elle indique le chemin à suivre.
+
+    Elle existait pour ouvrir une session d'administration à partir d'une session
+    utilisateur seule. C'était précisément le défaut : une session utilisateur
+    peut avoir trois semaines, avoir été copiée d'un poste, ou volée — elle prouve
+    qu'une authentification a eu lieu, pas qu'une personne est là.
+
+    Elle est conservée plutôt que supprimée pour que la réponse soit explicite
+    plutôt qu'un `404` déroutant. Elle vérifie toujours le rôle : inutile
+    d'expliquer le parcours de réauthentification à qui n'y a pas droit.
+    """
+    admin_candidate(user)
+    raise auth_error(403, "ADMIN_STEP_UP_REQUIRED")
+
+
+@app.post("/api/admin/step-up/start")
+async def admin_step_up_start(
+    body: AdminStepUpStartRequest, user: str = Depends(current_user)
+):
+    """Ouvre une réauthentification auprès de l'IdP de l'organisation.
+
+    Ce que cette route accorde à qui présente une session utilisateur volée :
+    **le droit de commencer**. Rien d'autre. La preuve devra venir de l'IdP, être
+    récente, et résoudre exactement le même compte — trois conditions qu'un jeton
+    volé ne procure pas.
+    """
+    account = admin_candidate(user)
+    identity = step_up_identity_for(account)
+    if identity is None:
+        # Compte sans identité fédérée vérifiée : code e-mail hérité, ou Device
+        # Code. Voir la docstring de `step_up_identity_for`.
+        print("[admin] step_up result=failure reason=unsupported_identity")
+        raise auth_error(400, "ADMIN_STEP_UP_UNSUPPORTED")
+
+    started = await start_sso_flow(
+        identity["provider"],
+        SsoStartRequest(
+            code_challenge=body.code_challenge,
+            nonce=body.nonce,
+            redirect_uri=body.redirect_uri,
+            machine=body.machine,
+        ),
+        purpose=FLOW_PURPOSE_ADMIN_STEP_UP,
+        expected_user_id=account["user_id"],
+    )
+    print(
+        f"[admin] step_up start provider={identity['provider']} "
+        f"user={account['user_id'][:8]}"
+    )
+    return {
+        "flow_id": started["flow_id"],
+        "authorization_url": started["authorization_url"],
+        "expires_in": started["expires_in"],
+    }
+
+
+@app.post("/api/admin/step-up/complete")
+async def admin_step_up_complete(
+    body: AdminStepUpCompleteRequest, user: str = Depends(current_user)
+):
+    """Vérifie la réauthentification, puis ouvre la session d'administration.
+
+    Aucun jeton intermédiaire n'est émis entre la preuve et la session : un
+    secret de plus serait un secret de plus à voler, sans rien apporter puisque
+    la session peut être créée ici même.
+
+    Ce que cette route **ne fait jamais** : créer un compte, créer une identité
+    fédérée, rattacher une identité à un compte. Une réauthentification reprouve
+    une identité existante — elle n'en établit pas de nouvelle. Un rattachement
+    silencieux pendant une élévation de privilège serait le pire endroit
+    possible pour en faire un.
+    """
+    account = admin_candidate(user)
+
+    # Réservation atomique, comme une connexion ordinaire : une preuve ne sert
+    # qu'une fois, et un second retour avec le même identifiant ne passe pas.
+    flow = SSO_FLOW_STORE.begin_exchange(body.flow_id)
+    if flow is None:
+        raise auth_error(400, "AUTH_TIMEOUT")
+    if (flow["purpose"] or FLOW_PURPOSE_LOGIN) != FLOW_PURPOSE_ADMIN_STEP_UP:
+        # Un retour de connexion ordinaire n'est pas une preuve d'administration.
+        raise auth_error(400, "FLOW_PURPOSE_MISMATCH")
+    if flow["organization_id"] != nova_organization_id():
+        raise auth_error(400, "STATE_MISMATCH")
+    if flow["redirect_uri"] != body.redirect_uri:
+        raise auth_error(400, "REDIRECT_URI_INVALID")
+    if flow["expected_user_id"] != account["user_id"]:
+        # La tentative a été ouverte par quelqu'un d'autre.
+        raise auth_error(403, "ADMIN_STEP_UP_IDENTITY_MISMATCH")
+
+    config = provider_config_by_id(flow["provider_config_id"], flow["organization_id"])
+    if config is None or not config["enabled"]:
+        # Configuration désactivée entre le début et la fin du parcours.
+        raise auth_error(503, "PROVIDER_NOT_CONFIGURED")
+    adapter = ADAPTERS[config["provider_type"]]
+
+    tokens = await redeem_authorization_code(
+        config,
+        SsoExchangeRequest(
+            flow_id=body.flow_id, code=body.code,
+            code_verifier=body.code_verifier, redirect_uri=body.redirect_uri,
+        ),
+    )
+    id_token = tokens.get("id_token")
+    if not id_token:
+        raise auth_error(401, "ID_TOKEN_INVALID")
+    claims = await validate_id_token(config, id_token, flow["nonce_hash"])
+
+    # ── Fraîcheur ──────────────────────────────────────────────────────
+    #
+    # Le contrôle central de cette phase. « Le jeton vient d'être émis » ne dit
+    # rien : un IdP peut le réémettre depuis une session vieille de plusieurs
+    # jours, sans rien demander à personne. Seul `auth_time` dit quand la
+    # personne s'est réellement authentifiée.
+    fresh, reason = authentication_is_fresh(claims.get("auth_time"))
+    if not fresh:
+        print(f"[admin] step_up result=failure reason={reason}")
+        raise auth_error(401, "ADMIN_STEP_UP_TOO_OLD")
+
+    # ── Même identité ──────────────────────────────────────────────────
+    #
+    # Le navigateur peut être connecté à un autre compte de la même
+    # organisation. Même domaine, même adresse même : rien de tout cela ne
+    # suffit. C'est l'identité fédérée qui doit résoudre le même `user_id`.
+    external_subject = claims.get(adapter["subject_claim"])
+    external_issuer = config["oidc_issuer"] if config["provider_type"] == "oidc" else ""
+    if not external_subject:
+        raise auth_error(401, "ID_TOKEN_INVALID")
+    with db() as conn:
+        identity = conn.execute(
+            "SELECT user_id, organization_id FROM federated_identities "
+            "WHERE provider=? AND external_issuer=? AND external_subject=?",
+            (config["provider_type"], external_issuer, external_subject),
+        ).fetchone()
+    if (
+        identity is None
+        or identity["user_id"] != account["user_id"]
+        or identity["organization_id"] != flow["organization_id"]
+    ):
+        # Aucun rattachement de secours : si l'identité est inconnue, elle le
+        # reste. Une élévation de privilège n'est pas le moment de lier un
+        # compte.
+        print("[admin] step_up result=failure reason=identity_mismatch")
+        raise auth_error(403, "ADMIN_STEP_UP_IDENTITY_MISMATCH")
+
+    # Le tenant reste vérifié comme pour une connexion : une preuve venue d'un
+    # tenant non déclaré ne vaut rien, même si le sujet correspond.
+    if config["provider_type"] != "oidc":
+        claimed_tenant = claims.get(adapter["tenant_claim"], "")
+        if not claimed_tenant or claimed_tenant != config_tenant_value(config):
+            raise auth_error(403, "TENANT_NOT_ALLOWED")
+
+    # ── Le rôle, une dernière fois ─────────────────────────────────────
+    #
+    # Relu maintenant, et non au début : entre les deux, il a pu être retiré. Une
+    # réauthentification réussie ne rattrape pas un privilège révoqué.
+    account = admin_candidate(user)
+
+    SSO_FLOW_STORE.mark_consumed(body.flow_id)
+    session = create_admin_session(account, config["provider_type"])
     principal = AdminPrincipal(
-        user_id=row["user_id"],
-        email=row["email"],
-        organization_id=row["organization_id"] or nova_organization_id(),
+        user_id=account["user_id"],
+        email=account["email"],
+        organization_id=account["organization_id"] or nova_organization_id(),
         security_role=session["role"],
         session_id=session["session_id"],
-        auth_provider=row["identity_provider"],
+        auth_provider=config["provider_type"],
         issued_at=time.time(),
     )
     record_admin_action(
-        principal, "admin_session.create",
-        target_type="admin_session", target_id=session["session_id"],
+        principal, "admin_step_up.success", target_type="admin_session",
+        target_id=session["session_id"],
+        metadata={"provider_type": config["provider_type"]},
     )
-    # Le jeton n'est jamais journalisé, ici pas plus qu'ailleurs.
-    print(f"[admin] session opened role={session['role']}")
+    record_admin_action(
+        principal, "admin_session.create", target_type="admin_session",
+        target_id=session["session_id"],
+    )
+    # Ni jeton, ni `auth_time`, ni adresse : le fournisseur et l'issue suffisent.
+    print(f"[admin] step_up result=success provider={config['provider_type']}")
     return {
         "token": session["token"],
         "role": session["role"],
