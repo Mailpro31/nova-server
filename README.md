@@ -15,7 +15,7 @@ Nova Desktop ──HTTPS──> nova-server (FastAPI)
 
 ## Démarrage local
 
-Copier la configuration d'exemple et choisir un jeton administrateur :
+Copier la configuration d'exemple et l'ajuster :
 
 ```powershell
 Copy-Item .env.example .env
@@ -44,7 +44,6 @@ Sans SMTP, les codes à six chiffres sont affichés par
 | `NOVA_DOMAINS` | `eleves.ipsa.fr,ipsa.fr` | domaines email autorisés |
 | `NOVA_MAX_SEATS` | `300` | nombre maximal d'utilisateurs actifs |
 | `NOVA_MAX_MACHINES` | `3` | appareils actifs par compte |
-| `NOVA_ADMIN_TOKEN` | `nova-admin-local` | clé admin locale, à remplacer avant déploiement |
 | `NOVA_TOKEN_TTL_SECONDS` | `2592000` | durée d'une session en secondes |
 | `NOVA_SMTP_HOST/PORT/USER/PASS/FROM` | — | envoi des codes email |
 | `NOVA_ENTRA_TENANT_ID` | `organizations` | tenant Microsoft Entra ID |
@@ -75,9 +74,17 @@ Sans SMTP, les codes à six chiffres sont affichés par
 
 ## Administration
 
-Ouvrir `http://localhost:8080/admin`, puis entrer la valeur
-`NOVA_ADMIN_TOKEN` du fichier `.env`. Pour un test local avec la configuration
-d'exemple, utiliser `nova-admin-local`.
+L'administration passe par **Nova Admin** (`admin-web/`) : identifiant
+d'organisation, connexion par le fournisseur d'identité, puis réauthentification.
+Il n'y a pas de mot de passe ni de jeton d'administration partagé.
+
+Le premier administrateur — et la récupération quand plus personne ne peut se
+connecter — passe par la ligne de commande, sur le serveur :
+
+```bash
+python admin_cli.py grant <email> organization_admin
+python admin_cli.py discovery enable --endpoint https://nova.exemple.fr
+```
 
 L'admin peut consulter les sièges et compteurs, gérer rôles et cohortes,
 suspendre un compte et révoquer des appareils. Il n'accède pas au contenu des
@@ -88,12 +95,13 @@ dictées.
 Le guide complet est dans [`TESTING_CAMPUS.md`](TESTING_CAMPUS.md).
 
 ```powershell
-python -m unittest -v test_main.py
+python -m pytest
 ```
 
-Avant la production : placer l'API derrière HTTPS, configurer le SMTP, choisir
-un secret admin long, restreindre l'accès réseau et sauvegarder le volume de
-données.
+Avant la production : placer l'API derrière HTTPS, configurer le SMTP,
+restreindre l'accès réseau et sauvegarder le volume de données. Aucun secret
+d'administration n'est à choisir : il n'en existe plus — l'administration
+passe par Nova Admin, et son amorçage par `admin_cli.py`.
 
 Matériel pilote conseillé : un GPU NVIDIA de 24 Go pour les services Whisper et
 LLM. Sans GPU, ils peuvent être hébergés ailleurs via `NOVA_WHISPER_URL` et

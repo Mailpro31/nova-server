@@ -11,7 +11,6 @@ import random
 import re
 import base64
 import hashlib
-import hmac
 import ipaddress
 import json
 import secrets
@@ -146,8 +145,6 @@ WHISPER_URL = os.getenv("NOVA_WHISPER_URL", "http://whisper:8000")   # faster-wh
 LLM_URL = os.getenv("NOVA_LLM_URL", "http://llm:8000/v1")            # vLLM (API OpenAI)
 LLM_MODEL = os.getenv("NOVA_LLM_MODEL", "Qwen/Qwen2.5-14B-Instruct")
 
-ADMIN_TOKEN = os.getenv("NOVA_ADMIN_TOKEN", secrets.token_urlsafe(24))
-
 # Environnement d'exécution. Le défaut est `production` : un déploiement qui
 # oublie de le déclarer obtient le comportement le plus prudent, jamais le plus
 # bavard. Seul `development` autorise l'affichage d'un code de connexion.
@@ -163,12 +160,6 @@ NOVA_SERVER_MODE = os.getenv("NOVA_SERVER_MODE", SERVER_MODE_DEDICATED).strip().
 if NOVA_SERVER_MODE not in {SERVER_MODE_DEDICATED, SERVER_MODE_CONTROL_PLANE}:
     NOVA_SERVER_MODE = SERVER_MODE_DEDICATED
 
-# Le jeton d'administration partagé est **hérité**. Il authentifie une machine,
-# pas une personne : il ne peut ni être révoqué individuellement, ni figurer
-# dans un journal d'audit autrement que comme « quelqu'un qui le détenait ».
-# Il reste accepté en mode dédié pour ne pas casser les déploiements existants,
-# et jamais en mode Control Plane, où il autoriserait un porteur à administrer
-# des organisations qui ne sont pas la sienne.
 # ── Nova Admin (console web) ─────────────────────────────────────────────
 #
 # La console est servie depuis une autre origine que l'API : il faut donc
@@ -188,11 +179,6 @@ NOVA_ADMIN_ORIGINS = [
 # parle à un serveur qu'elle ne comprend pas, plutôt que d'échouer champ par
 # champ.
 CONTROL_CONTRACT_VERSION = 1
-
-LEGACY_ADMIN_TOKEN_ENABLED = (
-    os.getenv("NOVA_LEGACY_ADMIN_TOKEN", "true").strip().lower() != "false"
-    and NOVA_SERVER_MODE == SERVER_MODE_DEDICATED
-)
 
 # ---------------------------------------------------------------- db
 @contextmanager
@@ -1711,16 +1697,7 @@ def discovery_bootstrap_for(organization: dict) -> dict | None:
 
 init_db()
 
-# Le jeton d'administration partagé est une dette, pas une fonctionnalité. Un
-# déploiement qui s'y appuie encore hors développement doit le savoir en clair
-# au démarrage, plutôt que de le découvrir le jour où il faudra le révoquer.
-if LEGACY_ADMIN_TOKEN_ENABLED and NOVA_ENV != "development":
-    print(
-        "[admin] WARNING legacy X-Admin-Token enabled — deprecated, "
-        "authenticates a machine and not a person; set NOVA_LEGACY_ADMIN_TOKEN=false "
-        "once administrators have Nova security roles"
-    )
-print(f"[admin] server_mode={NOVA_SERVER_MODE} legacy_admin_token={LEGACY_ADMIN_TOKEN_ENABLED}")
+print(f"[admin] server_mode={NOVA_SERVER_MODE}")
 
 
 # ────────────────────── Accès aux comptes ─────────────────────────────────
@@ -2184,12 +2161,14 @@ def authenticated_token(authorization: str) -> str:
 
 # ─────────────────────────── Administration moderne ───────────────────────
 #
-# ## Ce que cette section remplace
+# ## Ce que cette section a remplacé
 #
-# `X-Admin-Token` authentifie **une machine, pas une personne**. Il ne se révoque
-# pas individuellement, ne dit pas qui a agi, ne distingue aucun rôle, et le même
-# secret circule entre tous ceux qui administrent. Un journal d'audit alimenté
-# par lui ne peut écrire qu'une chose : « quelqu'un qui détenait le jeton ».
+# Un jeton statique partagé, transmis en en-tête, authentifiait autrefois
+# l'administration. Il désignait **une machine, pas une personne** : il ne se
+# révoquait pas individuellement, ne disait pas qui avait agi, ne distinguait
+# aucun rôle, et le même secret circulait entre tous ceux qui administraient. Un
+# journal d'audit alimenté par lui ne pouvait écrire qu'une chose : « quelqu'un
+# qui le détenait ». Il a été retiré en Phase 28.
 #
 # ## Le modèle
 #
@@ -2607,36 +2586,25 @@ def resolve_admin_session(token: str) -> AdminPrincipal:
     )
 
 
-def admin_principal(
-    authorization: str = Header(default=""),
-    x_admin_token: str = Header(default=""),
-) -> AdminPrincipal:
+def admin_principal(authorization: str = Header(default="")) -> AdminPrincipal:
     """Identifie l'administrateur d'un appel.
 
-    Deux chemins, dans cet ordre : la session d'administration moderne, puis le
-    jeton hérité s'il est encore permis. Le client n'annonce jamais « ce jeton
-    est un jeton d'administration » — le serveur le sait par sa table. Un jeton
-    de session utilisateur présenté ici est simplement introuvable dans
-    `admin_sessions`, donc refusé : la séparation est stricte.
+    **Un seul chemin** depuis la Phase 28 : une session d'administration, ouverte
+    par SSO puis réauthentification.
+
+    Le jeton statique partagé qui existait à côté a été retiré. Il authentifiait
+    une machine et non une personne : il ne se révoquait pas individuellement —
+    le changer déconnectait tout le monde — et un journal d'audit alimenté par
+    lui ne pouvait écrire qu'une chose, « quelqu'un qui le détenait ».
+
+    Le client n'annonce jamais « ce jeton est un jeton d'administration » : le
+    serveur le sait par sa table. Un jeton de session utilisateur présenté ici
+    est simplement introuvable dans `admin_sessions`, donc refusé.
     """
     if authorization.startswith("Bearer "):
         token = authorization.removeprefix("Bearer ").strip()
         if token:
             return resolve_admin_session(token)
-    if x_admin_token and LEGACY_ADMIN_TOKEN_ENABLED:
-        if not hmac.compare_digest(x_admin_token, ADMIN_TOKEN):
-            raise auth_error(403, "ADMIN_REQUIRED")
-        # Le jeton hérité ne porte aucune identité. Il est cadré à
-        # l'organisation servie par cette instance, et à elle seule.
-        return AdminPrincipal(
-            user_id=None,
-            email=None,
-            organization_id=nova_organization_id(),
-            security_role=SECURITY_ROLE_ORGANIZATION_ADMIN,
-            session_id=None,
-            auth_provider="legacy_admin_token",
-            issued_at=time.time(),
-        )
     raise auth_error(401, "ADMIN_REQUIRED")
 
 
@@ -3964,10 +3932,10 @@ async def entra_pkce_exchange(body: SsoExchangeRequest):
 
 # ----------------------------- administration des configurations (interne)
 #
-# Le strict nécessaire pour éviter de manipuler SQLite à la main. Ce n'est pas
-# Nova Admin : pas d'interface, pas de gestion d'utilisateurs, pas de journal
-# d'audit. L'authentification est celle qui existe déjà — `X-Admin-Token` — et
-# la portée est l'organisation servie par cette instance, jamais une autre.
+# Ces routes servent Nova Admin et exigent une session d'administration, comme
+# le reste. Leur préfixe `/api/admin` est historique : il ne désigne plus un
+# mode d'authentification, seulement l'endroit où elles sont nées. La portée
+# reste l'organisation servie par cette instance, jamais une autre.
 
 
 class ProviderConfigRequest(BaseModel):

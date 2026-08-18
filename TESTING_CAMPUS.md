@@ -18,13 +18,13 @@ docker info
 Pour un test local simple, conserver :
 
 ```dotenv
-NOVA_ADMIN_TOKEN=nova-admin-local
 NOVA_ORGANIZATION_NAME=IPSA
 NOVA_ORGANIZATION_SHORT_NAME=IPSA
 ```
 
-Le jeton `nova-admin-local` est réservé au développement. Avant toute exposition
-réseau, le remplacer par un secret long et aléatoire.
+Aucun jeton d'administration n'est à définir : il n'en existe plus depuis la
+Phase 28. L'administration passe par Nova Admin, et son amorçage par
+`admin_cli.py` — voir § 3.
 
 ## 2. Démarrer selon le test
 
@@ -52,9 +52,17 @@ Invoke-RestMethod http://localhost:8080/api/config | ConvertTo-Json -Depth 6
 
 ## 3. Accéder à l'administration
 
-1. Ouvrir `http://localhost:8080/admin`.
-2. Saisir la valeur `NOVA_ADMIN_TOKEN` du fichier `.env`.
-3. Avec la configuration locale d'exemple : `nova-admin-local`.
+1. Attribuer le rôle depuis le serveur :
+   `python admin_cli.py grant <votre email> organization_admin`
+2. Activer la découverte si nécessaire :
+   `python admin_cli.py discovery enable --endpoint https://nova.exemple.fr`
+
+   Une adresse locale en clair (`http://127.0.0.1:8787`) est **refusée** par
+   défaut : le serveur l'annoncerait à des postes qui ne pourraient pas la
+   joindre. Pour un test local, poser d'abord
+   `NOVA_DISCOVERY_ALLOW_INSECURE_ENDPOINT=true` — un paramètre de
+   développement, jamais de production.
+3. Lancer Nova Admin (`cd admin-web && bun run dev`) et se connecter par SSO.
 
 Le panneau gère sièges, compteurs, rôles, cohortes, suspensions et appareils.
 Il ne permet jamais de consulter le contenu des dictées.
@@ -145,7 +153,7 @@ le traitement local et permettre de continuer.
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe -m unittest -v test_main.py
+.\.venv\Scripts\python.exe -m pytest
 ```
 
 ## 8. Arrêter le serveur

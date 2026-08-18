@@ -19,7 +19,6 @@ TEST_DIRECTORY = tempfile.TemporaryDirectory()
 # le même module, et le premier importé fixe la configuration pour les deux.
 os.environ.setdefault("NOVA_DB", os.path.join(TEST_DIRECTORY.name, "identity.db"))
 os.environ.setdefault("NOVA_DOMAINS", "example.com")
-os.environ.setdefault("NOVA_ADMIN_TOKEN", "test-admin-token")
 os.environ.setdefault("NOVA_ORGANIZATION_NAME", "Nova Test School")
 os.environ.setdefault("NOVA_ORGANIZATION_SHORT_NAME", "NTS")
 os.environ.setdefault("NOVA_ENTRA_CLIENT_ID", "")

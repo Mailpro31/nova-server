@@ -18,7 +18,6 @@ from unittest.mock import patch
 TEST_DIRECTORY = tempfile.TemporaryDirectory()
 os.environ["NOVA_DB"] = os.path.join(TEST_DIRECTORY.name, "nova-test.db")
 os.environ["NOVA_DOMAINS"] = "example.com"
-os.environ["NOVA_ADMIN_TOKEN"] = "test-admin-token"
 os.environ["NOVA_ORGANIZATION_NAME"] = "Nova Test School"
 os.environ["NOVA_ORGANIZATION_SHORT_NAME"] = "NTS"
 os.environ["NOVA_ENTRA_CLIENT_ID"] = ""
@@ -62,6 +61,32 @@ def ensure_provider_config(provider_type, **fields):
             tuple(columns.values()),
         )
         return columns["id"]
+
+
+def grant_admin_session(email: str = "operateur@example.com",
+                        role: str = "organization_admin") -> dict:
+    """Une session d'administration ouverte, sans rejouer tout le parcours.
+
+    Le jeton partage servait de raccourci aux tests qui n'ont rien a voir avec
+    l'authentification — configurations de fournisseur, decouverte. Il a disparu
+    en Phase 28 ; ce helper le remplace, en creant directement la session que le
+    step-up aurait produite.
+
+    Ce n'est pas un contournement : les tests d'authentification, eux, jouent le
+    parcours complet avec un fournisseur simule.
+    """
+    organization_id = main.nova_organization_id()
+    with main.db() as conn:
+        account = main.user_by_email(conn, organization_id, email)
+        if account is None:
+            main.create_user(conn, organization_id, email, security_role=role)
+            account = main.user_by_email(conn, organization_id, email)
+        else:
+            conn.execute("UPDATE users SET security_role=?, disabled=0, status='active' "
+                         "WHERE user_id=?", (role, account["user_id"]))
+            account = main.user_by_id(conn, account["user_id"])
+    session = main.create_admin_session(account, "test")
+    return {"Authorization": f"Bearer {session['token']}"}
 
 
 def clear_sso_flows():
@@ -213,22 +238,20 @@ class NovaServerTests(unittest.TestCase):
         )
         self.assertEqual(self.client.get("/api/me", headers=headers).status_code, 401)
 
-    def test_the_shared_token_still_opens_admin_routes_in_dedicated_mode(self):
-        """La console heritee est supprimee ; le jeton partage, lui, ouvre encore
-        les routes d'administration en mode dedie — pour les automatisations qui
-        en dependent. Il reste refuse par construction en mode Control Plane."""
+    def test_administration_requires_a_modern_session(self):
+        """Phase 28 : plus aucun jeton statique. L'administration passe par une
+        session ouverte par SSO puis reauthentification, ou par rien."""
         self.assertEqual(self.client.get("/admin").status_code, 404)
-
-        # Sans identifiant : 401. Le refus « interdit » suppose de savoir qui
-        # demande, et ici on ne le sait pas.
         self.assertEqual(self.client.get("/api/admin/discovery").status_code, 401)
+        for value in ("faux", "test-admin-token", "nova-admin-local"):
+            self.assertEqual(
+                self.client.get("/api/admin/discovery",
+                                headers={"X-Admin-Token": value}).status_code, 401,
+                value)
+        # Une session moderne, elle, ouvre.
         self.assertEqual(
             self.client.get("/api/admin/discovery",
-                            headers={"X-Admin-Token": "faux"}).status_code, 403)
-        self.assertEqual(
-            self.client.get("/api/admin/discovery",
-                            headers={"X-Admin-Token": "test-admin-token"}).status_code,
-            200)
+                            headers=grant_admin_session()).status_code, 200)
 
     def test_microsoft_device_flow_creates_a_nova_session(self):
         class Response:
@@ -2961,7 +2984,10 @@ class FederatedIdentityMigrationTests(unittest.TestCase):
 class ProviderConfigLifecycleTests(unittest.TestCase):
     """Configurations de fournisseur : import hérité, validation, cycle de vie."""
 
-    ADMIN = {"X-Admin-Token": "test-admin-token"}
+    @property
+    def ADMIN(self) -> dict:
+        # Session d'administration moderne : le jeton partage n'existe plus.
+        return grant_admin_session()
 
     @classmethod
     def setUpClass(cls):
@@ -3221,8 +3247,8 @@ class ProviderConfigLifecycleTests(unittest.TestCase):
         self.assertEqual(duplicate.json()["detail"], "PROVIDER_CONFIG_DUPLICATE")
 
     def test_the_admin_api_requires_an_administrator(self):
-        # Sans le moindre identifiant : 401, « on ne sait pas qui vous êtes ».
-        # Avec un mauvais jeton : 403, « on sait, et c'est non ».
+        # Sans session d'administration, rien n'ouvre — et le jeton partage
+        # n'existe plus, donc il n'ouvre rien non plus.
         self.assertEqual(
             self.client.get("/api/admin/provider-configs").status_code, 401)
         self.assertEqual(
@@ -3231,7 +3257,7 @@ class ProviderConfigLifecycleTests(unittest.TestCase):
         self.assertEqual(
             self.client.post("/api/admin/provider-configs",
                              headers={"X-Admin-Token": "mauvais-jeton"},
-                             json={"provider_type": "oidc"}).status_code, 403)
+                             json={"provider_type": "oidc"}).status_code, 401)
 
     def test_an_unknown_provider_type_is_refused(self):
         response = self.client.post(
@@ -3704,7 +3730,10 @@ class OrganizationDiscoveryTests(unittest.TestCase):
     accès, et ne rien révéler qu'un annuaire public ne révélerait.
     """
 
-    ADMIN = {"X-Admin-Token": "test-admin-token"}
+    @property
+    def ADMIN(self) -> dict:
+        # Session d'administration moderne : le jeton partage n'existe plus.
+        return grant_admin_session()
     SLUG = "ecole-exemple"
     ENDPOINT = "https://nova.example.edu"
 
@@ -3904,9 +3933,10 @@ class OrganizationDiscoveryTests(unittest.TestCase):
         self.assertEqual(self.client.get("/api/admin/discovery").status_code, 401)
         self.assertEqual(
             self.client.post("/api/admin/discovery", json={}).status_code, 401)
+        # Le jeton partage a ete retire : il n'ouvre plus rien.
         self.assertEqual(
             self.client.post("/api/admin/discovery", json={},
-                             headers={"X-Admin-Token": "mauvais"}).status_code, 403)
+                             headers={"X-Admin-Token": "mauvais"}).status_code, 401)
 
     # -- amorçage -----------------------------------------------------------
 
@@ -4418,42 +4448,56 @@ class AdminTenantIsolationTests(AdminTestCase):
 
 
 class LegacyAdminTokenTests(AdminTestCase):
-    """Le jeton partagé : conservé, cadré, et déprécié."""
+    """Le jeton d'administration partage : retire en Phase 28.
 
-    ADMIN = {"X-Admin-Token": "test-admin-token"}
+    Ces tests ne verifient plus qu'il fonctionne — ils verifient qu'il
+    n'accorde plus rien, quelle que soit la valeur presentee.
+    """
 
-    def test_it_still_works_in_dedicated_mode(self):
-        self.assertEqual(
-            self.client.get("/api/admin/discovery", headers=self.ADMIN).status_code, 200)
+    def test_no_value_of_the_legacy_header_grants_anything(self):
+        # Y compris l'ancienne valeur de fixture, celle qui ouvrait tout.
+        for value in ("", "test-admin-token", "nova-admin-local",
+                      "n'importe quoi", "a" * 64):
+            for path in ("/api/admin/discovery", "/api/admin/provider-configs",
+                         "/api/control/organization"):
+                response = self.client.get(path, headers={"X-Admin-Token": value})
+                self.assertEqual(response.status_code, 401, f"{path} / {value!r}")
+                self.assertEqual(response.json()["detail"], "ADMIN_REQUIRED")
 
-    def test_it_is_refused_when_disabled(self):
-        """Sur un Control Plane, ce jeton autoriserait son porteur à administrer
-        une organisation qui n'est pas la sienne — il y est donc éteint."""
-        with patch.object(main, "LEGACY_ADMIN_TOKEN_ENABLED", False):
-            response = self.client.get("/api/admin/discovery", headers=self.ADMIN)
+    def test_the_legacy_header_does_not_help_a_user_session(self):
+        """Presenter les deux ne vaut pas mieux que presenter le mauvais."""
+        email = "combine@example.com"
+        user_token = self.sign_in(email)
+        self.with_role(email, main.SECURITY_ROLE_ORGANIZATION_ADMIN)
+        response = self.client.get(
+            "/api/control/organization",
+            headers={"Authorization": f"Bearer {user_token}",
+                     "X-Admin-Token": "test-admin-token"})
         self.assertEqual(response.status_code, 401)
 
-    def test_control_plane_mode_disables_it_by_construction(self):
-        # La constante est dérivée du mode : il n'existe aucune combinaison
-        # « control_plane + jeton hérité actif » atteignable par configuration.
+    def test_nothing_of_the_mechanism_remains(self):
+        # Ni constante, ni drapeau, ni secret genere au demarrage.
+        for attribute in ("ADMIN_TOKEN", "LEGACY_ADMIN_TOKEN_ENABLED",
+                          "require_admin"):
+            self.assertFalse(hasattr(main, attribute), attribute)
+
+    def test_the_principal_reads_a_single_header(self):
+        """Une seule porte : `Authorization`. Le serveur ne regarde plus ailleurs."""
+        import inspect
+        signature = inspect.signature(main.admin_principal)
+        self.assertEqual(list(signature.parameters), ["authorization"])
+
+    def test_no_admin_secret_is_fabricated_at_startup(self):
+        """Un secret d'administration genere par defaut est un secret partage
+        par tous les deploiements qui oublient de le definir."""
         source = inspect.getsource(main)
-        self.assertIn("and NOVA_SERVER_MODE == SERVER_MODE_DEDICATED", source)
-        self.assertEqual(main.NOVA_SERVER_MODE, main.SERVER_MODE_DEDICATED)
-
-    def test_it_is_scoped_to_the_served_organization(self):
-        response = self.client.get(
-            "/api/control/organizations/organisation-voisine", headers=self.ADMIN)
-        self.assertEqual(response.status_code, 404)
-
-    def test_it_has_no_admin_session_to_close(self):
-        response = self.client.post("/api/admin/session/logout", headers=self.ADMIN)
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.json()["detail"], "ADMIN_SESSION_NOT_APPLICABLE")
-
-    def test_a_wrong_token_is_refused(self):
-        self.assertEqual(
-            self.client.get("/api/admin/discovery",
-                            headers={"X-Admin-Token": "faux"}).status_code, 403)
+        self.assertNotIn("NOVA_ADMIN_TOKEN", source)
+        self.assertNotIn("NOVA_LEGACY_ADMIN_TOKEN", source)
+        # `secrets.token_urlsafe` sert toujours — aux identifiants de flux SSO,
+        # aux jetons de session — mais plus a fabriquer une valeur
+        # d'administration au demarrage.
+        self.assertNotIn("X-Admin-Token", source.replace(
+            "# ", ""))  # ni en runtime, ni en commentaire residuel
 
 
 class AdminAuditLogTests(AdminTestCase):

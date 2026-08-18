@@ -19,6 +19,10 @@ Usage :
     python admin_cli.py revoke <email>        [--organization <slug|id>]
     python admin_cli.py list                  [--organization <slug|id>]
 
+    python admin_cli.py discovery show
+    python admin_cli.py discovery enable --endpoint https://nova.exemple.fr
+    python admin_cli.py discovery disable
+
 Sans `--organization`, l'organisation servie par l'instance. En mode
 control_plane, l'option devient obligatoire : une adresse ne désigne une
 personne qu'à l'intérieur d'une organisation.
@@ -80,6 +84,73 @@ def revoke(email: str, organization: str | None = None) -> int:
     return grant(email, main.SECURITY_ROLE_MEMBER, organization)
 
 
+def discovery(action: str, endpoint: str | None = None,
+              organization: str | None = None) -> int:
+    """Lit ou change la configuration de decouverte d'une organisation.
+
+    ## Pourquoi cette commande existe
+
+    Sans elle, l'amorçage tourne en rond. Activer la decouverte demande une
+    session d'administration ; ouvrir une session d'administration demande Nova
+    Admin ; et Nova Admin ne demarre pas tant que la decouverte ne repond pas.
+    Une organisation neuve ne pourrait donc jamais sortir de cet etat.
+
+    Le jeton partage servait de sortie de secours. Il disparait en Phase 28, et
+    cette commande prend sa place — au bon endroit : sur le serveur, entre les
+    mains de qui le detient deja, comme le reste de l'amorcage.
+    """
+    try:
+        organization_id = resolve_organization(organization)
+    except LookupError as error:
+        print(f"refusé : {error}")
+        return 1
+
+    with main.db() as conn:
+        row = conn.execute(
+            "SELECT discovery_slug, discovery_enabled, service_endpoint, status "
+            "FROM organizations WHERE id=?", (organization_id,)
+        ).fetchone()
+    if row is None:
+        print("refusé : organisation introuvable")
+        return 1
+
+    if action == "show":
+        print(f"  slug      : {row['discovery_slug'] or '(aucun)'}")
+        print(f"  activee   : {bool(row['discovery_enabled'])}")
+        print(f"  adresse   : {row['service_endpoint'] or '(aucune)'}")
+        print(f"  statut    : {row['status']}")
+        return 0
+
+    if action == "disable":
+        with main.db() as conn:
+            conn.execute("UPDATE organizations SET discovery_enabled=0 WHERE id=?",
+                         (organization_id,))
+        print("decouverte desactivee")
+        return 0
+
+    if action == "enable":
+        target = (endpoint or row["service_endpoint"] or "").strip().rstrip("/")
+        if not target:
+            print("refusé : aucune adresse de service — passez --endpoint")
+            return 1
+        # Meme validation que l'API : la ligne de commande n'est pas une porte
+        # derobee vers une adresse que le serveur refuserait par ailleurs.
+        allowed, reason = main.service_endpoint_is_allowed(
+            target, main.DISCOVERY_ALLOW_INSECURE_ENDPOINT)
+        if not allowed:
+            print(f"refusé : adresse de service inacceptable ({reason})")
+            return 1
+        with main.db() as conn:
+            conn.execute(
+                "UPDATE organizations SET discovery_enabled=1, service_endpoint=? "
+                "WHERE id=?", (target, organization_id))
+        print(f"decouverte activee sur {target}")
+        return 0
+
+    print(f"refusé : action inconnue ({action})")
+    return 2
+
+
 def list_admins(organization: str | None = None) -> int:
     try:
         organization_id = resolve_organization(organization)
@@ -126,6 +197,14 @@ def run(argv: list[str]) -> int:
         return revoke(rest[0], organization)
     if command == "list" and not rest:
         return list_admins(organization)
+    if command == "discovery" and len(rest) >= 1:
+        try:
+            rest, endpoint = _extract_option(list(rest), "--endpoint")
+        except ValueError as error:
+            print(f"refusé : {error}")
+            return 2
+        if len(rest) == 1:
+            return discovery(rest[0], endpoint, organization)
     _print_usage()
     return 2
 
