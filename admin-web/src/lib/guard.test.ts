@@ -141,6 +141,103 @@ describe("portée d'organisation", () => {
   });
 });
 
+describe("gestion des administrateurs", () => {
+  test("toutes les mutations designent un user_id, jamais une adresse", async () => {
+    // Une adresse est un attribut mutable depuis la Phase 23 : muter un
+    // privilege en la designant reviendrait a viser une cible qui bouge.
+    const client = readFileSync("src/lib/controlPlane.ts", "utf8");
+    const mutation = client.slice(
+      client.indexOf("setAdministratorRole"),
+      client.indexOf("searchMembers"),
+    );
+    expect(mutation).toContain("${userId}");
+    expect(mutation).not.toContain("${email}");
+  });
+
+  test("le client n'envoie qu'un role, jamais de capacites", async () => {
+    // Laisser passer une liste de capacites reviendrait a laisser le navigateur
+    // ecrire la matrice d'autorisation.
+    const client = readFileSync("src/lib/controlPlane.ts", "utf8");
+    const mutation = client.slice(
+      client.indexOf("setAdministratorRole"),
+      client.indexOf("searchMembers"),
+    );
+    expect(mutation).toContain("security_role: role");
+    expect(mutation).not.toContain("capabilities");
+  });
+
+  test("les actions de gestion exigent identity_manage", async () => {
+    const page = readFileSync("src/pages/Administrators.tsx", "utf8");
+    expect(page).toContain("CAPABILITY.identityManage");
+    // Le formulaire d'attribution n'apparait pas sans la capacite.
+    expect(page).toContain("{mayManage && <GrantAccess");
+  });
+
+  test("le refus du dernier gestionnaire a son message propre", async () => {
+    const { errorMessage } = await import("./messages");
+    const specific = errorMessage("conflict", "ADMIN_LAST_IDENTITY_MANAGER");
+    expect(specific).not.toBe(errorMessage("conflict"));
+    expect(specific.toLowerCase()).toContain("at least one organization administrator");
+  });
+
+  test("retirer l'acces n'est pas supprimer la personne", async () => {
+    const { t } = await import("./messages");
+    // Le texte de confirmation doit lever l'ambiguite : c'est le privilege qui
+    // part, pas le compte.
+    expect(t.administrators.removeBody.toLowerCase()).toContain("keeps their nova account");
+    expect(t.administrators.removeTitle.toLowerCase()).not.toContain("delete");
+  });
+
+  test("l'amorcage par la ligne de commande est annonce", async () => {
+    const { t } = await import("./messages");
+    // Sans cette phrase, on chercherait un bouton qui n'existera jamais.
+    expect(t.administrators.bootstrapNote.toLowerCase()).toContain("command line");
+  });
+
+  test("aucun ecran ne cree une personne", async () => {
+    const page = readFileSync("src/pages/Administrators.tsx", "utf8");
+    for (const forbidden of ["Invite", "Create user", "New user", "Add person"]) {
+      expect(page).not.toContain(forbidden);
+    }
+  });
+});
+
+describe("journal d'audit", () => {
+  test("la vue est en lecture seule", async () => {
+    const client = readFileSync("src/lib/controlPlane.ts", "utf8");
+    const audit = client.slice(client.indexOf("  audit("), client.indexOf("signOutAdmin"));
+    // Aucune methode d'ecriture : ni POST, ni DELETE.
+    expect(audit).not.toContain("method:");
+  });
+
+  test("la pagination est demandee explicitement", async () => {
+    const client = readFileSync("src/lib/controlPlane.ts", "utf8");
+    expect(client).toContain('params.set("limit"');
+    expect(client).toContain('params.set("before"');
+  });
+
+  test("l'integrite reelle est annoncee sans exageration", async () => {
+    const { t } = await import("./messages");
+    // SQLite ne protege pas un fichier de celui qui le detient : pretendre
+    // l'immuabilite serait faux.
+    expect(t.security.auditIntegrity.toLowerCase()).toContain("append-only");
+    expect(t.security.auditIntegrity.toLowerCase()).toContain("can still alter");
+  });
+
+  test("un acteur absent est nomme plutot que laisse vide", async () => {
+    const { t } = await import("./messages");
+    expect(t.security.auditLegacyActor).toBeTruthy();
+    const rest = readFileSync("src/pages/Rest.tsx", "utf8");
+    expect(rest).toContain("t.security.auditLegacyActor");
+  });
+
+  test("l'audit n'est demande que par qui peut le lire", async () => {
+    const rest = readFileSync("src/pages/Rest.tsx", "utf8");
+    expect(rest).toContain("CAPABILITY.securityManage");
+    expect(rest).toContain("if (!mayRead) return null;");
+  });
+});
+
 describe("retours d'erreur visibles", () => {
   test("une boite de confirmation affiche le refus du serveur", () => {
     // Le refus arrivait bien (409), etait capture et stocke — puis rendu dans

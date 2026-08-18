@@ -214,7 +214,11 @@ class NovaServerTests(unittest.TestCase):
         self.assertEqual(self.client.get("/api/me", headers=headers).status_code, 401)
 
     def test_admin_requires_the_configured_token(self):
-        page = self.client.get("/admin")
+        # La console heritee n'est plus exposee : elle contourne les roles, la
+        # reauthentification et l'audit nominatif. Nova Admin la remplace.
+        self.assertEqual(self.client.get("/admin").status_code, 404)
+        with patch.object(main, "LEGACY_ADMIN_UI_ENABLED", True):
+            page = self.client.get("/admin")
         self.assertEqual(page.status_code, 200)
         self.assertIn("Nova — Administration", page.text)
 
@@ -5053,6 +5057,393 @@ class AdminStepUpTests(AdminTestCase):
         for secret in (body["token"], flow_id, self.NONCE, "code-microsoft",
                        self.EMAIL):
             self.assertNotIn(secret, printed_text)
+
+
+# ═══════════ Phase 26 — gestion des administrateurs et audit ══════════════
+
+
+class AdministratorManagementTests(AdminTestCase):
+    """Nommer, changer, retirer — depuis Nova Admin, pour son organisation."""
+
+    def organization(self) -> str:
+        return main.nova_organization_id()
+
+    def path(self, suffix: str = "") -> str:
+        return f"/api/control/organizations/{self.organization()}/administrators{suffix}"
+
+    def member(self, email: str, role=main.SECURITY_ROLE_MEMBER) -> str:
+        """Un compte de l'organisation, avec le role demande."""
+        self.sign_in(email, machine=f"poste-{email}")
+        self.with_role(email, role)
+        with main.db() as conn:
+            return main.user_by_email(conn, self.organization(), email)["user_id"]
+
+    def set_role(self, token: str, user_id: str, role: str):
+        return self.client.post(
+            self.path(f"/{user_id}/role"), headers=self.auth(token),
+            json={"security_role": role})
+
+    # -- liste --------------------------------------------------------------
+
+    def test_the_list_shows_administrators_and_nothing_else(self):
+        token = self.admin_session()
+        self.member("simple@example.com")
+        self.member("technique@example.com", main.SECURITY_ROLE_IT_ADMIN)
+
+        body = self.client.get(self.path(), headers=self.auth(token)).json()
+        roles = {a["email"]: a["security_role"] for a in body["administrators"]}
+        self.assertIn("technique@example.com", roles)
+        # Un membre ordinaire n'est pas un administrateur.
+        self.assertNotIn("simple@example.com", roles)
+
+    def test_the_list_carries_no_secret(self):
+        token = self.admin_session()
+        raw = self.client.get(self.path(), headers=self.auth(token)).text
+        for forbidden in ("token", "secret", "external_subject", "tenant"):
+            self.assertNotIn(forbidden, raw.lower())
+
+    def test_the_sole_identity_manager_is_signalled(self):
+        token = self.admin_session()
+        body = self.client.get(self.path(), headers=self.auth(token)).json()
+        # Un seul organization_admin : l'interface peut desactiver l'action
+        # plutot que de la proposer avant de la refuser.
+        self.assertIsNotNone(body["sole_identity_manager"])
+
+    # -- attribution --------------------------------------------------------
+
+    def test_granting_a_role_to_an_existing_member(self):
+        token = self.admin_session()
+        target = self.member("promu@example.com")
+        response = self.set_role(token, target, main.SECURITY_ROLE_IT_ADMIN)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["security_role"], main.SECURITY_ROLE_IT_ADMIN)
+        self.assertIn("deployment_manage", response.json()["capabilities"])
+
+    def test_removing_admin_access_is_not_deleting_the_person(self):
+        token = self.admin_session()
+        target = self.member("retrograde@example.com", main.SECURITY_ROLE_IT_ADMIN)
+        self.set_role(token, target, main.SECURITY_ROLE_MEMBER)
+        with main.db() as conn:
+            account = main.user_by_id(conn, target)
+        # Le compte existe toujours, actif : il cesse d'administrer, il ne
+        # disparait pas.
+        self.assertIsNotNone(account)
+        self.assertEqual(main.account_status(account), "active")
+        self.assertEqual(main.security_role_for(account), main.SECURITY_ROLE_MEMBER)
+
+    def test_an_unknown_role_is_refused(self):
+        token = self.admin_session()
+        target = self.member("cible@example.com")
+        response = self.set_role(token, target, "super_utilisateur")
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"], "SECURITY_ROLE_INVALID")
+
+    def test_the_client_cannot_invent_capabilities(self):
+        """Le navigateur nomme un role ; le serveur en deduit les capacites."""
+        token = self.admin_session()
+        target = self.member("ambitieux@example.com")
+        response = self.client.post(
+            self.path(f"/{target}/role"), headers=self.auth(token),
+            json={"security_role": "read_only",
+                  "capabilities": ["identity_manage", "security_manage"]})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(sorted(response.json()["capabilities"]),
+                         sorted(main.capabilities_for_role("read_only")))
+
+    def test_an_unknown_user_is_not_found(self):
+        token = self.admin_session()
+        response = self.set_role(token, "identifiant-invente", "it_admin")
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["detail"], "USER_NOT_FOUND")
+
+    # -- capacites ----------------------------------------------------------
+
+    def test_it_admin_cannot_manage_administrators(self):
+        """La matrice suffit : `it_admin` n'a pas `identity_manage`, donc il ne
+        peut elever personne — pas meme lui."""
+        token = self.admin_session("it@example.com", main.SECURITY_ROLE_IT_ADMIN,
+                                   subject="oid-it")
+        with main.db() as conn:
+            himself = main.user_by_email(conn, self.organization(),
+                                         "it@example.com")["user_id"]
+        response = self.set_role(token, himself, main.SECURITY_ROLE_ORGANIZATION_ADMIN)
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["detail"], "ADMIN_ROLE_REQUIRED")
+
+    def test_read_only_cannot_manage_administrators(self):
+        token = self.admin_session("lecture@example.com", main.SECURITY_ROLE_READ_ONLY,
+                                   subject="oid-lecture")
+        target = self.member("cible2@example.com")
+        self.assertEqual(
+            self.set_role(token, target, "it_admin").status_code, 403)
+
+    def test_a_user_session_cannot_manage_administrators(self):
+        email = "utilisateur@example.com"
+        user_token = self.sign_in(email)
+        self.with_role(email, main.SECURITY_ROLE_ORGANIZATION_ADMIN)
+        target = self.member("cible3@example.com")
+        # Meme role, mais pas de session d'administration ouverte.
+        self.assertEqual(
+            self.set_role(user_token, target, "it_admin").status_code, 401)
+
+    # -- garde-fou du dernier gestionnaire ----------------------------------
+
+    def test_the_last_identity_manager_cannot_step_down(self):
+        """Le cas qui arrive naturellement : l'unique administrateur se
+        retrograde « pour voir »."""
+        token = self.admin_session()
+        with main.db() as conn:
+            himself = main.user_by_email(conn, self.organization(),
+                                         "admin@example.com")["user_id"]
+        response = self.set_role(token, himself, main.SECURITY_ROLE_MEMBER)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["detail"], "ADMIN_LAST_IDENTITY_MANAGER")
+        # Et rien n'a bouge a moitie.
+        with main.db() as conn:
+            self.assertEqual(
+                main.security_role_for(main.user_by_id(conn, himself)),
+                main.SECURITY_ROLE_ORGANIZATION_ADMIN)
+
+    def test_a_manager_can_step_down_once_another_exists(self):
+        token = self.admin_session()
+        with main.db() as conn:
+            himself = main.user_by_email(conn, self.organization(),
+                                         "admin@example.com")["user_id"]
+        successor = self.member("successeur@example.com")
+        self.assertEqual(
+            self.set_role(token, successor,
+                          main.SECURITY_ROLE_ORGANIZATION_ADMIN).status_code, 200)
+        self.assertEqual(
+            self.set_role(token, himself, main.SECURITY_ROLE_MEMBER).status_code, 200)
+
+    def test_demoting_to_it_admin_also_loses_management(self):
+        # `it_admin` n'a pas `identity_manage` : se retrograder ainsi viderait
+        # aussi l'organisation de tout gestionnaire.
+        token = self.admin_session()
+        with main.db() as conn:
+            himself = main.user_by_email(conn, self.organization(),
+                                         "admin@example.com")["user_id"]
+        response = self.set_role(token, himself, main.SECURITY_ROLE_IT_ADMIN)
+        self.assertEqual(response.status_code, 409)
+
+    def test_a_disabled_manager_does_not_count(self):
+        """Un compte suspendu ne peut plus administrer : il ne doit donc pas
+        servir a justifier le retrait du dernier gestionnaire actif."""
+        token = self.admin_session()
+        with main.db() as conn:
+            himself = main.user_by_email(conn, self.organization(),
+                                         "admin@example.com")["user_id"]
+        dormant = self.member("dormant@example.com",
+                              main.SECURITY_ROLE_ORGANIZATION_ADMIN)
+        with main.db() as conn:
+            conn.execute("UPDATE users SET disabled=1 WHERE user_id=?", (dormant,))
+        response = self.set_role(token, himself, main.SECURITY_ROLE_MEMBER)
+        self.assertEqual(response.status_code, 409)
+
+    # -- sessions -----------------------------------------------------------
+
+    def test_a_role_change_closes_the_target_sessions(self):
+        token = self.admin_session()
+        victim_token = self.admin_session("autre-admin@example.com",
+                                          main.SECURITY_ROLE_ORGANIZATION_ADMIN,
+                                          subject="oid-autre")
+        with main.db() as conn:
+            victim = main.user_by_email(conn, self.organization(),
+                                        "autre-admin@example.com")["user_id"]
+        # Sa session fonctionne encore.
+        self.assertEqual(
+            self.client.get("/api/control/organization",
+                            headers=self.auth(victim_token)).status_code, 200)
+        self.set_role(token, victim, main.SECURITY_ROLE_READ_ONLY)
+        # Elle porte des capacites perimees : elle est fermee.
+        response = self.client.get("/api/control/organization",
+                                   headers=self.auth(victim_token))
+        self.assertEqual(response.status_code, 401)
+
+    # -- isolation ----------------------------------------------------------
+
+    def test_another_organization_is_invisible(self):
+        token = self.admin_session()
+        response = self.client.get(
+            "/api/control/organizations/organisation-voisine/administrators",
+            headers=self.auth(token))
+        self.assertEqual(response.status_code, 404)
+
+    def test_a_user_of_another_organization_cannot_be_promoted(self):
+        token = self.admin_session()
+        with main.db() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO organizations(id, slug, display_name, "
+                "org_type, status, created_at) VALUES (?,?,?,?,?,?)",
+                ("org-voisine-26", "voisine", "Voisine", "education", "active",
+                 time.time()))
+            stranger = main.create_user(conn, "org-voisine-26", "etranger@example.com")
+        response = self.set_role(token, stranger, "it_admin")
+        self.assertEqual(response.status_code, 404)
+        with main.db() as conn:
+            # Le compte voisin n'a pas bouge.
+            self.assertEqual(
+                main.security_role_for(main.user_by_id(conn, stranger)), "member")
+            conn.execute("DELETE FROM users WHERE user_id=?", (stranger,))
+            conn.execute("DELETE FROM organizations WHERE id='org-voisine-26'")
+
+
+class MemberSearchTests(AdminTestCase):
+    """Choisir qui nommer, sans deverser l'annuaire."""
+
+    def path(self, query: str) -> str:
+        organization = main.nova_organization_id()
+        return f"/api/control/organizations/{organization}/members?query={query}"
+
+    def test_a_prefix_search_finds_a_member(self):
+        token = self.admin_session()
+        self.sign_in("cherchable@example.com", machine="poste-c")
+        body = self.client.get(self.path("cherch"), headers=self.auth(token)).json()
+        self.assertIn("cherchable@example.com",
+                      [m["email"] for m in body["members"]])
+
+    def test_an_empty_query_lists_nothing(self):
+        """Pas de listing sans terme : une console d'administration n'a pas a
+        deverser l'annuaire pour attribuer un role."""
+        token = self.admin_session()
+        for query in ("", "a"):
+            body = self.client.get(self.path(query), headers=self.auth(token)).json()
+            self.assertEqual(body["members"], [])
+            self.assertTrue(body["query_too_short"])
+
+    def test_the_result_is_capped(self):
+        token = self.admin_session()
+        body = self.client.get(self.path("ab"), headers=self.auth(token)).json()
+        self.assertLessEqual(len(body["members"]), main.MEMBER_SEARCH_LIMIT)
+
+    def test_it_admin_cannot_search_members(self):
+        token = self.admin_session("it2@example.com", main.SECURITY_ROLE_IT_ADMIN,
+                                   subject="oid-it2")
+        self.assertEqual(
+            self.client.get(self.path("test"), headers=self.auth(token)).status_code,
+            403)
+
+
+class AuditReadTests(AdminTestCase):
+    """Lire le journal, sans jamais y trouver un secret."""
+
+    def path(self, suffix: str = "") -> str:
+        organization = main.nova_organization_id()
+        return f"/api/control/organizations/{organization}/audit{suffix}"
+
+    def test_recent_activity_is_readable(self):
+        token = self.admin_session()
+        body = self.client.get(self.path(), headers=self.auth(token)).json()
+        actions = [e["action"] for e in body["entries"]]
+        self.assertIn("admin_session.create", actions)
+        # Chaque ligne porte de quoi etre lue par un humain.
+        entry = body["entries"][0]
+        for field in ("created_at", "actor_role", "action", "action_label"):
+            self.assertIsNotNone(entry[field])
+
+    def test_actions_are_human_readable(self):
+        token = self.admin_session()
+        body = self.client.get(self.path(), headers=self.auth(token)).json()
+        labels = {e["action"]: e["action_label"] for e in body["entries"]}
+        self.assertEqual(labels.get("admin_session.create"),
+                         "Opened an administration session")
+
+    def test_a_role_change_is_recorded_with_both_roles(self):
+        token = self.admin_session()
+        self.sign_in("audite@example.com", machine="poste-a")
+        with main.db() as conn:
+            target = main.user_by_email(conn, main.nova_organization_id(),
+                                        "audite@example.com")["user_id"]
+        self.client.post(
+            f"{self.path().replace('/audit', '/administrators')}/{target}/role",
+            headers=self.auth(token), json={"security_role": "it_admin"})
+
+        body = self.client.get(self.path(), headers=self.auth(token)).json()
+        grant = next(e for e in body["entries"] if e["action"] == "admin_role.grant")
+        self.assertEqual(grant["target_id"], target)
+        self.assertEqual(grant["metadata"]["previous_role"], "member")
+        self.assertEqual(grant["metadata"]["security_role"], "it_admin")
+        self.assertEqual(grant["action_label"], "Granted administrator role")
+
+    def test_pagination_is_enforced(self):
+        token = self.admin_session()
+        body = self.client.get(self.path("?limit=1"), headers=self.auth(token)).json()
+        self.assertEqual(len(body["entries"]), 1)
+        self.assertEqual(body["limit"], 1)
+
+    def test_an_absurd_limit_is_capped(self):
+        token = self.admin_session()
+        body = self.client.get(self.path("?limit=100000"),
+                               headers=self.auth(token)).json()
+        self.assertEqual(body["limit"], main.AUDIT_PAGE_MAX)
+
+    def test_the_cursor_walks_backwards(self):
+        token = self.admin_session()
+        first = self.client.get(self.path("?limit=1"), headers=self.auth(token)).json()
+        if first["next_before"] is None:
+            self.skipTest("pas assez d'entrees pour paginer")
+        second = self.client.get(
+            self.path(f"?limit=1&before={first['next_before']}"),
+            headers=self.auth(token)).json()
+        if second["entries"]:
+            self.assertLess(second["entries"][0]["created_at"],
+                            first["entries"][0]["created_at"])
+
+    def test_filtering_by_action(self):
+        token = self.admin_session()
+        body = self.client.get(self.path("?action=admin_session.create"),
+                               headers=self.auth(token)).json()
+        self.assertTrue(all(e["action"] == "admin_session.create"
+                            for e in body["entries"]))
+
+    def test_no_secret_ever_reaches_the_audit_view(self):
+        token = self.admin_session()
+        clear_provider_configs()
+        self.client.post(
+            "/api/admin/provider-configs", headers=self.auth(token),
+            json={"provider_type": "oidc", "oidc_issuer": "https://idp.example.com",
+                  "oidc_client_id": "client", "oidc_client_secret": "secret-absolu"})
+        raw = self.client.get(self.path(), headers=self.auth(token)).text
+        for forbidden in ("secret-absolu", "eyJ", "auth_time", "code_verifier",
+                          "nonce"):
+            self.assertNotIn(forbidden, raw)
+        clear_provider_configs()
+
+    def test_reading_the_audit_requires_security_manage(self):
+        token = self.admin_session("it3@example.com", main.SECURITY_ROLE_IT_ADMIN,
+                                   subject="oid-it3")
+        self.assertEqual(
+            self.client.get(self.path(), headers=self.auth(token)).status_code, 403)
+
+    def test_the_audit_of_another_organization_is_invisible(self):
+        token = self.admin_session()
+        response = self.client.get(
+            "/api/control/organizations/organisation-voisine/audit",
+            headers=self.auth(token))
+        self.assertEqual(response.status_code, 404)
+
+    def test_no_route_modifies_or_deletes_the_audit(self):
+        token = self.admin_session()
+        organization = main.nova_organization_id()
+        for method, path in (
+            ("post", f"/api/control/organizations/{organization}/audit"),
+            ("delete", f"/api/control/organizations/{organization}/audit"),
+        ):
+            response = getattr(self.client, method)(path, headers=self.auth(token))
+            self.assertIn(response.status_code, (404, 405), path)
+
+
+class LegacyAdminConsoleTests(AdminTestCase):
+    """L'ancienne console, eteinte par defaut."""
+
+    def test_it_is_not_exposed_by_default(self):
+        self.assertEqual(self.client.get("/admin").status_code, 404)
+
+    def test_it_can_still_be_enabled_during_migration(self):
+        # Elle porte encore la gestion des comptes metier que Nova Admin ne
+        # couvre pas : l'eteindre sans recours serait une regression.
+        with patch.object(main, "LEGACY_ADMIN_UI_ENABLED", True):
+            self.assertEqual(self.client.get("/admin").status_code, 200)
 
 
 if __name__ == "__main__":

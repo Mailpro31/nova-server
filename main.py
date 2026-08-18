@@ -189,6 +189,19 @@ NOVA_ADMIN_ORIGINS = [
 # champ.
 CONTROL_CONTRACT_VERSION = 1
 
+# L'ancienne console web (`admin.html`), authentifiee par le jeton partage.
+#
+# Elle contourne tout le modele moderne : pas d'identite, pas de role, pas de
+# reauthentification, et un journal d'audit qui ne peut ecrire que « quelqu'un
+# qui detenait le jeton ». Nova Admin la remplace depuis la Phase 25.
+#
+# Elle n'est plus exposee par defaut. Elle reste activable le temps de la
+# migration, parce qu'elle porte encore la gestion des comptes metier — cohorte,
+# suppression, revocation d'appareils — que Nova Admin ne couvre pas.
+LEGACY_ADMIN_UI_ENABLED = (
+    os.getenv("NOVA_LEGACY_ADMIN_UI", "false").strip().lower() == "true"
+)
+
 LEGACY_ADMIN_TOKEN_ENABLED = (
     os.getenv("NOVA_LEGACY_ADMIN_TOKEN", "true").strip().lower() != "false"
     and NOVA_SERVER_MODE == SERVER_MODE_DEDICATED
@@ -1721,6 +1734,11 @@ if LEGACY_ADMIN_TOKEN_ENABLED and NOVA_ENV != "development":
         "once administrators have Nova security roles"
     )
 print(f"[admin] server_mode={NOVA_SERVER_MODE} legacy_admin_token={LEGACY_ADMIN_TOKEN_ENABLED}")
+if LEGACY_ADMIN_UI_ENABLED:
+    print(
+        "[admin] WARNING legacy /admin console enabled — it bypasses roles, "
+        "re-authentication and named audit; use Nova Admin instead"
+    )
 
 
 # ────────────────────── Accès aux comptes ─────────────────────────────────
@@ -2444,6 +2462,98 @@ def set_security_role(email: str, role: str, organization_id: str | None = None)
     if role not in ADMIN_SECURITY_ROLES:
         revoke_admin_sessions_for_user(row["user_id"], reason="role_revoked")
     return {"email": email, "security_role": role, "user_id": row["user_id"]}
+
+
+def administrators_of(conn, organization_id: str):
+    """Les comptes de l'organisation qui portent un role d'administration."""
+    placeholders = ",".join("?" for _ in ADMIN_SECURITY_ROLES)
+    return conn.execute(
+        f"SELECT * FROM users WHERE organization_id=? AND security_role IN ({placeholders}) "
+        f"ORDER BY normalized_email",
+        (organization_id, *sorted(ADMIN_SECURITY_ROLES)),
+    ).fetchall()
+
+
+def identity_managers_of(conn, organization_id: str) -> list[str]:
+    """Comptes **actifs** capables de gerer les identites de l'organisation.
+
+    Ce sont eux qui peuvent attribuer et retirer des roles. Si la liste se vide,
+    plus personne ne peut nommer d'administrateur : l'organisation ne se
+    recupere alors que par la ligne de commande, sur le serveur.
+    """
+    return [
+        row["user_id"]
+        for row in administrators_of(conn, organization_id)
+        if CAPABILITY_IDENTITY_MANAGE in capabilities_for_role(security_role_for(row))
+        and account_status(row) == "active"
+    ]
+
+
+class LastIdentityManager(RuntimeError):
+    """Le changement demande laisserait l'organisation sans gestionnaire."""
+
+
+def change_security_role(
+    organization_id: str, user_id: str, role: str, actor_user_id: str | None = None
+) -> dict:
+    """Change le role de securite d'un compte, par son identite.
+
+    ## Pourquoi par `user_id`, et non par adresse
+
+    Une adresse est un attribut mutable depuis la Phase 23. Muter un privilege
+    en la designant reviendrait a viser une cible qui bouge — et, en
+    multi-tenant, a viser l'homonyme d'une autre organisation.
+
+    ## Le garde-fou
+
+    Retirer `identity_manage` au dernier compte qui le porte fermerait la porte
+    a toute nomination future : plus personne ne pourrait attribuer de role, y
+    compris celui qui vient de cliquer. La seule issue serait la ligne de
+    commande, sur le serveur. On refuse donc, comme on refuse de desactiver le
+    dernier fournisseur.
+
+    Ce n'est pas de la prudence excessive : le cas arrive naturellement quand un
+    unique administrateur se retrograde « pour tester ».
+    """
+    role = (role or "").strip().lower()
+    if role not in SECURITY_ROLES:
+        raise ValueError(f"role inconnu : {role}")
+
+    with db() as conn:
+        target = user_by_id(conn, user_id)
+        # Cadre au tenant : un identifiant d'ailleurs n'existe pas ici.
+        if target is None or target["organization_id"] != organization_id:
+            raise LookupError("compte introuvable")
+
+        previous = security_role_for(target)
+        if previous == role:
+            return {"user_id": user_id, "previous_role": previous, "security_role": role,
+                    "changed": False}
+
+        managers = identity_managers_of(conn, organization_id)
+        loses_management = CAPABILITY_IDENTITY_MANAGE not in capabilities_for_role(role)
+        if loses_management and managers == [user_id]:
+            raise LastIdentityManager(
+                "au moins un administrateur d'organisation doit demeurer"
+            )
+
+        conn.execute(
+            "UPDATE users SET security_role=?, updated_at=? WHERE user_id=?",
+            (role, time.time(), user_id),
+        )
+
+    # Le role a change : les sessions ouvertes portent des capacites perimees.
+    # Les fermer force un nouveau step-up, qui relira le role reel — plutot que
+    # de laisser une session vivre avec des droits qu'elle n'a plus.
+    revoke_admin_sessions_for_user(user_id, reason="role_changed")
+    print(f"[admin] role changed target={user_id[:8]} to={role}")
+    return {
+        "user_id": user_id,
+        "previous_role": previous,
+        "security_role": role,
+        "changed": True,
+        "actor_user_id": actor_user_id,
+    }
 
 
 def resolve_admin_session(token: str) -> AdminPrincipal:
@@ -4554,6 +4664,258 @@ def control_read_organization(
     return control_organization_view(organization_id)
 
 
+
+# ───────────────────── Administrateurs de l'organisation ──────────────────
+#
+# Nova Admin gere les administrateurs de **son** organisation. Le premier
+# administrateur, lui, continue de naitre de la ligne de commande : un endpoint
+# « faites de moi un administrateur » resterait une porte derobee, et c'est
+# aussi le chemin de recuperation quand plus personne ne peut se connecter.
+#
+# Ces routes ne creent personne. Elles attribuent un role a un compte **qui
+# existe deja** — inviter ou provisionner des utilisateurs releve du
+# provisioning, pas de cette phase.
+
+# Combien de comptes une recherche peut renvoyer. Assez pour choisir quelqu'un,
+# trop peu pour aspirer l'annuaire de l'organisation.
+MEMBER_SEARCH_LIMIT = 25
+
+AUDIT_PAGE_DEFAULT = 50
+AUDIT_PAGE_MAX = 100
+
+
+def administrator_view(row) -> dict:
+    """Ce qu'un administrateur a besoin de savoir sur un autre.
+
+    L'adresse est affichee — sans elle, on ne saurait pas de qui il s'agit —
+    mais elle n'identifie rien : toutes les mutations passent par `user_id`.
+    Ni sujet externe, ni tenant, ni jeton : rien de tout cela n'aide a decider,
+    et tout cela elargirait la surface.
+    """
+    role = security_role_for(row)
+    return {
+        "user_id": row["user_id"],
+        "email": row["email"],
+        "security_role": role,
+        "capabilities": sorted(capabilities_for_role(role)),
+        "status": account_status(row),
+        "identity_provider": row["identity_provider"],
+        "last_seen": row["last_seen"],
+    }
+
+
+@app.get("/api/control/organizations/{organization_id}/administrators")
+def control_list_administrators(
+    organization_id: str,
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_ORGANIZATION_READ)),
+):
+    """Les administrateurs de cette organisation, et personne d'autre."""
+    require_organization_access(principal, organization_id)
+    with db() as conn:
+        rows = administrators_of(conn, organization_id)
+        managers = identity_managers_of(conn, organization_id)
+    return {
+        "administrators": [administrator_view(row) for row in rows],
+        # L'interface s'en sert pour desactiver l'action plutot que de la
+        # proposer avant de la refuser. Le serveur refuse de toute facon.
+        "sole_identity_manager": managers[0] if len(managers) == 1 else None,
+    }
+
+
+class SecurityRoleRequest(BaseModel):
+    """Un role, et rien d'autre.
+
+    Le client n'envoie **jamais** de capacites : il nomme un role, le serveur
+    en deduit ce qu'il autorise. Laisser passer une liste de capacites
+    reviendrait a laisser le navigateur ecrire la matrice d'autorisation.
+    """
+
+    security_role: str
+
+
+@app.post("/api/control/organizations/{organization_id}/administrators/{user_id}/role")
+def control_set_administrator_role(
+    organization_id: str,
+    user_id: str,
+    body: SecurityRoleRequest,
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_IDENTITY_MANAGE)),
+):
+    """Attribue, change ou retire un role d'administration.
+
+    `identity_manage` est exige : un `it_admin` ne peut donc pas s'elever
+    lui-meme, puisqu'il ne l'a pas. C'est la matrice qui l'interdit, pas un
+    controle special — et c'est mieux ainsi, un controle special s'oublie.
+
+    Retirer l'acces revient a remettre le compte au rang de membre. Ce n'est
+    **pas** une suppression : la personne continue d'utiliser Nova, elle cesse
+    seulement d'administrer.
+    """
+    require_organization_access(principal, organization_id)
+    request_id = new_request_id()
+    try:
+        result = change_security_role(
+            organization_id, user_id, body.security_role, principal.user_id
+        )
+    except ValueError:
+        raise auth_error(400, "SECURITY_ROLE_INVALID")
+    except LookupError:
+        # Meme reponse qu'un compte inexistant : un identifiant venu d'une autre
+        # organisation ne doit pas se distinguer d'un identifiant faux.
+        raise auth_error(404, "USER_NOT_FOUND")
+    except LastIdentityManager:
+        raise auth_error(409, "ADMIN_LAST_IDENTITY_MANAGER")
+
+    if result["changed"]:
+        previous, current = result["previous_role"], result["security_role"]
+        was_admin = previous in ADMIN_SECURITY_ROLES
+        is_admin = current in ADMIN_SECURITY_ROLES
+        action = (
+            "admin_role.grant" if not was_admin and is_admin
+            else "admin_role.revoke" if was_admin and not is_admin
+            else "admin_role.change"
+        )
+        # Les roles ne sont pas des secrets : les inscrire rend le journal
+        # lisible. L'adresse, elle, n'y est pas — `user_id` suffit a retrouver
+        # la personne, et une adresse peut changer.
+        record_admin_action(
+            principal, action, target_type="user", target_id=user_id,
+            metadata={"previous_role": previous, "security_role": current},
+            request_id=request_id,
+        )
+
+    with db() as conn:
+        updated = user_by_id(conn, user_id)
+    return administrator_view(updated)
+
+
+@app.get("/api/control/organizations/{organization_id}/members")
+def control_search_members(
+    organization_id: str,
+    query: str = "",
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_IDENTITY_MANAGE)),
+):
+    """Recherche de comptes, pour choisir qui nommer.
+
+    Volontairement etroite : une recherche par prefixe, plafonnee, et **aucun
+    listing sans terme**. Une console d'administration n'a pas besoin de
+    deverser l'annuaire de l'organisation pour attribuer un role, et un annuaire
+    complet exporte est exactement ce qu'on ne veut pas laisser derriere soi.
+    """
+    require_organization_access(principal, organization_id)
+    term = normalize_email(query)
+    if len(term) < 2:
+        return {"members": [], "query_too_short": True}
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM users WHERE organization_id=? AND normalized_email LIKE ? "
+            "ORDER BY normalized_email LIMIT ?",
+            (organization_id, f"{term}%", MEMBER_SEARCH_LIMIT),
+        ).fetchall()
+    return {
+        "members": [administrator_view(row) for row in rows],
+        "query_too_short": False,
+        "limit": MEMBER_SEARCH_LIMIT,
+    }
+
+
+# ─────────────────────────── Journal d'audit ──────────────────────────────
+
+
+AUDIT_ACTION_LABELS = {
+    "admin_session.create": "Opened an administration session",
+    "admin_step_up.success": "Re-authenticated to administer",
+    "admin_role.grant": "Granted administrator role",
+    "admin_role.change": "Changed administrator role",
+    "admin_role.revoke": "Removed administrator access",
+    "provider_config.create": "Added an authentication provider",
+    "provider_config.update": "Updated an authentication provider",
+    "provider_config.disable": "Disabled an authentication provider",
+    "discovery.update": "Updated organization discovery",
+    "user.update": "Updated a member profile",
+    "user.delete": "Deleted a member",
+    "user.revoke_machines": "Signed a member out of every device",
+    "cohort.disable": "Suspended a cohort",
+}
+
+
+@app.get("/api/control/organizations/{organization_id}/audit")
+def control_read_audit(
+    organization_id: str,
+    limit: int = AUDIT_PAGE_DEFAULT,
+    before: float | None = None,
+    action: str | None = None,
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_SECURITY_MANAGE)),
+):
+    """Activite d'administration recente, en lecture seule.
+
+    `security_manage` plutot qu'une capacite dediee : lire qui a change quoi
+    releve de la surveillance de la securite de l'organisation, et ajouter une
+    capacite par ecran finirait par rendre la matrice illisible.
+
+    **Pagination obligatoire.** Renvoyer la table entiere marcherait le premier
+    mois puis deviendrait un telechargement, et un journal qu'on ne peut pas
+    parcourir n'est pas consulte.
+
+    Aucune route ne modifie ni ne supprime ce journal. Cela dit, l'ajout seul
+    est garanti par l'application : quiconque tient le fichier de base tient le
+    journal, et il ne faut pas pretendre le contraire.
+    """
+    require_organization_access(principal, organization_id)
+    limit = max(1, min(AUDIT_PAGE_MAX, limit))
+    clauses = ["organization_id=?"]
+    values: list = [organization_id]
+    if before is not None:
+        clauses.append("created_at < ?")
+        values.append(before)
+    if action:
+        clauses.append("action=?")
+        values.append(action)
+    values.append(limit + 1)
+
+    with db() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM admin_audit_log WHERE {' AND '.join(clauses)} "
+            f"ORDER BY created_at DESC LIMIT ?",
+            tuple(values),
+        ).fetchall()
+        # Les acteurs sont resolus en adresses pour que le journal se lise ;
+        # un identifiant seul obligerait a une recherche pour chaque ligne.
+        actors = {
+            row["user_id"]: row["email"]
+            for row in conn.execute(
+                "SELECT user_id, email FROM users WHERE organization_id=?",
+                (organization_id,),
+            )
+        }
+
+    has_more = len(rows) > limit
+    entries = []
+    for row in rows[:limit]:
+        entries.append({
+            "id": row["id"],
+            "created_at": row["created_at"],
+            "actor_user_id": row["actor_user_id"],
+            # Absent quand l'acte vient du jeton herite, qui n'identifie personne.
+            "actor": actors.get(row["actor_user_id"]),
+            "actor_role": row["actor_role"],
+            "action": row["action"],
+            "action_label": AUDIT_ACTION_LABELS.get(row["action"], row["action"]),
+            "target_type": row["target_type"],
+            "target_id": row["target_id"],
+            "target": actors.get(row["target_id"]),
+            "request_id": row["request_id"],
+            # Deja filtree a l'ecriture : ni secret, ni jeton, ni contenu dicte.
+            "metadata": json.loads(row["metadata"]) if row["metadata"] else None,
+        })
+    return {
+        "entries": entries,
+        # Curseur d'age : plus stable qu'un decalage numerique, que l'ecriture
+        # d'une nouvelle ligne decalerait.
+        "next_before": entries[-1]["created_at"] if has_more and entries else None,
+        "limit": limit,
+    }
+
+
 # --- profil de l'utilisateur connecté (pour l'app)
 @app.get("/api/me")
 def me(user: str = Depends(current_user), u=Depends(current_account)):
@@ -5089,4 +5451,12 @@ def admin_cohort_disable(
 # ---------------------------------------------------------------- admin UI
 @app.get("/admin", response_class=HTMLResponse)
 def admin_page():
+    """Console heritee — **eteinte par defaut** depuis la Phase 26.
+
+    Nova Admin la remplace : identite reelle, roles, reauthentification, audit
+    nominatif. Voir `NOVA_LEGACY_ADMIN_UI` et
+    `docs/architecture/admin-identity-management.md`.
+    """
+    if not LEGACY_ADMIN_UI_ENABLED:
+        raise HTTPException(404, "Not Found")
     return (Path(__file__).parent / "admin.html").read_text(encoding="utf-8")

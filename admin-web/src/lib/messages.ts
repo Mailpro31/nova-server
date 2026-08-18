@@ -23,6 +23,7 @@ export const t = {
   nav: {
     overview: "Overview",
     identity: "Identity",
+    administrators: "Administrators",
     deployment: "Deployment",
     configuration: "Configuration",
     security: "Security",
@@ -112,6 +113,47 @@ export const t = {
       "This is the only enabled provider. Disabling it would lock every administrator out, so it is refused. Add another provider first.",
   },
 
+  administrators: {
+    title: "Administrators",
+    lead: "Who can administer this organization, and what each of them may do.",
+    person: "Person",
+    role: "Role",
+    status: "Status",
+    none: "No administrator yet.",
+    // Le premier administrateur ne nait pas d'un appel HTTP : le dire evite de
+    // chercher un bouton qui n'existera jamais.
+    bootstrapNote:
+      "The first administrator is granted on the server, from the command line. Nova Admin manages the ones that follow.",
+    roleOrganizationAdmin: "Organization administrator",
+    roleItAdmin: "IT administrator",
+    roleReadOnly: "Read only",
+    roleMember: "No admin access",
+    roleOrganizationAdminHint: "Manages people: administrators, providers, discovery, security.",
+    roleItAdminHint: "Manages the service: providers, discovery, deployment.",
+    roleReadOnlyHint: "Reads the console. Changes nothing.",
+    roleMemberHint: "Uses Nova, administers nothing.",
+    changeRole: "Change role",
+    removeAccess: "Remove admin access",
+    removeTitle: "Remove administrator access?",
+    removeBody:
+      "This person keeps their Nova account and can still dictate. They simply stop administering, and their administration sessions end immediately.",
+    removeConfirm: "Remove access",
+    changeTitle: "Change this administrator's role?",
+    changeBody:
+      "Their open administration sessions end immediately. They will re-authenticate to continue, with their new capabilities.",
+    changeConfirm: "Change role",
+    lastManager:
+      "At least one organization administrator must remain. Grant the role to someone else first.",
+    addTitle: "Grant administrator access",
+    addLead: "Search for someone who already uses Nova in this organization.",
+    searchLabel: "Email",
+    searchPlaceholder: "Start typing an email",
+    searchShort: "Type at least two characters.",
+    searchEmpty: "No matching account.",
+    grant: "Grant",
+    grantedTo: (email: string) => `${email} is now an administrator.`,
+  },
+
   deployment: {
     title: "Deployment",
     lead: "Where this organization's Nova service runs.",
@@ -152,9 +194,20 @@ export const t = {
     mfaTitle: "Multi-factor authentication",
     mfaBody:
       "Nova does not verify a second factor itself, and does not know which method was used. Your identity provider applies its own policy, including conditional access.",
-    auditTitle: "Administration audit",
+    auditTitle: "Recent administrative activity",
     auditBody:
-      "Administrative actions are recorded on the server. No interface exposes them yet.",
+      "Every administrative change is recorded on the server. This view is read-only: no interface can alter or erase it.",
+    auditEmpty: "No administrative activity recorded yet.",
+    auditWhen: "When",
+    auditWho: "Who",
+    auditWhat: "What",
+    auditTarget: "Target",
+    auditMore: "Load older activity",
+    auditLegacyActor: "legacy admin token",
+    // SQLite ne protege pas un fichier de celui qui le detient : le dire
+    // vaut mieux que laisser croire a une immuabilite qui n'existe pas.
+    auditIntegrity:
+      "Records are append-only through the application. Anyone with access to the server's database file can still alter them.",
   },
 
   diagnostics: {
@@ -175,6 +228,9 @@ export const t = {
 /** Message lisible pour un échec. Jamais de trace technique à l'écran. */
 export function errorMessage(kind: ApiErrorKind, code?: string | null): string {
   if (code === "PROVIDER_LAST_ACTIVE") return t.identity.lastActive;
+  if (code === "ADMIN_LAST_IDENTITY_MANAGER") return t.administrators.lastManager;
+  if (code === "USER_NOT_FOUND") return "This account no longer exists.";
+  if (code === "SECURITY_ROLE_INVALID") return "That role is not recognised.";
   switch (kind) {
     case "network":
       return "Cannot reach the Nova service. Check your connection and try again.";

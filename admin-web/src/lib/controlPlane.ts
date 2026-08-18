@@ -61,6 +61,32 @@ export interface AuthProvidersView {
   provider_configs: { id: string; type: string; display_name: string | null }[];
 }
 
+export interface AdministratorView {
+  user_id: string;
+  email: string;
+  security_role: string;
+  capabilities: string[];
+  status: string;
+  identity_provider: string | null;
+  last_seen: number | null;
+}
+
+export interface AuditEntry {
+  id: string;
+  created_at: number;
+  actor_user_id: string | null;
+  /** Absent quand l'acte vient du jeton hérité, qui n'identifie personne. */
+  actor: string | null;
+  actor_role: string;
+  action: string;
+  action_label: string;
+  target_type: string | null;
+  target_id: string | null;
+  target: string | null;
+  request_id: string | null;
+  metadata: Record<string, unknown> | null;
+}
+
 export class ControlPlane {
   constructor(private readonly client: ApiClient) {}
 
@@ -141,6 +167,49 @@ export class ControlPlane {
       method: "POST",
       body,
     });
+  }
+
+  administrators(organizationId: string) {
+    return this.client.request<{
+      administrators: AdministratorView[];
+      sole_identity_manager: string | null;
+    }>(`/api/control/organizations/${organizationId}/administrators`);
+  }
+
+  /**
+   * Change le rôle d'un compte.
+   *
+   * Par `user_id`, jamais par adresse : une adresse est un attribut mutable, et
+   * muter un privilège en la désignant reviendrait à viser une cible qui bouge.
+   */
+  setAdministratorRole(organizationId: string, userId: string, role: string) {
+    return this.client.request<AdministratorView>(
+      `/api/control/organizations/${organizationId}/administrators/${userId}/role`,
+      { method: "POST", body: { security_role: role } },
+    );
+  }
+
+  searchMembers(organizationId: string, query: string) {
+    return this.client.request<{
+      members: AdministratorView[];
+      query_too_short: boolean;
+    }>(
+      `/api/control/organizations/${organizationId}/members?query=${encodeURIComponent(query)}`,
+    );
+  }
+
+  audit(organizationId: string, options: { limit?: number; before?: number } = {}) {
+    const params = new URLSearchParams();
+    if (options.limit) params.set("limit", String(options.limit));
+    if (options.before) params.set("before", String(options.before));
+    const query = params.toString();
+    return this.client.request<{
+      entries: AuditEntry[];
+      next_before: number | null;
+      limit: number;
+    }>(
+      `/api/control/organizations/${organizationId}/audit${query ? `?${query}` : ""}`,
+    );
   }
 
   signOutAdmin() {

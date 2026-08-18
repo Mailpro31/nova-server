@@ -26,6 +26,7 @@ import { peekHandoffOrganization } from "./lib/handoff";
 import { t } from "./lib/messages";
 import { secondsRemaining } from "./lib/session";
 import { useSession } from "./lib/useAdminSession";
+import { Administrators } from "./pages/Administrators";
 import { Identity } from "./pages/Identity";
 import { Overview } from "./pages/Overview";
 import { Configuration, Deployment, Diagnostics, Security } from "./pages/Rest";
@@ -33,6 +34,11 @@ import { Configuration, Deployment, Diagnostics, Security } from "./pages/Rest";
 const PAGES = [
   { path: "overview", label: t.nav.overview, element: <Overview /> },
   { path: "identity", label: t.nav.identity, element: <Identity /> },
+  {
+    path: "administrators",
+    label: t.nav.administrators,
+    element: <Administrators />,
+  },
   { path: "deployment", label: t.nav.deployment, element: <Deployment /> },
   { path: "configuration", label: t.nav.configuration, element: <Configuration /> },
   { path: "security", label: t.nav.security, element: <Security /> },

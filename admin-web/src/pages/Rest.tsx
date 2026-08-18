@@ -11,6 +11,7 @@
 
 import { useState } from "react";
 import { ApiError } from "../lib/api";
+import type { AuditEntry } from "../lib/controlPlane";
 import { errorMessage, t } from "../lib/messages";
 import { CAPABILITY, can, secondsRemaining } from "../lib/session";
 import { useResource } from "../lib/useResource";
@@ -213,10 +214,96 @@ export function Security() {
         <Notice>{t.security.mfaBody}</Notice>
       </Panel>
 
-      <Panel title={t.security.auditTitle}>
-        <Notice>{t.security.auditBody}</Notice>
-      </Panel>
+      <AuditLog />
     </>
+  );
+}
+
+/**
+ * Activite d'administration recente.
+ *
+ * Lecture seule : aucune route ne modifie ni ne supprime ce journal. Les
+ * metadonnees affichees sont deja filtrees a l'ecriture — ni secret, ni jeton,
+ * ni contenu dicte n'y entre.
+ */
+function AuditLog() {
+  const { control, session } = useSession();
+  const organizationId = session.admin?.organizationId ?? "";
+  const mayRead = can(session, CAPABILITY.securityManage);
+  const [pages, setPages] = useState<AuditEntry[][]>([]);
+  const [cursor, setCursor] = useState<number | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+
+  const [state, retry] = useResource(
+    control && organizationId && mayRead
+      ? () => control.audit(organizationId, { limit: 25 })
+      : null,
+    [control, organizationId, mayRead],
+  );
+
+  // La premiere page vient de la ressource ; les suivantes s'empilent.
+  const entries = [...(state.data?.entries ?? []), ...pages.flat()];
+  const nextBefore = cursor ?? state.data?.next_before ?? null;
+
+  async function loadMore() {
+    if (!nextBefore) return;
+    setLoadingMore(true);
+    try {
+      const page = await control!.audit(organizationId, {
+        limit: 25,
+        before: nextBefore,
+      });
+      setPages((current) => [...current, page.entries]);
+      setCursor(page.next_before);
+    } finally {
+      setLoadingMore(false);
+    }
+  }
+
+  if (!mayRead) return null;
+
+  return (
+    <Panel title={t.security.auditTitle}>
+      <p style={{ color: "var(--text-muted)" }}>{t.security.auditBody}</p>
+      <AsyncSection state={state} onRetry={retry}>
+        {() =>
+          entries.length === 0 ? (
+            <Notice>{t.security.auditEmpty}</Notice>
+          ) : (
+            <>
+              <Facts
+                entries={entries.map((entry) => [
+                  new Date(entry.created_at * 1000).toLocaleString(),
+                  <span>
+                    <strong>{entry.action_label}</strong>
+                    {" — "}
+                    {/* Le jeton herite n'identifie personne : le dire vaut
+                        mieux qu'afficher un acteur vide. */}
+                    <span className="mono">
+                      {entry.actor ?? t.security.auditLegacyActor}
+                    </span>
+                    {entry.target && (
+                      <>
+                        {" → "}
+                        <span className="mono">{entry.target}</span>
+                      </>
+                    )}
+                  </span>,
+                ])}
+              />
+              {nextBefore && (
+                <div className="row">
+                  <button disabled={loadingMore} onClick={() => void loadMore()}>
+                    {t.security.auditMore}
+                  </button>
+                </div>
+              )}
+            </>
+          )
+        }
+      </AsyncSection>
+      <p className="hint">{t.security.auditIntegrity}</p>
+    </Panel>
   );
 }
 
