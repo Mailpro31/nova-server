@@ -27,6 +27,7 @@ from urllib.parse import urlencode, urlparse
 import httpx
 import jwt
 from fastapi import Depends, FastAPI, Header, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel, EmailStr
 
@@ -168,6 +169,26 @@ if NOVA_SERVER_MODE not in {SERVER_MODE_DEDICATED, SERVER_MODE_CONTROL_PLANE}:
 # Il reste accepté en mode dédié pour ne pas casser les déploiements existants,
 # et jamais en mode Control Plane, où il autoriserait un porteur à administrer
 # des organisations qui ne sont pas la sienne.
+# ── Nova Admin (console web) ─────────────────────────────────────────────
+#
+# La console est servie depuis une autre origine que l'API : il faut donc
+# déclarer CORS. **Une liste explicite, jamais un joker.** `*` combiné à des
+# identifiants est refusé par les navigateurs, et l'accepterait-on qu'il
+# laisserait n'importe quelle page appeler l'administration au nom de son
+# visiteur.
+#
+# Vide par défaut : un déploiement qui n'a pas de console web n'ouvre rien.
+NOVA_ADMIN_ORIGINS = [
+    origin.strip().rstrip("/")
+    for origin in os.getenv("NOVA_ADMIN_ORIGINS", "").split(",")
+    if origin.strip()
+]
+
+# Version du contrat du Control Plane. La console doit pouvoir constater qu'elle
+# parle à un serveur qu'elle ne comprend pas, plutôt que d'échouer champ par
+# champ.
+CONTROL_CONTRACT_VERSION = 1
+
 LEGACY_ADMIN_TOKEN_ENABLED = (
     os.getenv("NOVA_LEGACY_ADMIN_TOKEN", "true").strip().lower() != "false"
     and NOVA_SERVER_MODE == SERVER_MODE_DEDICATED
@@ -2688,6 +2709,22 @@ def public_campus_config() -> dict:
 # ---------------------------------------------------------------- app
 app = FastAPI(title="Nova Server", version="0.2.0")
 
+if NOVA_ADMIN_ORIGINS:
+    # Liste explicite, et `allow_credentials` reste faux : la console porte son
+    # jeton dans un en-tête, jamais dans un cookie ambiant. Rien n'est donc
+    # envoyé automatiquement par le navigateur, et il n'y a pas de CSRF à
+    # défendre sur ce chemin.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=NOVA_ADMIN_ORIGINS,
+        allow_credentials=False,
+        allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type"],
+        max_age=600,
+    )
+    print(f"[admin] web console origins={len(NOVA_ADMIN_ORIGINS)}")
+
+
 @app.get("/api/health")
 def health():
     return {
@@ -4007,6 +4044,27 @@ def admin_disable_provider_config(
     organization_id = nova_organization_id()
     if provider_config_by_id(config_id, organization_id) is None:
         raise auth_error(404, "PROVIDER_CONFIG_NOT_FOUND")
+
+    # Garde-fou d'auto-verrouillage.
+    #
+    # Depuis la Phase 24, ouvrir une session d'administration exige une
+    # réauthentification auprès d'un fournisseur. Désactiver le dernier
+    # fournisseur actif ferme donc la porte à **tous** les administrateurs, y
+    # compris à celui qui vient de cliquer. Le jeton hérité offre bien un
+    # chemin de secours en mode dédié, mais s'y fier serait fragile : il peut
+    # être éteint ensuite, et il est destiné à disparaître.
+    #
+    # Le refus n'empêche pas de remplacer un fournisseur : il suffit de
+    # déclarer le nouveau avant de désactiver l'ancien.
+    with db() as conn:
+        remaining = conn.execute(
+            "SELECT COUNT(*) c FROM organization_provider_configs "
+            "WHERE organization_id=? AND enabled=1 AND id<>?",
+            (organization_id, config_id),
+        ).fetchone()["c"]
+    if remaining == 0:
+        raise auth_error(409, "PROVIDER_LAST_ACTIVE")
+
     with db() as conn:
         conn.execute(
             "UPDATE organization_provider_configs SET enabled=0, updated_at=? "

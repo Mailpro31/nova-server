@@ -3124,6 +3124,13 @@ class ProviderConfigLifecycleTests(unittest.TestCase):
             "/api/admin/provider-configs", headers=self.ADMIN).json()["configs"]
         self.assertEqual(len(listed), 1)
 
+        # Un second fournisseur : désactiver le dernier actif est refusé, et
+        # remplacer un fournisseur consiste précisément à déclarer le nouveau
+        # avant de retirer l'ancien.
+        self.client.post(
+            "/api/admin/provider-configs", headers=self.ADMIN,
+            json={"provider_type": "microsoft_entra", "display_name": "Microsoft",
+                  "entra_tenant_id": "tenant-de-secours"})
         disabled = self.client.post(
             f"/api/admin/provider-configs/{created['id']}/disable",
             headers=self.ADMIN).json()
@@ -3132,7 +3139,38 @@ class ProviderConfigLifecycleTests(unittest.TestCase):
         self.assertNotIn(
             "oidc", self.client.get("/api/auth/providers").json()["providers"])
         self.assertEqual(len(self.client.get(
-            "/api/admin/provider-configs", headers=self.ADMIN).json()["configs"]), 1)
+            "/api/admin/provider-configs", headers=self.ADMIN).json()["configs"]), 2)
+
+    def test_the_last_active_provider_cannot_be_disabled(self):
+        """Auto-verrouillage : depuis la Phase 24, ouvrir une session
+        d'administration exige une réauthentification auprès d'un fournisseur.
+        Désactiver le dernier fermerait la porte à tous les administrateurs, y
+        compris à celui qui vient de cliquer."""
+        created = self.client.post(
+            "/api/admin/provider-configs", headers=self.ADMIN,
+            json={"provider_type": "microsoft_entra", "display_name": "Microsoft",
+                  "entra_tenant_id": "tenant-unique"}).json()
+        response = self.client.post(
+            f"/api/admin/provider-configs/{created['id']}/disable", headers=self.ADMIN)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["detail"], "PROVIDER_LAST_ACTIVE")
+        # Et il reste bien actif : le refus n'a rien changé à moitié.
+        listed = self.client.get(
+            "/api/admin/provider-configs", headers=self.ADMIN).json()["configs"]
+        self.assertTrue(listed[0]["enabled"])
+
+    def test_a_provider_can_still_be_replaced(self):
+        first = self.client.post(
+            "/api/admin/provider-configs", headers=self.ADMIN,
+            json={"provider_type": "microsoft_entra",
+                  "entra_tenant_id": "ancien-tenant"}).json()
+        self.client.post(
+            "/api/admin/provider-configs", headers=self.ADMIN,
+            json={"provider_type": "oidc", "oidc_issuer": "https://neuf.example.com",
+                  "oidc_client_id": "client"})
+        response = self.client.post(
+            f"/api/admin/provider-configs/{first['id']}/disable", headers=self.ADMIN)
+        self.assertEqual(response.status_code, 200)
 
     def test_the_secret_is_never_returned(self):
         secret = "secret-tres-confidentiel"

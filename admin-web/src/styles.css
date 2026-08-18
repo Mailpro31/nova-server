@@ -1,0 +1,392 @@
+/*
+ * Nova Admin — « quiet engineering ».
+ *
+ * Sobre, dense, lisible. Une console d'administration se lit longtemps et se
+ * parcourt vite : elle a besoin de hiérarchie et de contraste, pas de couleur.
+ * La couleur ne sert qu'à porter un sens — un état, un danger — sinon elle
+ * cesse d'en porter aucun.
+ *
+ * Pas de bibliothèque de composants : cette feuille tient en un écran, et un
+ * framework pèserait plus que ce qu'il rendrait.
+ */
+
+:root {
+  --bg: #fbfbfc;
+  --surface: #ffffff;
+  --surface-sunken: #f4f5f7;
+  --border: #e0e2e7;
+  --border-strong: #c8ccd4;
+  --text: #16181d;
+  --text-muted: #5f6672;
+  --text-faint: #8b919c;
+  --accent: #2f5bd7;
+  --accent-soft: #eaefff;
+  --ok: #1f7a45;
+  --warn: #8a5a00;
+  --danger: #b0242a;
+  --danger-soft: #fdeced;
+
+  --radius: 8px;
+  --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  --sans: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #101216;
+    --surface: #171a20;
+    --surface-sunken: #1d2128;
+    --border: #272b34;
+    --border-strong: #3a404c;
+    --text: #e8eaee;
+    --text-muted: #a0a7b4;
+    --text-faint: #757d8a;
+    --accent: #7d9bff;
+    --accent-soft: #1c2440;
+    --ok: #4cc07d;
+    --warn: #d9a441;
+    --danger: #f0868b;
+    --danger-soft: #341a1d;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+h1 {
+  font-size: 20px;
+}
+h2 {
+  font-size: 15px;
+}
+p {
+  margin: 0;
+}
+
+/* Le focus reste visible partout : une console s'utilise au clavier. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* ── Structure ─────────────────────────────────────────────────────── */
+
+.shell {
+  display: grid;
+  grid-template-columns: 232px 1fr;
+  min-height: 100vh;
+}
+
+.sidebar {
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+  padding: 20px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.brand {
+  padding: 0 10px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.brand small {
+  display: block;
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--text-muted);
+  letter-spacing: 0;
+}
+
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.nav a {
+  padding: 7px 10px;
+  border-radius: 6px;
+  color: var(--text-muted);
+  text-decoration: none;
+  font-size: 13.5px;
+}
+.nav a:hover {
+  background: var(--surface-sunken);
+  color: var(--text);
+}
+.nav a[aria-current="page"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 28px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.header-meta {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.content {
+  padding: 28px;
+  max-width: 980px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.page-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.page-head p {
+  color: var(--text-muted);
+  max-width: 62ch;
+}
+
+/* ── Blocs ─────────────────────────────────────────────────────────── */
+
+.panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  overflow: hidden;
+}
+.panel-head {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.panel-body {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* Liste de faits : deux colonnes, alignées, lisibles en diagonale. */
+.facts {
+  display: grid;
+  grid-template-columns: minmax(150px, auto) 1fr;
+  gap: 8px 20px;
+  margin: 0;
+}
+.facts dt {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.facts dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.mono {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  word-break: break-all;
+}
+
+/* ── Signalement d'état ────────────────────────────────────────────── */
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 8px;
+  border-radius: 99px;
+  font-size: 12px;
+  border: 1px solid var(--border-strong);
+  color: var(--text-muted);
+}
+.tag[data-tone="ok"] {
+  color: var(--ok);
+  border-color: currentColor;
+}
+.tag[data-tone="warn"] {
+  color: var(--warn);
+  border-color: currentColor;
+}
+.tag[data-tone="danger"] {
+  color: var(--danger);
+  border-color: currentColor;
+}
+
+/* Bordure uniforme : c'est le fond et la couleur du texte qui portent le ton,
+   pas un liseré latéral. */
+.notice {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 14px;
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.notice[data-tone="danger"] {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+  color: var(--text);
+}
+
+/* ── Contrôles ─────────────────────────────────────────────────────── */
+
+button {
+  font: inherit;
+  font-size: 13.5px;
+  padding: 6px 13px;
+  border-radius: 6px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+button:hover:not(:disabled) {
+  background: var(--surface-sunken);
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+button[data-variant="primary"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+button[data-variant="primary"]:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+button[data-variant="danger"] {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+button[data-variant="quiet"] {
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-muted);
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+input[type="text"],
+input[type="password"],
+select {
+  font: inherit;
+  font-size: 13.5px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+  width: 100%;
+}
+input[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+.field-error {
+  color: var(--danger);
+  font-size: 12.5px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.spread {
+  justify-content: space-between;
+}
+
+/* ── Écrans pleine page (bootstrap, connexion, step-up) ────────────── */
+
+.centered {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+.card {
+  width: 100%;
+  max-width: 420px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  padding: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.card h1 {
+  font-size: 18px;
+}
+.card p {
+  color: var(--text-muted);
+}
+.card .hint {
+  font-size: 12.5px;
+  color: var(--text-faint);
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+@media (max-width: 860px) {
+  .shell {
+    grid-template-columns: 1fr;
+  }
+  .sidebar {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+  .nav {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+}
