@@ -422,6 +422,27 @@ def init_db():
         );
         CREATE INDEX IF NOT EXISTS idx_admin_audit_org
             ON admin_audit_log(organization_id, created_at);
+
+        -- Policies produit de l'organisation. **Une ligne par organisation** —
+        -- la cle primaire l'impose plutot qu'un index a maintenir : deux
+        -- policies actives, ce serait deux reponses a la meme question.
+        --
+        -- L'absence de ligne n'est pas une erreur : c'est le cas normal d'une
+        -- organisation qui n'a jamais rien restreint. Elle obtient alors
+        -- DEFAULT_ORGANIZATION_POLICY, et rien ne change pour elle.
+        CREATE TABLE IF NOT EXISTS organization_policies(
+            organization_id    TEXT PRIMARY KEY,
+            schema_version     INTEGER NOT NULL,
+            -- Monotone, jamais reutilisee. Elle sert a deux choses : detecter
+            -- qu'une policy a change sans comparer le document, et refuser
+            -- l'ecriture d'un administrateur qui editait une version perimee.
+            revision           INTEGER NOT NULL,
+            -- Document JSON, mais **jamais arbitraire** : chaque cle est
+            -- declaree dans POLICY_SETTINGS et validee a l'ecriture.
+            settings           TEXT NOT NULL,
+            updated_at         REAL NOT NULL,
+            updated_by_user_id TEXT
+        );
         """)
         migrate_schema(conn)
 
@@ -1815,6 +1836,12 @@ CAPABILITY_DEPLOYMENT_MANAGE = "deployment_manage"
 CAPABILITY_IDENTITY_MANAGE = "identity_manage"
 CAPABILITY_SECURITY_MANAGE = "security_manage"
 CAPABILITY_DIAGNOSTICS_READ = "diagnostics_read"
+# Modifier les policies produit de l'organisation. Une capacite dediee, et
+# non `identity_manage` ou `security_manage` detournee : gouverner ce que le
+# produit offre aux membres n'est ni gerer des personnes, ni surveiller la
+# securite. Reutiliser une capacite voisine ferait grossir son sens jusqu'a
+# ce qu'on ne sache plus ce qu'elle protege.
+CAPABILITY_POLICY_MANAGE = "policy_manage"
 
 # La matrice. Aucun rôle n'est un sur-ensemble des autres : `organization_admin`
 # gère les personnes, `it_admin` gère la machine. Les faire coïncider
@@ -1827,6 +1854,11 @@ CAPABILITIES_BY_ROLE: dict[str, frozenset[str]] = {
         CAPABILITY_IDENTITY_MANAGE,
         CAPABILITY_SECURITY_MANAGE,
         CAPABILITY_DIAGNOSTICS_READ,
+        # Decider ce que l'organisation offre a ses membres est une decision
+        # d'organisation, pas d'exploitation : `it_admin` ne la recoit pas.
+        # Il gere la machine — fournisseurs, deploiement, diagnostics — et la
+        # frontiere posee en Phase 22 tient sans exception ajoutee.
+        CAPABILITY_POLICY_MANAGE,
     }),
     SECURITY_ROLE_IT_ADMIN: frozenset({
         CAPABILITY_ORGANIZATION_READ,
@@ -1853,6 +1885,211 @@ ADMIN_SECURITY_ROLES = frozenset(
 def capabilities_for_role(role: str) -> frozenset[str]:
     """Ce qu'un rôle autorise. Un rôle inconnu n'autorise rien."""
     return CAPABILITIES_BY_ROLE.get((role or "").strip().lower(), frozenset())
+
+
+# ─────────────────── Policies produit de l'organisation ───────────────────
+#
+# ## Deux concepts voisins qu'il ne faut jamais confondre
+#
+#     CAPACITE D'ADMINISTRATION          POLICY PRODUIT
+#     `identity_manage`, `policy_manage` `ai_skills_enabled`
+#     ce qu'un ADMINISTRATEUR peut       ce que l'ORGANISATION autorise
+#     modifier dans le Control Plane     a ses membres dans Nova
+#
+# Les fusionner serait tentant — ce sont deux dictionnaires de booleens — et
+# ce serait une faute. Une capacite d'administration protege la console ; une
+# policy configure le produit. `policy_manage` dit qui a le droit de changer
+# `ai_skills_enabled` ; il n'entre jamais dans le calcul de ce que voit un
+# membre.
+#
+# ## La formule
+#
+#     capacite de base  ∩  policy de l'organisation  =  capacite effective
+#
+# L'intersection va dans un seul sens : une policy **restreint**, elle
+# n'accorde jamais. Une organisation ne peut pas s'attribuer une fonction que
+# le produit ne fournit pas — sans quoi la policy deviendrait une source de
+# capacites, et le catalogue produit cesserait d'etre la reference.
+#
+# ## Ce qu'une policy ne pourra jamais toucher
+#
+# Ni SSO, ni step-up, ni sessions d'administration, ni fournisseurs, ni
+# decouverte, ni roles, ni audit, ni acces a Nova Admin. Ce sont des fonctions
+# du plan d'identite : une policy produit qui pourrait les eteindre serait un
+# moyen de se verrouiller dehors — ou pire, de desarmer l'audit depuis un
+# ecran de configuration. La separation est structurelle : ces fonctions ne
+# figurent dans aucune cle de POLICY_SETTINGS, et un test le verifie.
+
+POLICY_SCHEMA_VERSION = 1
+
+
+class PolicySetting:
+    """Une cle de policy declaree : son type, son defaut, ce qu'elle gouverne.
+
+    Le document est stocke en JSON, mais il n'est **jamais arbitraire**. Le
+    serveur possede le schema ; une cle inconnue est refusee a l'ecriture, un
+    type invalide aussi. Un dictionnaire libre finirait par contenir la moitie
+    de la configuration du produit sans que personne ne sache la relire.
+    """
+
+    def __init__(self, key: str, kind: type, default, capability: str | None):
+        self.key = key
+        self.kind = kind
+        self.default = default
+        # La capacite produit que cette policy contraint, cote poste. `None`
+        # pour une policy qui n'en gouverne aucune directement.
+        self.capability = capability
+
+
+# ## Pourquoi si peu de cles
+#
+# Une policy n'est legitime que si la fonction existe vraiment, si l'on sait
+# exactement ce que son refus signifie, et si ce refus peut etre applique
+# ailleurs que dans l'affichage. Declarer quarante interrupteurs « pour plus
+# tard » produirait un panneau de configuration dont la plupart des lignes ne
+# feraient rien — et l'on ne saurait bientot plus lesquelles.
+#
+# `ai_skills_enabled` remplit les trois conditions : la fonction existe
+# (`/api/ai-skills`, la page du poste, le premier lancement), son refus a un
+# sens unique — les membres n'utilisent pas les AI Skills — et le serveur
+# refuse reellement, puisque c'est lui qui distribue les modules.
+POLICY_SETTINGS: dict[str, PolicySetting] = {
+    setting.key: setting
+    for setting in (
+        PolicySetting("ai_skills_enabled", bool, True, "aiSkills"),
+    )
+}
+
+# Le defaut, ecrit une fois et derive du schema : deux listes a tenir a jour
+# finiraient par diverger, et c'est le defaut qui decide du sort des
+# organisations existantes.
+#
+# **Tous les defauts valent `True`.** Une organisation qui n'a jamais rien
+# configure doit se comporter exactement comme avant l'existence des policies.
+# Une migration qui eteindrait une fonction au passage serait une panne, pas
+# une mise a jour.
+DEFAULT_ORGANIZATION_POLICY: dict = {
+    key: setting.default for key, setting in POLICY_SETTINGS.items()
+}
+
+
+def validate_policy_settings(candidate: dict) -> dict:
+    """Le document propose est-il un document de policy valide ?
+
+    Renvoie le document complet et normalise, ou leve `ValueError` avec un
+    motif. Les cles absentes reprennent le defaut : une console qui n'envoie
+    que ce qu'elle a modifie reste correcte, et une cle ajoutee par une version
+    ulterieure du serveur ne casse pas une console plus ancienne.
+    """
+    if not isinstance(candidate, dict):
+        raise ValueError("POLICY_SETTINGS_INVALID")
+    unknown = set(candidate) - set(POLICY_SETTINGS)
+    if unknown:
+        # Refuser plutot qu'ignorer : une cle mal orthographiee qui disparait
+        # en silence donne a l'administrateur la certitude d'avoir configure
+        # quelque chose qui ne s'appliquera jamais.
+        raise ValueError(f"POLICY_KEY_UNKNOWN:{sorted(unknown)[0]}")
+    resolved = {}
+    for key, setting in POLICY_SETTINGS.items():
+        if key not in candidate:
+            resolved[key] = setting.default
+            continue
+        value = candidate[key]
+        # `isinstance(True, int)` vaut vrai : sans ce controle, un booleen
+        # passerait pour un entier et reciproquement.
+        if setting.kind is bool and not isinstance(value, bool):
+            raise ValueError(f"POLICY_VALUE_INVALID:{key}")
+        if not isinstance(value, setting.kind):
+            raise ValueError(f"POLICY_VALUE_INVALID:{key}")
+        resolved[key] = value
+    return resolved
+
+
+def read_policy_settings(raw: str | None) -> dict:
+    """Relit un document stocke, sans jamais laisser tomber le serveur.
+
+    En **lecture**, l'inconnu est ignore et le manquant reprend son defaut. La
+    dissymetrie avec l'ecriture est voulue : une ligne ecrite par une version
+    ulterieure — ou abimee — doit se degrader vers un comportement sur, pas
+    empecher l'organisation de fonctionner.
+    """
+    try:
+        stored = json.loads(raw) if raw else {}
+    except (TypeError, ValueError):
+        stored = {}
+    if not isinstance(stored, dict):
+        stored = {}
+    resolved = {}
+    for key, setting in POLICY_SETTINGS.items():
+        value = stored.get(key, setting.default)
+        if setting.kind is bool and not isinstance(value, bool):
+            value = setting.default
+        elif not isinstance(value, setting.kind):
+            value = setting.default
+        resolved[key] = value
+    return resolved
+
+
+def organization_policy(organization_id: str, conn=None) -> dict:
+    """La policy d'une organisation — toujours une reponse, jamais `None`.
+
+    Une organisation sans ligne obtient le defaut a la **revision 0**. Cette
+    revision-la est significative : elle dit « rien n'a jamais ete configure »,
+    et une premiere ecriture partira donc de 0 pour produire la revision 1.
+    """
+    def load(connection):
+        return connection.execute(
+            "SELECT schema_version, revision, settings, updated_at, "
+            "updated_by_user_id FROM organization_policies WHERE organization_id=?",
+            (organization_id,),
+        ).fetchone()
+
+    row = load(conn) if conn is not None else None
+    if conn is None:
+        with db() as connection:
+            row = load(connection)
+    if row is None:
+        return {
+            "schema_version": POLICY_SCHEMA_VERSION,
+            "revision": 0,
+            "settings": dict(DEFAULT_ORGANIZATION_POLICY),
+            "updated_at": None,
+            "updated_by_user_id": None,
+            "configured": False,
+        }
+    return {
+        "schema_version": row["schema_version"],
+        "revision": row["revision"],
+        "settings": read_policy_settings(row["settings"]),
+        "updated_at": row["updated_at"],
+        "updated_by_user_id": row["updated_by_user_id"],
+        "configured": True,
+    }
+
+
+def resolve_effective_product_capabilities(
+    base_capabilities: dict, policy_settings: dict
+) -> dict:
+    """capacite de base ∩ policy = capacite effective.
+
+    **Autorite unique.** Le poste porte le meme resolveur pour son interface,
+    mais toute action qui passe par le serveur est tranchee ici. Deux formules
+    qui divergeraient produiraient un bouton actif menant a un refus — ou, bien
+    pire, l'inverse.
+
+    Le sens de l'intersection est la regle qui compte : `False and True` vaut
+    `False`. Une policy ne peut qu'oter.
+    """
+    effective = dict(base_capabilities)
+    for setting in POLICY_SETTINGS.values():
+        if setting.capability is None:
+            continue
+        if setting.capability not in effective:
+            continue
+        effective[setting.capability] = bool(
+            effective[setting.capability]
+        ) and bool(policy_settings.get(setting.key, setting.default))
+    return effective
 
 
 # `users.role` décrit un métier. La correspondance ne produit jamais de droit.
@@ -2729,11 +2966,27 @@ AI_SKILLS = [
     },
 ]
 
-def public_campus_config() -> dict:
+def public_campus_config(organization_id: str | None = None) -> dict:
+    """Ce que le poste apprend de l'organisation qu'il sert.
+
+    ## Base, puis policy
+
+    Les capacites annoncees ici sont le produit de deux choses : ce que le
+    deploiement offre — le mode pedagogique, la presence d'un moteur — et ce
+    que l'organisation autorise. La premiere est la **base**, la seconde la
+    **policy**, et l'intersection se calcule dans
+    `resolve_effective_product_capabilities`, jamais a la main.
+
+    `organization_id` permet a `/api/me` d'appliquer la policy du membre plutot
+    que celle de l'organisation active. En mode dedie les deux coincident ; en
+    multi-tenant, non — et c'est exactement le genre d'ecart qui ferait
+    repondre pour le voisin.
+    """
     auth_methods = ["email_code"]
     if ENTRA_CLIENT_ID:
         auth_methods.append("entra")
-    return {
+    policy = organization_policy(organization_id or nova_organization_id())
+    config = {
         # Identifiant Nova immuable de l'organisation. Distinct du slug lisible
         # (`organization.id`) et du nom d'affichage : c'est celui qui servira de
         # clé de tenant le jour du Control Plane.
@@ -2775,6 +3028,20 @@ def public_campus_config() -> dict:
             "infrastructure": "campus",
         },
     }
+    config["capabilities"] = resolve_effective_product_capabilities(
+        config["capabilities"], policy["settings"]
+    )
+    # Le bloc historique `ai_skills` doit suivre la meme decision. Deux
+    # reponses divergentes dans la meme charge utile — la capacite fermee, le
+    # bloc ouvert — laisseraient le poste choisir laquelle croire.
+    config["ai_skills"]["enabled"] = (
+        config["ai_skills"]["enabled"] and config["capabilities"]["aiSkills"]
+    )
+    # Revision seule : le poste sait qu'une policy a change sans comparer le
+    # document, et sans qu'aucun detail de gouvernance ne transite par un
+    # endpoint public.
+    config["policy_revision"] = policy["revision"]
+    return config
 
 # ---------------------------------------------------------------- app
 app = FastAPI(title="Nova Server", version="0.2.0")
@@ -4643,6 +4910,144 @@ def control_read_organization(
     return control_organization_view(organization_id)
 
 
+# ────────────────── Policies produit : administration ─────────────────────
+#
+# Lecture pour tout administrateur ; ecriture reservee a `policy_manage`. La
+# console reflete cette frontiere, mais c'est ici qu'elle est tenue : une
+# interface en lecture seule n'est une protection pour personne.
+
+
+def policy_view(organization_id: str) -> dict:
+    """Ce que Nova Admin affiche. Aucun secret n'y figure — une policy est une
+    regle de configuration, pas une donnee sensible."""
+    policy = organization_policy(organization_id)
+    return {
+        "schema_version": policy["schema_version"],
+        "revision": policy["revision"],
+        "settings": policy["settings"],
+        "updated_at": policy["updated_at"],
+        "updated_by_user_id": policy["updated_by_user_id"],
+        # `false` tant que personne n'a rien change : la console peut alors dire
+        # « valeurs par defaut » plutot que de laisser croire a un choix
+        # deliberement fait par quelqu'un.
+        "configured": policy["configured"],
+    }
+
+
+@app.get("/api/control/organization/policy")
+def control_read_policy(
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_ORGANIZATION_READ)),
+):
+    return policy_view(principal.organization_id)
+
+
+class PolicyUpdateRequest(BaseModel):
+    # La revision sur laquelle l'administrateur a travaille. Obligatoire : sans
+    # elle, deux consoles ouvertes cote a cote s'ecraseraient en silence, et la
+    # derniere a cliquer gagnerait sans que personne ne l'apprenne.
+    expected_revision: int
+    settings: dict
+
+
+@app.put("/api/control/organization/policy")
+def control_update_policy(
+    body: PolicyUpdateRequest,
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_POLICY_MANAGE)),
+):
+    """Remplace la policy de l'organisation administree.
+
+    Un remplacement complet, pas un correctif : le serveur normalise le
+    document contre son schema, et une cle absente reprend son defaut. Le
+    document stocke est donc toujours complet et toujours relisible.
+    """
+    try:
+        settings = validate_policy_settings(body.settings)
+    except ValueError as error:
+        reason = str(error)
+        # Le motif porte la cle fautive — `POLICY_KEY_UNKNOWN:ai_skils` — pour
+        # que la console puisse designer le champ plutot que de dire « erreur ».
+        raise auth_error(400, reason)
+
+    organization_id = principal.organization_id
+    now = time.time()
+    with db() as conn:
+        current = conn.execute(
+            "SELECT revision, settings FROM organization_policies WHERE organization_id=?",
+            (organization_id,),
+        ).fetchone()
+        current_revision = current["revision"] if current else 0
+        if body.expected_revision != current_revision:
+            # 409, jamais un ecrasement. L'administrateur qui perdrait ainsi le
+            # travail de son collegue ne saurait meme pas qu'il a existe.
+            raise auth_error(409, "POLICY_REVISION_CONFLICT")
+
+        previous = (
+            read_policy_settings(current["settings"]) if current
+            else dict(DEFAULT_ORGANIZATION_POLICY)
+        )
+        changed = sorted(
+            key for key in POLICY_SETTINGS if previous.get(key) != settings.get(key)
+        )
+        revision = current_revision + 1
+        conn.execute(
+            "INSERT INTO organization_policies(organization_id, schema_version, "
+            "revision, settings, updated_at, updated_by_user_id) VALUES (?,?,?,?,?,?) "
+            "ON CONFLICT(organization_id) DO UPDATE SET schema_version=excluded.schema_version, "
+            "revision=excluded.revision, settings=excluded.settings, "
+            "updated_at=excluded.updated_at, updated_by_user_id=excluded.updated_by_user_id",
+            (organization_id, POLICY_SCHEMA_VERSION, revision, json.dumps(settings),
+             now, principal.user_id),
+        )
+        # Meme transaction que la mutation : une policy changee sans trace
+        # rendrait le journal menteur par omission.
+        record_admin_action(
+            principal,
+            "organization_policy.update",
+            target_type="organization",
+            target_id=organization_id,
+            # Les **noms** des cles modifiees, pas le document. Savoir que
+            # `ai_skills_enabled` a bouge suffit ; recopier la configuration
+            # entiere a chaque ecriture ferait grossir le journal sans rien
+            # apprendre de plus.
+            metadata={
+                "old_revision": current_revision,
+                "new_revision": revision,
+                "changed_keys": changed,
+            },
+            conn=conn,
+        )
+    return policy_view(organization_id)
+
+
+# ────────────────── Policies produit : cote membre ────────────────────────
+
+
+@app.get("/api/organization/policy")
+def member_read_policy(account=Depends(current_account)):
+    """La policy applicable au membre connecte.
+
+    Session utilisateur ordinaire — aucune session d'administration n'est
+    requise pour savoir ce que l'on a le droit d'utiliser.
+
+    L'organisation vient du **compte**, jamais d'un parametre : accepter un
+    `organization_id` du client ferait de cette route un moyen de lire la
+    configuration d'une autre organisation en changeant une chaine dans l'URL.
+    """
+    organization_id = (
+        account["organization_id"] if account is not None else None
+    ) or nova_organization_id()
+    policy = organization_policy(organization_id)
+    return {
+        "schema_version": policy["schema_version"],
+        "revision": policy["revision"],
+        "settings": policy["settings"],
+        # Ce que le poste doit reellement appliquer, deja calcule : le poste
+        # porte le meme resolveur pour son interface, mais il n'a pas a
+        # reconstruire la base a partir de bribes.
+        "effective_capabilities": public_campus_config(organization_id)["capabilities"],
+    }
+
+
 
 # ───────────────────── Administrateurs de l'organisation ──────────────────
 #
@@ -5272,7 +5677,9 @@ def me(user: str = Depends(current_user), u=Depends(current_account)):
             (organization_id,),
         ).fetchone()
 
-    capabilities = public_campus_config()["capabilities"]
+    # La policy du membre, pas celle de l'organisation active : en multi-tenant
+    # ce ne serait pas la meme, et `/api/me` repondrait pour le voisin.
+    capabilities = public_campus_config(organization_id)["capabilities"]
     return {
         # — contrat historique, inchangé —
         "email": u["email"],
@@ -5562,7 +5969,20 @@ def formatting_rule_delete(rule_id: int, user: str = Depends(current_user)):
     return {"deleted": True}
 
 @app.get("/api/ai-skills")
-def ai_skills(_: str = Depends(current_user)):
+def ai_skills(account=Depends(current_account)):
+    """Les modules AI Skills, si l'organisation les autorise.
+
+    C'est ici que la policy cesse d'etre un affichage. Le poste masque deja
+    l'entree de menu quand la capacite est fermee, mais un poste est une
+    interface : il peut etre ancien, modifie, ou simplement appeler la route
+    directement. Le catalogue vient du serveur — c'est donc au serveur de ne
+    pas le donner.
+    """
+    organization_id = (
+        account["organization_id"] if account is not None else None
+    ) or nova_organization_id()
+    if not public_campus_config(organization_id)["capabilities"]["aiSkills"]:
+        raise auth_error(403, "CAPABILITY_NOT_AVAILABLE")
     return {"skills": AI_SKILLS}
 
 # --- transcription (proxy vers faster-whisper-server)

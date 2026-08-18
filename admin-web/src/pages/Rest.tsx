@@ -169,7 +169,166 @@ export function Configuration() {
           </Panel>
         )}
       </AsyncSection>
+      <Policies />
     </>
+  );
+}
+
+/* ── Product policies ───────────────────────────────────────────────── */
+
+/**
+ * Ce que l'organisation autorise à ses membres.
+ *
+ * Les valeurs affichées viennent **toujours** du serveur. Après sauvegarde,
+ * c'est la réponse du serveur qui est adoptée — jamais l'écho de ce qui a été
+ * envoyé : une console qui s'affiche à elle-même son propre souhait finit par
+ * montrer un état que la base ne porte pas.
+ *
+ * Il n'y a pas d'éditeur JSON, et il n'y en aura pas. Le serveur possède le
+ * schéma ; l'interface propose des contrôles typés pour les réglages qu'elle
+ * connaît. Un champ libre ferait de cette page un moyen d'écrire n'importe
+ * quoi dans la configuration.
+ */
+function Policies() {
+  const { control, session } = useSession();
+  const [state, retry] = useResource(
+    control ? () => control.policy() : null,
+    [control],
+  );
+  const mayManage = can(session, CAPABILITY.policyManage);
+
+  // Les modifications en cours, séparées de ce que le serveur a renvoyé : sans
+  // cette séparation, on ne saurait pas dire ce qui est enregistré et ce qui
+  // ne l'est pas encore.
+  const [draft, setDraft] = useState<Record<string, boolean> | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
+  const [conflict, setConflict] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  function reload() {
+    setDraft(null);
+    setFailure(null);
+    setConflict(false);
+    setSaved(false);
+    retry();
+  }
+
+  return (
+    <AsyncSection state={state} onRetry={retry}>
+      {(view) => {
+        const settings = draft ?? view.settings;
+        const dirty =
+          draft !== null &&
+          Object.keys(view.settings).some(
+            (key) => draft[key] !== view.settings[key],
+          );
+
+        function set(key: string, value: boolean) {
+          setSaved(false);
+          setDraft({ ...settings, [key]: value });
+        }
+
+        async function save() {
+          setBusy(true);
+          setFailure(null);
+          setConflict(false);
+          try {
+            // La révision sur laquelle cet écran a été construit. Le serveur
+            // refuse si elle a bougé — il n'écrase jamais en silence.
+            await control!.updatePolicy(view.revision, settings);
+            setDraft(null);
+            setSaved(true);
+            // Re-lecture autoritative : l'écran affiche ce que le serveur
+            // porte, pas ce que l'on croit avoir écrit.
+            retry();
+          } catch (raised) {
+            if (raised instanceof ApiError && raised.kind === "conflict") {
+              setConflict(true);
+            } else {
+              setFailure(
+                raised instanceof ApiError
+                  ? errorMessage(raised.kind, raised.code)
+                  : errorMessage("server"),
+              );
+            }
+          } finally {
+            setBusy(false);
+          }
+        }
+
+        return (
+          <Panel title={t.policies.title}>
+            <p style={{ color: "var(--text-muted)" }}>{t.policies.lead}</p>
+            {/* La frontière, dite à l'écran : ces réglages ne touchent jamais
+                l'authentification ni l'audit. Qui administre doit pouvoir s'en
+                assurer sans lire la documentation. */}
+            <Notice>{t.policies.boundary}</Notice>
+
+            <Facts
+              entries={[
+                [t.policies.revision, <span className="mono">{view.revision}</span>],
+                [
+                  t.policies.lastUpdated,
+                  view.updated_at
+                    ? new Date(view.updated_at * 1000).toLocaleString()
+                    : t.policies.never,
+                ],
+              ]}
+            />
+            {!view.configured && <p className="policy-hint">{t.policies.defaults}</p>}
+
+            <div className="policy-setting">
+              <div>
+                <strong>{t.policies.aiSkillsTitle}</strong>
+                <p style={{ color: "var(--text-muted)", margin: 0 }}>
+                  {t.policies.aiSkillsBody}
+                </p>
+              </div>
+              <label className="row">
+                <input
+                  type="checkbox"
+                  checked={settings.ai_skills_enabled === true}
+                  disabled={!mayManage || busy}
+                  onChange={(event) =>
+                    set("ai_skills_enabled", event.target.checked)
+                  }
+                />
+                <span>
+                  {settings.ai_skills_enabled
+                    ? t.policies.enabled
+                    : t.policies.disabled}
+                </span>
+              </label>
+            </div>
+
+            {!mayManage && <p className="policy-hint">{t.policies.readOnly}</p>}
+            {conflict && (
+              <Notice tone="danger">
+                {t.policies.conflict}{" "}
+                <button onClick={reload}>{t.policies.reload}</button>
+              </Notice>
+            )}
+            {failure && <Notice tone="danger">{failure}</Notice>}
+            {saved && !dirty && <Notice>{t.policies.saved}</Notice>}
+
+            {mayManage && dirty && (
+              <>
+                <Notice>{t.policies.unsaved}</Notice>
+                <div className="row">
+                  <button disabled={busy} onClick={() => void save()}>
+                    {busy ? t.policies.saving : t.policies.save}
+                  </button>
+                  <button disabled={busy} onClick={reload}>
+                    {t.policies.discard}
+                  </button>
+                </div>
+              </>
+            )}
+          </Panel>
+        );
+      }}
+    </AsyncSection>
   );
 }
 

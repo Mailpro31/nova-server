@@ -49,6 +49,24 @@ export interface DiscoveryConfigView {
   service_endpoint_error: string | null;
 }
 
+/**
+ * Policy produit de l'organisation.
+ *
+ * A ne pas confondre avec les capacites d'administration de `session.ts` :
+ * celles-ci disent ce qu'un administrateur peut modifier ; celle-la dit ce que
+ * l'organisation autorise a ses membres dans Nova.
+ */
+export interface PolicyView {
+  schema_version: number;
+  /** Monotone. Sert a refuser une ecriture partie d'une version perimee. */
+  revision: number;
+  settings: Record<string, boolean>;
+  updated_at: number | null;
+  updated_by_user_id: string | null;
+  /** `false` tant que personne n'a rien change : ce sont les defauts. */
+  configured: boolean;
+}
+
 export interface AdminSessionView {
   token: string;
   role: string;
@@ -195,6 +213,21 @@ export class ControlPlane {
       `/api/admin/provider-configs/${id}/disable`,
       { method: "POST", body: {} },
     );
+  }
+
+  policy() {
+    return this.client.request<PolicyView>("/api/control/organization/policy");
+  }
+
+  /**
+   * Remplace la policy. `expectedRevision` est obligatoire : sans elle, deux
+   * consoles ouvertes cote a cote s'ecraseraient en silence.
+   */
+  updatePolicy(expectedRevision: number, settings: Record<string, boolean>) {
+    return this.client.request<PolicyView>("/api/control/organization/policy", {
+      method: "PUT",
+      body: { expected_revision: expectedRevision, settings },
+    });
   }
 
   updateDiscovery(body: Record<string, unknown>) {

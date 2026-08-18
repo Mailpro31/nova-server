@@ -235,6 +235,33 @@ export const t = {
     save: "Save",
   },
 
+  // Libelles produit, pas noms de champs. Un administrateur decide si ses
+  // membres peuvent utiliser une fonction ; il n'a pas a connaitre la cle qui
+  // la porte.
+  policies: {
+    title: "Product policies",
+    lead: "What members of this organization can use in Nova.",
+    boundary:
+      "These settings govern product features only. They never affect sign-in, administrator access, or the audit log.",
+    defaults: "Using default settings — nothing has been changed yet.",
+    revision: "Revision",
+    lastUpdated: "Last updated",
+    never: "Never",
+    readOnly: "You can view these settings, but not change them.",
+    unsaved: "You have unsaved changes.",
+    save: "Save changes",
+    saving: "Saving…",
+    discard: "Discard",
+    saved: "Saved.",
+    reload: "Reload",
+    conflict:
+      "The organization policy changed while you were editing it. Reload the latest configuration before saving.",
+    aiSkillsTitle: "AI Skills",
+    aiSkillsBody: "Allow members to use AI Skills in Nova.",
+    enabled: "Enabled",
+    disabled: "Disabled",
+  },
+
   security: {
     title: "Security",
     lead: "How administration of this organization is protected.",
@@ -287,6 +314,13 @@ export function errorMessage(kind: ApiErrorKind, code?: string | null): string {
   if (code === "MEMBER_STATUS_INVALID") return "That status is not recognised.";
   if (code === "MEMBER_ROLE_INVALID") return "That member type is not recognised.";
   if (code === "SECURITY_ROLE_INVALID") return "That role is not recognised.";
+  if (code === "POLICY_REVISION_CONFLICT") return t.policies.conflict;
+  // Le motif porte la cle fautive — `POLICY_KEY_UNKNOWN:ai_skils`. La console
+  // ne l'affiche pas telle quelle : un nom de champ interne n'aide personne.
+  if (code?.startsWith("POLICY_KEY_UNKNOWN"))
+    return "This console sent a setting the Nova service does not recognise. Update Nova Admin.";
+  if (code?.startsWith("POLICY_VALUE_INVALID"))
+    return "One of these settings has an unexpected value. Reload and try again.";
   switch (kind) {
     case "network":
       return "Cannot reach the Nova service. Check your connection and try again.";

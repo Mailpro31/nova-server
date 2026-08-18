@@ -429,5 +429,82 @@ class FirstAdminRegressionTests(unittest.TestCase):
         self.assertIn("refus", output)
 
 
+class ControlPlaneModeTests(unittest.TestCase):
+    """En mode Control Plane, l'organisation doit etre nommee.
+
+    C'est la seule difference de comportement de la CLI entre les deux modes,
+    et c'est celle qui compte : « le premier alex@example.com trouve » n'est
+    pas une personne, c'est une coincidence. Une commande d'amorcage qui
+    viserait l'organisation d'a cote serait une faute silencieuse.
+
+    Le mode est lu sur `main` au moment de l'appel, ce qui rend le test
+    deterministe sans redemarrer quoi que ce soit.
+    """
+
+    OTHER = "org-voisine-cli"
+
+    def setUp(self):
+        reset_discovery()
+        with main.db() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO organizations(id, slug, display_name, "
+                "org_type, status, discovery_slug, discovery_enabled, created_at) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (self.OTHER, "voisine-cli", "Organisation voisine", "education",
+                 "active", "slug-voisine", 0, 0.0))
+
+    def tearDown(self):
+        with main.db() as conn:
+            conn.execute("DELETE FROM organizations WHERE id=?", (self.OTHER,))
+
+    def control_plane(self):
+        return patch.object(main, "NOVA_SERVER_MODE",
+                            main.SERVER_MODE_CONTROL_PLANE)
+
+    def test_discovery_without_an_organization_is_refused(self):
+        with self.control_plane():
+            code, output = run("discovery", "show")
+        self.assertEqual(code, 1)
+        self.assertIn("--organization", output)
+
+    def test_discovery_targets_the_named_organization(self):
+        """La sortie porte le slug de la **voisine**, pas celui de l'instance.
+
+        C'est ce qui prouve le ciblage : lire l'organisation servie par
+        l'instance aurait affiche `ecole-test`.
+        """
+        with self.control_plane():
+            code, output = run("discovery", "show", "--organization", "voisine-cli")
+        self.assertEqual(code, 0)
+        self.assertIn("slug-voisine", output)
+        self.assertNotIn("ecole-test", output)
+
+    def test_enabling_touches_only_the_named_organization(self):
+        with self.control_plane():
+            code, _ = run("discovery", "enable", "--organization", self.OTHER,
+                          "--endpoint", "https://voisine.example.com")
+        self.assertEqual(code, 0)
+        with main.db() as conn:
+            neighbour = conn.execute(
+                "SELECT discovery_enabled, service_endpoint FROM organizations "
+                "WHERE id=?", (self.OTHER,)).fetchone()
+        self.assertEqual(neighbour["discovery_enabled"], 1)
+        self.assertEqual(neighbour["service_endpoint"],
+                         "https://voisine.example.com")
+        # L'organisation de l'instance n'a pas bouge.
+        self.assertEqual(organization_row()["discovery_enabled"], 0)
+
+    def test_the_same_endpoint_policy_applies_in_control_plane(self):
+        """Le mode ne relache aucune validation."""
+        with self.control_plane():
+            code, _ = run("discovery", "enable", "--organization", self.OTHER,
+                          "--endpoint", "https://127.0.0.1")
+        self.assertEqual(code, 1)
+
+    def test_dedicated_mode_still_needs_no_organization(self):
+        code, _ = run("discovery", "show")
+        self.assertEqual(code, 0)
+
+
 if __name__ == "__main__":
     unittest.main()
