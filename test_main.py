@@ -3518,5 +3518,289 @@ class SsoFlowBindingTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
 
 
+class DiscoveryEndpointSecurityTests(unittest.TestCase):
+    """Ce que le poste accepte de contacter après une découverte."""
+
+    def allowed(self, endpoint, allow_insecure=False):
+        return main.service_endpoint_is_allowed(endpoint, allow_insecure)
+
+    def test_a_public_https_endpoint_is_accepted(self):
+        ok, reason = self.allowed("https://nova.example.edu")
+        self.assertTrue(ok, reason)
+
+    def test_plain_http_is_refused_in_production(self):
+        ok, reason = self.allowed("http://nova.example.edu")
+        self.assertFalse(ok)
+        self.assertEqual(reason, "scheme_not_https")
+
+    def test_plain_http_is_allowed_only_when_opted_in(self):
+        # Un serveur de développement sur la boucle locale reste légitime, mais
+        # c'est une décision d'exploitation, pas un défaut.
+        self.assertTrue(self.allowed("http://localhost:8787", allow_insecure=True)[0])
+
+    def test_exotic_schemes_are_refused(self):
+        for endpoint in ("file:///etc/passwd", "ftp://nova.example.edu",
+                         "javascript:alert(1)", "data:text/html,x"):
+            ok, reason = self.allowed(endpoint, allow_insecure=True)
+            self.assertFalse(ok, endpoint)
+            self.assertEqual(reason, "scheme_not_allowed")
+
+    def test_credentials_in_the_url_are_refused(self):
+        ok, reason = self.allowed("https://user:pass@nova.example.edu")
+        self.assertFalse(ok)
+        self.assertEqual(reason, "credentials_in_url")
+
+    def test_a_query_or_fragment_is_refused(self):
+        for endpoint in ("https://nova.example.edu?a=b", "https://nova.example.edu#x"):
+            ok, reason = self.allowed(endpoint)
+            self.assertFalse(ok, endpoint)
+            self.assertEqual(reason, "not_a_base_url")
+
+    def test_a_missing_host_is_refused(self):
+        self.assertFalse(self.allowed("https://")[0])
+
+
+class OrganizationDiscoveryTests(unittest.TestCase):
+    """L'endpoint public de découverte.
+
+    Il est appelé par des postes non authentifiés : il ne doit donner aucun
+    accès, et ne rien révéler qu'un annuaire public ne révélerait.
+    """
+
+    ADMIN = {"X-Admin-Token": "test-admin-token"}
+    SLUG = "ecole-exemple"
+    ENDPOINT = "https://nova.example.edu"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.client = TestClient(main.app)
+
+    def setUp(self):
+        with main.db() as conn:
+            conn.execute(
+                "UPDATE organizations SET discovery_slug=?, discovery_enabled=1, "
+                "service_endpoint=?, status='active', deployment_mode='dedicated' "
+                "WHERE id=?",
+                (self.SLUG, self.ENDPOINT, main.nova_organization_id()),
+            )
+
+    def discover(self, slug):
+        return self.client.post(
+            "/api/discovery/organization", json={"organization": slug}
+        )
+
+    # -- résolution ---------------------------------------------------------
+
+    def test_a_known_organization_returns_its_bootstrap(self):
+        body = self.discover(self.SLUG).json()
+        self.assertEqual(body["contract_version"], 1)
+        self.assertEqual(body["organization"]["slug"], self.SLUG)
+        self.assertEqual(body["service_endpoint"], self.ENDPOINT)
+        self.assertEqual(body["deployment_mode"], "dedicated")
+
+    def test_the_identifier_is_case_and_space_insensitive(self):
+        # Un code recopié depuis un courriel ne doit pas échouer sur une
+        # majuscule ou une espace.
+        for variant in (self.SLUG.upper(), f"  {self.SLUG}  ", "Ecole-Exemple"):
+            self.assertEqual(self.discover(variant).status_code, 200, variant)
+
+    def test_the_response_reveals_nothing_more_than_needed(self):
+        body = self.discover(self.SLUG).json()
+        self.assertEqual(
+            set(body),
+            {"contract_version", "organization", "deployment_mode", "service_endpoint"},
+        )
+        self.assertEqual(set(body["organization"]), {"slug", "display_name"})
+        # Ni identifiant de tenant interne, ni tenant Microsoft, ni domaine
+        # Google, ni émetteur OIDC, ni identifiant client.
+        raw = self.discover(self.SLUG).text
+        self.assertNotIn(main.nova_organization_id(), raw)
+        for leaked in ("entra_tenant_id", "google_hosted_domain", "oidc_issuer",
+                       "client_id", "client_secret", "organization_id"):
+            self.assertNotIn(leaked, raw)
+
+    # -- anti-énumération ---------------------------------------------------
+
+    def test_every_failure_looks_the_same(self):
+        """Le point le plus important : cet endpoint ne doit pas devenir un
+        oracle qui dit lesquelles des entreprises testées sont clientes de Nova,
+        et lesquelles ont été suspendues."""
+        responses = []
+
+        # 1. organisation inconnue
+        responses.append(self.discover("organisation-qui-n-existe-pas"))
+        # 2. découverte désactivée
+        with main.db() as conn:
+            conn.execute("UPDATE organizations SET discovery_enabled=0")
+        responses.append(self.discover(self.SLUG))
+        # 3. organisation suspendue
+        with main.db() as conn:
+            conn.execute(
+                "UPDATE organizations SET discovery_enabled=1, status='suspended'")
+        responses.append(self.discover(self.SLUG))
+        # 4. adresse de service absente
+        with main.db() as conn:
+            conn.execute(
+                "UPDATE organizations SET status='active', service_endpoint=NULL")
+        responses.append(self.discover(self.SLUG))
+        # 5. adresse de service invalide
+        with main.db() as conn:
+            conn.execute(
+                "UPDATE organizations SET service_endpoint='ftp://ailleurs.test'")
+        responses.append(self.discover(self.SLUG))
+
+        for response in responses:
+            self.assertEqual(response.status_code, 404)
+            self.assertEqual(response.json()["detail"], "ORGANIZATION_NOT_AVAILABLE")
+        # Toutes les réponses sont rigoureusement identiques.
+        self.assertEqual(len({r.text for r in responses}), 1)
+
+    def test_an_empty_identifier_reveals_nothing(self):
+        for value in ("", "   "):
+            response = self.discover(value)
+            self.assertEqual(response.status_code, 404)
+            self.assertEqual(response.json()["detail"], "ORGANIZATION_NOT_AVAILABLE")
+
+    def test_there_is_no_listing_or_search(self):
+        # Aucune route ne permet d'énumérer les organisations.
+        for path in ("/api/discovery/organizations", "/api/organizations",
+                     "/api/discovery"):
+            self.assertIn(self.client.get(path).status_code, (404, 405))
+        # Et le point de terminaison n'accepte pas de recherche.
+        self.assertEqual(self.discover("*").status_code, 404)
+        self.assertEqual(self.discover("%").status_code, 404)
+
+    def test_the_identifier_is_not_logged(self):
+        """Accumuler les recherches infructueuses reviendrait à constituer la
+        liste des organisations que l'on cherche à joindre."""
+        with patch("builtins.print") as printed:
+            self.discover("organisation-recherchee-secrete")
+        for call in printed.call_args_list:
+            self.assertNotIn("organisation-recherchee-secrete", str(call))
+
+    # -- mode dédié ---------------------------------------------------------
+
+    def test_a_dedicated_server_never_resolves_another_organization(self):
+        """Même si la base en contient d'autres — import, test, erreur — une
+        instance dédiée ne répond que pour celle qu'elle sert."""
+        with main.db() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO organizations(id, slug, display_name, "
+                "org_type, discovery_slug, discovery_enabled, service_endpoint, "
+                "status, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                ("organisation-voisine", "voisine", "Voisine", "education",
+                 "voisine", 1, "https://voisine.example.edu", "active", time.time()))
+        response = self.discover("voisine")
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["detail"], "ORGANIZATION_NOT_AVAILABLE")
+        with main.db() as conn:
+            conn.execute("DELETE FROM organizations WHERE id='organisation-voisine'")
+
+    def test_the_resolver_honours_its_interface(self):
+        self.assertIsInstance(
+            main.DISCOVERY_RESOLVER, main.OrganizationDiscoveryResolver)
+
+    # -- administration -----------------------------------------------------
+
+    def test_admin_can_read_and_update_discovery(self):
+        read = self.client.get("/api/admin/discovery", headers=self.ADMIN).json()
+        self.assertEqual(read["discovery_slug"], self.SLUG)
+        self.assertTrue(read["discovery_enabled"])
+        self.assertIsNone(read["service_endpoint_error"])
+
+        updated = self.client.post(
+            "/api/admin/discovery", headers=self.ADMIN,
+            json={"service_endpoint": "https://nouveau.example.edu/"}).json()
+        # L'adresse est normalisée, sans barre finale.
+        self.assertEqual(updated["service_endpoint"], "https://nouveau.example.edu")
+
+    def test_an_endpoint_rotation_is_immediately_visible(self):
+        """Une organisation doit pouvoir déménager sans réinstaller Nova."""
+        first = self.discover(self.SLUG).json()["service_endpoint"]
+        self.client.post(
+            "/api/admin/discovery", headers=self.ADMIN,
+            json={"service_endpoint": "https://apres-migration.example.edu"})
+        second = self.discover(self.SLUG).json()["service_endpoint"]
+        self.assertNotEqual(first, second)
+        self.assertEqual(second, "https://apres-migration.example.edu")
+
+    def test_an_invalid_endpoint_is_refused_by_the_admin_api(self):
+        for endpoint in ("http://nova.example.edu", "ftp://nova.example.edu",
+                         "https://user:pass@nova.example.edu"):
+            response = self.client.post(
+                "/api/admin/discovery", headers=self.ADMIN,
+                json={"service_endpoint": endpoint})
+            self.assertEqual(response.status_code, 400, endpoint)
+            self.assertEqual(response.json()["detail"], "SERVICE_ENDPOINT_INVALID")
+
+    def test_the_slug_is_immutable_once_discovery_is_enabled(self):
+        """Le changer invaliderait d'un coup le code que portent tous les
+        postes déjà déployés."""
+        response = self.client.post(
+            "/api/admin/discovery", headers=self.ADMIN,
+            json={"discovery_slug": "nouveau-code"})
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["detail"], "DISCOVERY_SLUG_IMMUTABLE")
+
+        # Désactiver d'abord rend le changement possible, et explicite.
+        self.client.post("/api/admin/discovery", headers=self.ADMIN,
+                         json={"discovery_enabled": False})
+        changed = self.client.post(
+            "/api/admin/discovery", headers=self.ADMIN,
+            json={"discovery_slug": "nouveau-code"})
+        self.assertEqual(changed.status_code, 200)
+        self.assertEqual(changed.json()["discovery_slug"], "nouveau-code")
+
+    def test_an_invalid_status_is_refused(self):
+        response = self.client.post(
+            "/api/admin/discovery", headers=self.ADMIN,
+            json={"status": "en-vacances"})
+        self.assertEqual(response.status_code, 400)
+
+    def test_the_admin_api_requires_the_admin_token(self):
+        self.assertEqual(self.client.get("/api/admin/discovery").status_code, 403)
+        self.assertEqual(
+            self.client.post("/api/admin/discovery", json={}).status_code, 403)
+
+    # -- amorçage -----------------------------------------------------------
+
+    def test_discovery_is_bootstrapped_once_from_the_environment(self):
+        path = os.path.join(TEST_DIRECTORY.name, f"discovery-{uuid.uuid4().hex}.db")
+        with patch.object(main, "DB_PATH", path), patch.object(
+            main, "DISCOVERY_SLUG", "code-herite"
+        ), patch.object(main, "SERVICE_ENDPOINT", "https://herite.example.edu"):
+            main.init_db()
+            with main.db() as conn:
+                first = dict(conn.execute(
+                    "SELECT discovery_slug, service_endpoint FROM organizations "
+                    "WHERE id=?", (main.nova_organization_id(),)).fetchone())
+                conn.execute(
+                    "UPDATE organizations SET service_endpoint=?",
+                    ("https://corrige.example.edu",))
+            # Un redémarrage ne réécrit pas ce qui a été corrigé en base.
+            main.init_db()
+            with main.db() as conn:
+                second = dict(conn.execute(
+                    "SELECT discovery_slug, service_endpoint FROM organizations "
+                    "WHERE id=?", (main.nova_organization_id(),)).fetchone())
+
+        self.assertEqual(first["discovery_slug"], "code-herite")
+        self.assertEqual(first["service_endpoint"], "https://herite.example.edu")
+        self.assertEqual(second["service_endpoint"], "https://corrige.example.edu")
+
+    def test_discovery_stays_disabled_until_someone_enables_it(self):
+        """Rien n'est publié par défaut : activer la découverte est un geste."""
+        path = os.path.join(TEST_DIRECTORY.name, f"discovery-{uuid.uuid4().hex}.db")
+        with patch.object(main, "DB_PATH", path), patch.object(
+            main, "DISCOVERY_SLUG", "code-herite"
+        ):
+            main.init_db()
+            with main.db() as conn:
+                row = conn.execute(
+                    "SELECT discovery_enabled FROM organizations WHERE id=?",
+                    (main.nova_organization_id(),)).fetchone()
+        self.assertEqual(row["discovery_enabled"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -233,6 +233,12 @@ def init_db():
             google_customer_id TEXT,           -- Admin SDK uniquement, non lu aujourd'hui
             google_hosted_domain TEXT,         -- revendication `hd`, mapping explicite
             oidc_issuer TEXT,
+            -- Découverte : comment un poste trouve cette organisation.
+            discovery_slug TEXT,               -- code public, pas un secret
+            discovery_enabled INTEGER NOT NULL DEFAULT 0,
+            deployment_mode TEXT NOT NULL DEFAULT 'dedicated',
+            service_endpoint TEXT,             -- adresse annoncée au poste
+            status TEXT NOT NULL DEFAULT 'active',
             created_at REAL
         );
         -- Tentatives de connexion SSO. En base plutôt qu'en mémoire de
@@ -337,6 +343,21 @@ def migrate_schema(conn):
     if "google_hosted_domain" not in columns("organizations"):
         conn.execute("ALTER TABLE organizations ADD COLUMN google_hosted_domain TEXT")
 
+    organization_columns = columns("organizations")
+    for column, definition in {
+        "discovery_slug": "TEXT",
+        "discovery_enabled": "INTEGER NOT NULL DEFAULT 0",
+        "deployment_mode": "TEXT NOT NULL DEFAULT 'dedicated'",
+        "service_endpoint": "TEXT",
+        "status": "TEXT NOT NULL DEFAULT 'active'",
+    }.items():
+        if column not in organization_columns:
+            conn.execute(f"ALTER TABLE organizations ADD COLUMN {column} {definition}")
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_organizations_slug "
+        "ON organizations(discovery_slug)"
+    )
+
     if "verification" not in columns("federated_identities"):
         conn.execute(
             "ALTER TABLE federated_identities ADD COLUMN verification "
@@ -410,6 +431,7 @@ def migrate_schema(conn):
     conn.execute("UPDATE users SET status='disabled' WHERE disabled=1 AND status='active'")
 
     bootstrap_provider_configs(conn, organization_id)
+    bootstrap_discovery(conn, organization_id)
 
     # Tentatives d'authentification périmées, laissées par une exécution
     # précédente : elles n'ont plus aucune utilité et ne doivent pas
@@ -997,6 +1019,198 @@ class DatabaseSsoFlowStore(SsoFlowStore):
 
 
 SSO_FLOW_STORE: SsoFlowStore = DatabaseSsoFlowStore()
+
+
+# ------------------------------------------------- Découverte d'organisation
+#
+# ## Ce que résout cette brique
+#
+# Aujourd'hui, un poste trouve son serveur par une adresse : déposée par la DSI,
+# ou saisie par l'utilisateur. Une adresse est une mauvaise chose à demander —
+# elle est longue, elle change, elle expose une topologie, et elle se trompe
+# silencieusement (la Phase 16 en a fait les frais avec un port erroné).
+#
+# La découverte remplace « où est votre serveur ? » par « quelle est votre
+# organisation ? ».
+#
+# ## Ce que cet endpoint est, et n'est pas
+#
+# Il est **public** : personne n'est authentifié quand il l'appelle. Il ne donne
+# donc aucun accès, et ne doit rien révéler qu'un annuaire public ne révélerait.
+#
+# Il n'est surtout pas un annuaire des clients de Nova. Il n'y a ni recherche,
+# ni liste, ni complétion : on demande une organisation précise, et l'on obtient
+# de quoi la joindre — ou une réponse générique.
+
+DISCOVERY_CONTRACT_VERSION = 1
+
+# Modes de déploiement. `dedicated` est le mode actuel : une instance sert une
+# organisation. `control_plane` désignera une instance qui en sert plusieurs —
+# il n'existe pas encore, et le résolveur ci-dessous refuse d'en faire semblant.
+DEPLOYMENT_MODE_DEDICATED = "dedicated"
+DEPLOYMENT_MODE_CONTROL_PLANE = "control_plane"
+
+ORGANIZATION_STATUS_ACTIVE = "active"
+
+# Adresse à laquelle le poste doit s'adresser ensuite. En mode dédié, c'est
+# l'adresse publique du serveur de l'établissement ; en mode Control Plane, ce
+# sera une passerelle Nova. Vide, la découverte reste indisponible : mieux vaut
+# ne rien annoncer qu'annoncer une adresse fausse.
+SERVICE_ENDPOINT = os.getenv("NOVA_SERVICE_ENDPOINT", "").strip().rstrip("/")
+# Le code que l'utilisateur saisit. Ce n'est **pas** un secret : le connaître ne
+# donne rien. C'est un identifiant public, comme un nom de domaine.
+DISCOVERY_SLUG = os.getenv("NOVA_DISCOVERY_SLUG", "").strip()
+# Hors production, un endpoint en clair sur la boucle locale est légitime.
+DISCOVERY_ALLOW_INSECURE_ENDPOINT = (
+    os.getenv("NOVA_DISCOVERY_ALLOW_INSECURE_ENDPOINT", "").strip().lower() == "true"
+    or NOVA_ENV == "development"
+)
+
+
+class DiscoveryRequest(BaseModel):
+    # Envoyé dans le corps plutôt que dans l'URL : un identifiant
+    # d'organisation n'est pas secret, mais il n'a pas besoin de se retrouver
+    # dans les journaux de chaque intermédiaire réseau.
+    organization: str
+
+
+def normalize_discovery_slug(value: str) -> str:
+    """Forme canonique d'un identifiant d'organisation.
+
+    Insensible à la casse et aux espaces : « IPSA », « ipsa » et « Ipsa »
+    désignent la même organisation. Quelqu'un qui recopie un code depuis un
+    courriel ne doit pas échouer pour une majuscule.
+    """
+    return value.strip().lower()
+
+
+def service_endpoint_is_allowed(endpoint: str, allow_insecure: bool) -> tuple[bool, str]:
+    """L'adresse annoncée est-elle acceptable ?
+
+    Le poste va s'y connecter et lui confier une session : une réponse de
+    découverte qui l'enverrait ailleurs serait une redirection d'authentification.
+    D'où une validation stricte, côté serveur **et** côté poste.
+    """
+    try:
+        parsed = urlparse(endpoint)
+    except ValueError:
+        return False, "malformed"
+    if parsed.scheme not in {"http", "https"}:
+        return False, "scheme_not_allowed"
+    if parsed.scheme == "http" and not allow_insecure:
+        return False, "scheme_not_https"
+    if parsed.username or parsed.password:
+        return False, "credentials_in_url"
+    if parsed.query or parsed.fragment:
+        return False, "not_a_base_url"
+    if not parsed.hostname:
+        return False, "missing_host"
+    return True, "ok"
+
+
+class OrganizationDiscoveryResolver:
+    """Contrat de résolution.
+
+    Une seule implémentation existe — le mode dédié. L'interface est explicite
+    parce qu'un Control Plane en aura une seconde, et que le contrat public ne
+    doit pas changer ce jour-là.
+    """
+
+    def resolve(self, slug: str) -> dict | None:  # pragma: no cover - contrat
+        raise NotImplementedError
+
+
+class DedicatedOrganizationResolver(OrganizationDiscoveryResolver):
+    """Une instance, une organisation.
+
+    Le point important est ce que cette classe **refuse** de faire : même si la
+    base contenait d'autres organisations — de test, d'un import, d'une erreur —
+    elle ne résout que celle que l'instance sert réellement. Un serveur dédié
+    qui répondrait pour ses voisines serait un multi-tenant accidentel, sans
+    aucun des contrôles qui vont avec.
+    """
+
+    def resolve(self, slug: str) -> dict | None:
+        wanted = normalize_discovery_slug(slug)
+        if not wanted:
+            return None
+        with db() as conn:
+            row = conn.execute(
+                "SELECT * FROM organizations WHERE id=?", (nova_organization_id(),)
+            ).fetchone()
+        if row is None:
+            return None
+        organization = dict(row)
+        if normalize_discovery_slug(organization.get("discovery_slug") or "") != wanted:
+            return None
+        return organization
+
+
+DISCOVERY_RESOLVER: OrganizationDiscoveryResolver = DedicatedOrganizationResolver()
+
+
+def bootstrap_discovery(conn, organization_id: str):
+    """Amorce la configuration de découverte depuis l'environnement.
+
+    Écrit **une fois**, comme les configurations de fournisseur : un redémarrage
+    ne réécrit pas, et une valeur corrigée en base n'est pas écrasée.
+    """
+    row = conn.execute(
+        "SELECT discovery_slug, service_endpoint FROM organizations WHERE id=?",
+        (organization_id,),
+    ).fetchone()
+    if row is None:
+        return
+    updates = {}
+    if not row["discovery_slug"]:
+        # À défaut de code dédié, le slug lisible de l'organisation fait un
+        # identifiant de découverte parfaitement acceptable — il est déjà public.
+        slug = DISCOVERY_SLUG or ORGANIZATION_ID
+        if slug:
+            updates["discovery_slug"] = normalize_discovery_slug(slug)
+    if not row["service_endpoint"] and SERVICE_ENDPOINT:
+        updates["service_endpoint"] = SERVICE_ENDPOINT
+    if updates:
+        assignments = ", ".join(f"{name}=?" for name in updates)
+        conn.execute(
+            f"UPDATE organizations SET {assignments} WHERE id=?",
+            (*updates.values(), organization_id),
+        )
+
+
+def discovery_bootstrap_for(organization: dict) -> dict | None:
+    """Réponse de découverte, ou `None` si l'organisation n'est pas joignable.
+
+    Volontairement pauvre. Le poste a besoin de savoir **où aller** et **qui
+    c'est** ; tout le reste — identifiant de tenant interne, tenant Microsoft,
+    domaine Google, émetteur OIDC, identifiants clients — resterait sans usage
+    pour lui et renseignerait quiconque interroge l'endpoint.
+    """
+    if not organization.get("discovery_enabled"):
+        return None
+    if (organization.get("status") or ORGANIZATION_STATUS_ACTIVE) != ORGANIZATION_STATUS_ACTIVE:
+        return None
+    endpoint = organization.get("service_endpoint") or ""
+    allowed, _ = service_endpoint_is_allowed(endpoint, DISCOVERY_ALLOW_INSECURE_ENDPOINT)
+    if not allowed:
+        return None
+    return {
+        "contract_version": DISCOVERY_CONTRACT_VERSION,
+        "organization": {
+            # Le slug, pas l'UUID interne : le poste n'a rien à faire de
+            # l'identifiant de tenant tant qu'il n'est pas authentifié, et
+            # `/api/me` le lui donnera ensuite.
+            "slug": organization["discovery_slug"],
+            "display_name": organization["display_name"],
+        },
+        "deployment_mode": organization.get("deployment_mode")
+        or DEPLOYMENT_MODE_DEDICATED,
+        # Le poste appellera `/api/auth/providers` sur cette adresse : la liste
+        # des fournisseurs garde une seule source de vérité.
+        "service_endpoint": endpoint,
+    }
+
+
 
 
 init_db()
@@ -2677,6 +2891,117 @@ def admin_disable_provider_config(config_id: str, _: bool = Depends(require_admi
             (time.time(), config_id, organization_id),
         )
     return admin_provider_view(provider_config_by_id(config_id, organization_id))
+
+
+@app.post("/api/discovery/organization")
+def discover_organization(body: DiscoveryRequest):
+    """Résout une organisation en adresse de service.
+
+    ## Anti-énumération
+    #
+    Toutes les issues négatives — organisation inconnue, découverte désactivée,
+    organisation suspendue, adresse de service absente ou invalide — produisent
+    **la même réponse** : `404 ORGANIZATION_NOT_AVAILABLE`.
+    #
+    Distinguer « n'existe pas » de « suspendue » transformerait cet endpoint en
+    oracle : on y testerait des noms d'entreprises pour savoir lesquelles sont
+    clientes de Nova, et lesquelles ont cessé de payer. Ce n'est l'affaire de
+    personne.
+    """
+    organization = DISCOVERY_RESOLVER.resolve(body.organization)
+    bootstrap = discovery_bootstrap_for(organization) if organization else None
+    if bootstrap is None:
+        # Le journal ne porte pas l'identifiant demandé : l'endpoint est public,
+        # et accumuler les recherches infructueuses reviendrait à constituer la
+        # liste des organisations que l'on cherche à joindre.
+        print("[discovery] result=not_available")
+        raise auth_error(404, "ORGANIZATION_NOT_AVAILABLE")
+    print(
+        f"[discovery] result=ok mode={bootstrap['deployment_mode']} "
+        f"version={DISCOVERY_CONTRACT_VERSION}"
+    )
+    return bootstrap
+
+
+@app.get("/api/admin/discovery")
+def admin_read_discovery(_: bool = Depends(require_admin)):
+    with db() as conn:
+        row = conn.execute(
+            "SELECT * FROM organizations WHERE id=?", (nova_organization_id(),)
+        ).fetchone()
+    organization = dict(row) if row else {}
+    endpoint = organization.get("service_endpoint") or ""
+    allowed, reason = service_endpoint_is_allowed(
+        endpoint, DISCOVERY_ALLOW_INSECURE_ENDPOINT
+    )
+    return {
+        "discovery_slug": organization.get("discovery_slug"),
+        "discovery_enabled": bool(organization.get("discovery_enabled")),
+        "deployment_mode": organization.get("deployment_mode"),
+        "service_endpoint": endpoint,
+        "status": organization.get("status"),
+        "service_endpoint_error": None if allowed else reason,
+    }
+
+
+class DiscoverySettings(BaseModel):
+    discovery_slug: str | None = None
+    discovery_enabled: bool | None = None
+    service_endpoint: str | None = None
+    status: str | None = None
+
+
+@app.post("/api/admin/discovery")
+def admin_update_discovery(
+    body: DiscoverySettings, _: bool = Depends(require_admin)
+):
+    """Modifie la configuration de découverte de l'organisation active.
+
+    Le slug est **immuable une fois la découverte activée**. Le changer
+    invaliderait d'un coup le code que portent tous les postes déjà déployés, et
+    aucun mécanisme d'alias n'existe pour amortir cela. Le désactiver d'abord
+    rend le changement possible — et explicite.
+    """
+    organization_id = nova_organization_id()
+    with db() as conn:
+        current = conn.execute(
+            "SELECT * FROM organizations WHERE id=?", (organization_id,)
+        ).fetchone()
+    current = dict(current) if current else {}
+
+    updates = {}
+    if body.discovery_slug is not None:
+        wanted = normalize_discovery_slug(body.discovery_slug)
+        if (
+            current.get("discovery_enabled")
+            and normalize_discovery_slug(current.get("discovery_slug") or "") != wanted
+        ):
+            raise auth_error(409, "DISCOVERY_SLUG_IMMUTABLE")
+        updates["discovery_slug"] = wanted
+    if body.discovery_enabled is not None:
+        updates["discovery_enabled"] = 1 if body.discovery_enabled else 0
+    if body.service_endpoint is not None:
+        endpoint = body.service_endpoint.strip().rstrip("/")
+        allowed, reason = service_endpoint_is_allowed(
+            endpoint, DISCOVERY_ALLOW_INSECURE_ENDPOINT
+        )
+        if endpoint and not allowed:
+            print(f"[discovery] result=failure reason=endpoint_rejected:{reason}")
+            raise auth_error(400, "SERVICE_ENDPOINT_INVALID")
+        updates["service_endpoint"] = endpoint or None
+    if body.status is not None:
+        if body.status not in {"active", "suspended", "disabled"}:
+            raise auth_error(400, "ORGANIZATION_STATUS_INVALID")
+        updates["status"] = body.status
+
+    if updates:
+        assignments = ", ".join(f"{name}=?" for name in updates)
+        with db() as conn:
+            conn.execute(
+                f"UPDATE organizations SET {assignments} WHERE id=?",
+                (*updates.values(), organization_id),
+            )
+    return admin_read_discovery(True)
 
 
 # --- profil de l'utilisateur connecté (pour l'app)
