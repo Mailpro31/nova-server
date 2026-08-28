@@ -304,21 +304,36 @@ Une configuration refusée laisse l'ancienne active.
   porte. Vérifié en conteneur : un utilisateur non privilégié obtient
   `Permission denied` en tentant de s'y connecter.
 
-### Migration depuis la Phase 33
+### Chemin hérité : **supprimé**
 
-La route publique `/api/deployment/ai-runtime/apply` **n'existe plus par
-défaut**, même si `NOVA_DEPLOYMENT_APPLY_TOKEN` est encore présent dans
-l'environnement : un secret existant ne vaut pas consentement à le conserver.
+La route publique `/api/deployment/ai-runtime/apply` et le secret statique qui
+la protégeait n'existent plus. Ni la route, ni le schéma de sa requête, ni les
+variables `NOVA_DEPLOYMENT_APPLY_TOKEN` et
+`NOVA_ALLOW_LEGACY_DEPLOYMENT_TOKEN`.
 
-Un déploiement Phase 33 peut la rallumer le temps de migrer, avec
-`NOVA_ALLOW_LEGACY_DEPLOYMENT_TOKEN=true`. Le serveur l'annonce au démarrage. Ce
-chemin est **déprécié** et n'a pas vocation à survivre à une phase de plus.
+Poser ces variables ne produit **aucun effet**. Il n'y a pas de mode de
+compatibilité, pas de repli implicite, pas d'acceptation accompagnée d'un
+avertissement : la route répond `404` quel que soit l'environnement, parce
+qu'elle n'est plus enregistrée. Des tests de source et de configuration
+empêchent sa réintroduction.
 
-Migration recommandée :
+Un chemin hérité ne meurt pas quand on cesse de le documenter — il meurt quand
+poser sa variable ne change plus rien.
+
+**Migration d'un déploiement antérieur**
 
 1. passer le point d'entrée à `python serve.py` ;
 2. déclarer `NOVA_CONNECTOR_LOCAL_TRANSPORT=unix` et le socket partagé ;
-3. retirer `NOVA_DEPLOYMENT_APPLY_TOKEN` de l'environnement et du compose.
+3. retirer `NOVA_DEPLOYMENT_APPLY_TOKEN` de l'environnement et du compose ;
+4. enrôler un Connector depuis Nova Admin s'il n'y en a pas déjà un.
+
+Un script ou un outil qui appelait l'ancienne route doit passer par le
+Connector. Il n'y a pas d'équivalent direct côté réseau : c'est délibéré, la
+surface interne n'étant plus servie sur le listener public.
+
+Aucune compatibilité cachée ne subsiste : la seule frontière entre le Connector
+et nova-server est le canal local, et la seule frontière entre Nova et le
+Connector est un credential rotatable.
 
 Codes de refus : `AI_RUNTIME_CONFIG_REJECTED`, `AI_RUNTIME_PROFILE_UNAVAILABLE`,
 `AI_RUNTIME_HARDWARE_INCOMPATIBLE`.
@@ -363,7 +378,7 @@ ni voir ses diagnostics.
 | MITM | HTTPS obligatoire ; HTTP refusé sauf demande explicite en développement |
 | Reporting excessif | Limites de charge utile, plafond de capacités, cadence limitée **par Connector** — un bavard ne fait pas taire ses voisins |
 | Credential cloud vieillissant | Rotation en ligne sans ré-enrôlement ; âge exposé à la console |
-| Fuite du secret local statique | Supprimé du chemin nominal : permissions de socket, ou jeton éphémère par démarrage |
+| Fuite du secret local statique | Le mécanisme n'existe plus : ni route, ni variable, ni comparaison. Permissions de socket en production, jeton éphémère par démarrage en développement |
 | Confusion entre les deux frontières | Deux credentials distincts, deux principals distincts ; le credential cloud n'est jamais transmis au plan de données, et le secret local n'est jamais rapporté au cloud |
 | Dégradation de protocole | Version explicite, refus propre, aucune retombée silencieuse |
 

@@ -600,82 +600,110 @@ class AuditTests(ConnectorTestCase):
         self.assertIn("connector.apply.applied", actions)
 
 
-class LegacyDeploymentApplyTests(ConnectorTestCase):
-    """Le chemin herite de la Phase 33 : secret statique partage.
+class LegacyDeploymentTokenRemovedTests(ConnectorTestCase):
+    """Le dernier chemin herite a disparu, et ne doit pas revenir.
 
-    Il n'est plus le chemin nominal. Il n'est meme plus allume par defaut : un
-    secret sans rotation ni revocation, en clair dans l'environnement et dans le
-    fichier compose, donnait acces a la reconfiguration de tout le plan de
-    donnees. Un deploiement existant peut le rallumer explicitement, le temps de
-    migrer — jamais sans le savoir.
+    La Phase 33 exposait `/api/deployment/ai-runtime/apply` sur le listener
+    public, protegee par un secret statique partage : le meme a chaque
+    redemarrage, sans rotation ni revocation, en clair dans l'environnement et
+    dans le fichier compose, et donnant acces a la reconfiguration de tout le
+    plan de donnees. La Phase 34 l'a eteinte par defaut ; celle-ci la supprime.
+
+    Ces tests ne verifient pas seulement qu'elle est partie. Ils verifient qu'on
+    ne peut pas la faire revenir en posant une variable d'environnement — la
+    seule facon dont un chemin herite ressuscite en pratique.
     """
 
-    TOKEN = "jeton-de-deploiement-local-0123456789"
+    LEGACY_PATH = "/api/deployment/ai-runtime/apply"
+    LEGACY_TOKEN = "jeton-de-deploiement-local-0123456789"
 
-    def apply(self, token=None, **overrides):
-        payload = {
-            "revision": 4,
-            "profile": "efficient",
-            "reasoning_allowed": False,
-            "max_concurrent_text": 2,
-            "max_concurrent_speech": 1,
-            "max_queue": 4,
-            **overrides,
-        }
+    def legacy_call(self, token=None):
+        headers = self.auth(token) if token else {}
         return self.client.post(
-            "/api/deployment/ai-runtime/apply",
-            headers=self.auth(token if token is not None else self.TOKEN),
-            json=payload,
+            self.LEGACY_PATH,
+            headers=headers,
+            json={
+                "revision": 4,
+                "profile": "efficient",
+                "reasoning_allowed": False,
+                "max_concurrent_text": 2,
+                "max_concurrent_speech": 1,
+                "max_queue": 4,
+            },
         )
 
-    def test_the_legacy_route_is_off_even_when_the_old_secret_is_present(self):
-        """Le coeur de la migration.
+    def test_the_legacy_route_no_longer_exists(self):
+        self.assertNotIn(
+            self.LEGACY_PATH,
+            {getattr(route, "path", "") for route in main.app.routes},
+        )
+        self.assertEqual(self.legacy_call(self.LEGACY_TOKEN).status_code, 404)
 
-        Un deploiement Phase 33 qui met a jour son image garde sa variable
-        d'environnement. La route ne doit pas rester ouverte pour autant : le
-        secret existant ne vaut pas consentement a le conserver.
+    def test_setting_the_legacy_variable_grants_nothing(self):
+        """Le coeur de la suppression.
+
+        Un chemin herite ne meurt pas quand on cesse de le documenter : il meurt
+        quand poser sa variable ne change plus rien.
         """
-        with patch.object(main, "NOVA_DEPLOYMENT_APPLY_TOKEN", self.TOKEN), patch.object(
-            main, "NOVA_ALLOW_LEGACY_DEPLOYMENT_TOKEN", False
+        with patch.dict(
+            os.environ,
+            {
+                "NOVA_ALLOW_LEGACY_DEPLOYMENT_TOKEN": "true",
+                "NOVA_DEPLOYMENT_APPLY_TOKEN": self.LEGACY_TOKEN,
+            },
         ):
-            response = self.apply()
-        self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.json()["detail"], "DEPLOYMENT_APPLY_DISABLED")
+            self.assertEqual(self.legacy_call(self.LEGACY_TOKEN).status_code, 404)
+            self.assertEqual(self.legacy_call().status_code, 404)
 
-    def test_the_legacy_route_needs_an_explicit_opt_in(self):
-        with patch.object(main, "NOVA_DEPLOYMENT_APPLY_TOKEN", self.TOKEN), patch.object(
-            main, "NOVA_ALLOW_LEGACY_DEPLOYMENT_TOKEN", True
+    def test_the_module_carries_no_legacy_switch_any_more(self):
+        for gone in (
+            "NOVA_ALLOW_LEGACY_DEPLOYMENT_TOKEN",
+            "NOVA_DEPLOYMENT_APPLY_TOKEN",
+            "DeploymentApplyBody",
+            "deployment_apply_ai_runtime",
         ):
-            response = self.apply(token="pas-le-bon-jeton")
-        self.assertEqual(response.status_code, 401)
+            with self.subTest(symbol=gone):
+                self.assertFalse(hasattr(main, gone))
 
-    def test_the_opt_in_alone_is_not_enough_without_a_secret(self):
-        with patch.object(main, "NOVA_DEPLOYMENT_APPLY_TOKEN", ""), patch.object(
-            main, "NOVA_ALLOW_LEGACY_DEPLOYMENT_TOKEN", True
-        ):
-            self.assertEqual(self.apply().status_code, 404)
+    def test_the_production_sources_cannot_reintroduce_it(self):
+        """Une garde de source, pas seulement de comportement.
 
-    def test_the_legacy_route_still_works_once_explicitly_enabled(self):
-        # Ne pas casser brutalement un deploiement existant : il doit pouvoir
-        # migrer, pas decouvrir sa panne en production.
-        router = OrganizationAIRouter(
-            FakeTextInferenceBackend(), FakeSpeechInferenceBackend()
-        )
-        with patch.object(main, "NOVA_DEPLOYMENT_APPLY_TOKEN", self.TOKEN), patch.object(
-            main, "NOVA_ALLOW_LEGACY_DEPLOYMENT_TOKEN", True
-        ), patch.object(main, "ORGANIZATION_AI_ROUTER", router):
-            response = self.apply()
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["status"], "applied")
-        self.assertEqual(router.applied_revision, 4)
+        Le nom peut rester dans ce test et dans l'historique ; il ne doit plus
+        apparaitre dans le code qui tourne.
+        """
+        for name in ("main.py", "connector.py", "local_channel.py", "serve.py"):
+            source = Path(name).read_text(encoding="utf-8")
+            with self.subTest(source=name):
+                self.assertNotIn("NOVA_ALLOW_LEGACY_DEPLOYMENT_TOKEN", source)
+                self.assertNotIn("NOVA_DEPLOYMENT_APPLY_TOKEN", source)
 
-    def test_the_route_carries_no_runtime_url_or_model(self):
-        fields = set(main.DeploymentApplyBody.model_fields)
+    def test_the_deployment_configuration_carries_no_legacy_secret(self):
+        for name in ("docker-compose.yml", "Dockerfile"):
+            source = Path(name).read_text(encoding="utf-8")
+            with self.subTest(configuration=name):
+                self.assertNotIn("NOVA_ALLOW_LEGACY_DEPLOYMENT_TOKEN", source)
+                self.assertNotIn("NOVA_DEPLOYMENT_APPLY_TOKEN", source)
+
+    def test_the_local_channel_is_the_only_way_in(self):
+        """Ce qui remplace le chemin supprime, avec le meme contrat de champs.
+
+        L'infrastructure appartient au deploiement : le corps decrit un
+        comportement, jamais une destination ni un modele.
+        """
         self.assertEqual(
-            fields,
+            set(local_channel.LocalApplyBody.model_fields),
             {"revision", "profile", "reasoning_allowed", "max_concurrent_text",
              "max_concurrent_speech", "max_queue"},
         )
+        internal = {
+            getattr(route, "path", "")
+            for route in local_channel.internal_app.routes
+            if getattr(route, "path", "").startswith("/internal/")
+        }
+        self.assertIn("/internal/connector/runtime/apply", internal)
+        # Et cette surface n'est toujours pas sur le listener public.
+        public = {getattr(route, "path", "") for route in main.app.routes}
+        self.assertEqual(internal & public, set())
 
 
 class ConnectorServiceTests(unittest.TestCase):

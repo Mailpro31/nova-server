@@ -6984,66 +6984,6 @@ async def local_runtime_state() -> dict:
     }
 
 
-# ── Chemin herite, deprecie ──────────────────────────────────────────────
-#
-# La Phase 33 exposait cette route sur le listener public, protegee par un
-# secret statique partage. C'etait le plus gros defaut de sa surface : un secret
-# sans rotation ni revocation, en clair dans l'environnement et dans le fichier
-# compose, donnant acces a la reconfiguration de tout le plan de donnees.
-#
-# Elle n'existe plus par defaut. Un deploiement de la Phase 33 peut la rallumer
-# explicitement, le temps de migrer vers le canal local — jamais sans le dire.
-
-NOVA_DEPLOYMENT_APPLY_TOKEN = os.getenv("NOVA_DEPLOYMENT_APPLY_TOKEN", "")
-NOVA_ALLOW_LEGACY_DEPLOYMENT_TOKEN = (
-    os.getenv("NOVA_ALLOW_LEGACY_DEPLOYMENT_TOKEN", "false").strip().lower() == "true"
-)
-if NOVA_DEPLOYMENT_APPLY_TOKEN and not NOVA_ALLOW_LEGACY_DEPLOYMENT_TOKEN:
-    print(
-        "[deployment] NOVA_DEPLOYMENT_APPLY_TOKEN est ignore : le canal local "
-        "authentifie le remplace. NOVA_ALLOW_LEGACY_DEPLOYMENT_TOKEN=true le "
-        "reactive temporairement le temps de migrer."
-    )
-elif NOVA_ALLOW_LEGACY_DEPLOYMENT_TOKEN:
-    print(
-        "[deployment] chemin herite actif : secret statique partage, sans "
-        "rotation ni revocation. A retirer des que le canal local est en place."
-    )
-
-
-class DeploymentApplyBody(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    revision: int = Field(ge=1)
-    profile: str = Field(max_length=32)
-    reasoning_allowed: bool = False
-    max_concurrent_text: int = Field(ge=1, le=64)
-    max_concurrent_speech: int = Field(ge=1, le=32)
-    max_queue: int = Field(ge=0, le=256)
-
-
-@app.post("/api/deployment/ai-runtime/apply")
-async def deployment_apply_ai_runtime(
-    body: DeploymentApplyBody,
-    authorization: str | None = Header(default=None),
-):
-    if not (NOVA_ALLOW_LEGACY_DEPLOYMENT_TOKEN and NOVA_DEPLOYMENT_APPLY_TOKEN):
-        raise auth_error(404, "DEPLOYMENT_APPLY_DISABLED")
-    scheme, _, presented = (authorization or "").partition(" ")
-    if scheme.lower() != "bearer" or not secrets.compare_digest(
-        hash_token(presented.strip()), hash_token(NOVA_DEPLOYMENT_APPLY_TOKEN)
-    ):
-        raise auth_error(401, "DEPLOYMENT_APPLY_UNAUTHORIZED")
-    return await apply_runtime_configuration(
-        body.revision,
-        body.profile,
-        body.reasoning_allowed,
-        body.max_concurrent_text,
-        body.max_concurrent_speech,
-        body.max_queue,
-    )
-
-
 # ────────────────── Policies produit : cote membre ────────────────────────
 
 
