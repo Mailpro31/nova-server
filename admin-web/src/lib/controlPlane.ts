@@ -67,6 +67,82 @@ export interface PolicyView {
   configured: boolean;
 }
 
+/**
+ * L'etat du runtime IA prive de l'organisation.
+ *
+ * Deux blocs, jamais melanges : `desired` est ce que l'administrateur a
+ * demande, `reported` est ce que le runtime confirme reellement. Les afficher
+ * ensemble laisserait croire qu'une configuration enregistree est une
+ * configuration appliquee.
+ *
+ * Rien ici ne porte de contenu utilisateur : ni requete, ni transcription, ni
+ * sortie de modele. Le plan de controle n'en voit jamais.
+ */
+export interface AIRuntimeEngineView {
+  status: "ready" | "loading" | "unavailable";
+  adapter: string;
+  latency_ms: number | null;
+  runtime_version: string | null;
+  model: string | null;
+  last_error_code: string | null;
+}
+
+export interface AIRuntimeView {
+  schema_version: number;
+  processing_location: string;
+  deployment_mode: string;
+  desired: {
+    revision: number;
+    profile: string;
+    reasoning_allowed: boolean;
+    max_concurrent_text: number;
+    max_concurrent_speech: number;
+    max_queue: number;
+    cloud_fallback: string;
+  };
+  reported: {
+    applied_revision: number;
+    apply_status: string;
+    runtime_status: "unavailable" | "starting" | "healthy" | "degraded";
+    text_engine: AIRuntimeEngineView;
+    speech_engine: AIRuntimeEngineView;
+    capacity: {
+      text: { max_concurrent: number; active: number; queue_length: number; max_queue: number };
+      speech: { max_concurrent: number; active: number; queue_length: number; max_queue: number };
+    };
+    last_health_check: number;
+  };
+  hardware: {
+    cpu: string;
+    architecture: string;
+    ram_gb: number | null;
+    gpu_vendor: string | null;
+    gpu_model: string | null;
+    vram_gb: number | null;
+    driver_version: string | null;
+  };
+  recommended_profile: string;
+  /**
+   * Les profils que *ce* deploiement offre reellement.
+   *
+   * `custom` n'y figure que si le deploiement a declare ses parametres. La
+   * console suit cette liste plutot que l'enumeration complete : proposer un
+   * choix refuse a l'enregistrement n'est pas proposer un choix.
+   */
+  available_profiles: string[];
+  /** Les parametres de `custom`, en lecture seule — aucune route ne les ecrit. */
+  custom_profile:
+    | { available: false }
+    | {
+        available: true;
+        max_output_tokens: number;
+        temperature: number;
+        reasoning: string;
+      };
+  /** Le plan de controle ne reconfigure pas encore un serveur prive distant. */
+  remote_apply: { supported: boolean; requires_private_connector: boolean };
+}
+
 export interface PackageVersionSummary {
   version_id: string;
   version_number: number;
@@ -261,6 +337,36 @@ export class ControlPlane {
       method: "PUT",
       body: { expected_revision: expectedRevision, settings },
     });
+  }
+
+  aiRuntime() {
+    return this.client.request<AIRuntimeView>(
+      "/api/control/organization/ai-runtime",
+    );
+  }
+
+  /**
+   * Enregistre la configuration *souhaitee* du runtime.
+   *
+   * Comme pour les policies, `expectedRevision` est obligatoire : deux
+   * consoles ouvertes cote a cote ne doivent pas s'ecraser. La reponse porte
+   * l'etat reellement rapporte par le runtime, jamais l'echo de l'envoi.
+   */
+  updateAIRuntime(
+    expectedRevision: number,
+    desired: {
+      profile: string;
+      reasoning_allowed: boolean;
+      concurrency_mode: "auto" | "manual";
+      max_concurrent_text?: number;
+      max_concurrent_speech?: number;
+      max_queue?: number;
+    },
+  ) {
+    return this.client.request<AIRuntimeView>(
+      "/api/control/organization/ai-runtime",
+      { method: "PUT", body: { expected_revision: expectedRevision, ...desired } },
+    );
   }
 
   packages(organizationId: string) {

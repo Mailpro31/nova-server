@@ -221,6 +221,104 @@ export const t = {
       "Nova does not yet report on deployed workstations. This page will show them when it does.",
   },
 
+  aiRuntime: {
+    title: "AI Runtime",
+    lead: "Where this organization's AI processing actually runs.",
+    privacy:
+      "Dictation, transcripts, prompts and model output stay on this organization's infrastructure. Nova's control plane stores configuration and health only — never user content.",
+    processing: "Processing location",
+    onPremises: "Organization private infrastructure",
+    cloudFallback: "Cloud fallback",
+    cloudFallbackDisabled: "Disabled",
+    cloudFallbackBody:
+      "If the private runtime is down, requests fail with a clear error. Nova never silently sends content to an external AI provider.",
+
+    statusTitle: "Runtime status",
+    status: "Runtime",
+    statusHealthy: "Healthy",
+    statusDegraded: "Degraded",
+    statusStarting: "Starting",
+    statusUnavailable: "Unavailable",
+    textEngine: "Text engine",
+    speechEngine: "Speech engine",
+    engineReady: "Ready",
+    engineLoading: "Loading",
+    engineUnavailable: "Unavailable",
+    lastCheck: "Last health check",
+    never: "Never",
+    adapter: "Adapter",
+    model: "Loaded model",
+    runtimeVersion: "Runtime version",
+    latency: "Health latency",
+    lastError: "Last error",
+    capacity: "In flight / queued",
+    advanced: "Advanced details",
+
+    hardwareTitle: "Hardware detected",
+    cpu: "CPU",
+    architecture: "Architecture",
+    ram: "Memory",
+    gpu: "GPU",
+    vram: "GPU memory",
+    driver: "Driver",
+    noGpu: "No supported GPU detected",
+    recommended: "Recommended profile",
+    recommendedBody:
+      "Based on the hardware reported by this server. Nova never applies it on its own — choosing the profile stays an administrator's decision.",
+
+    configTitle: "Configuration",
+    profile: "Model profile",
+    profileEfficient: "Efficient — lowest latency and resource use",
+    profileStandard: "Standard — balanced, recommended",
+    profileAdvanced: "Advanced — highest quality and reasoning",
+    profileCustom: "Custom — declared by this deployment",
+    customUnavailable:
+      "Custom is not offered by this deployment. It describes parameters declared in the server’s own configuration, so it only becomes selectable once your IT department has set them.",
+    customTitle: "Custom profile parameters",
+    customBody:
+      "Declared in the deployment configuration and shown here for diagnosis. They are not editable from this console.",
+    customTokens: "Maximum output length",
+    customTemperature: "Temperature",
+    customReasoning: "Reasoning",
+    profileBody:
+      "A profile describes the behaviour you want. Which model serves it belongs to the runtime configuration, not to this screen.",
+    reasoning: "Allow enhanced reasoning",
+    reasoningBody:
+      "Lets longer tasks think before answering. Dictation and rewriting stay direct either way — latency matters more there.",
+    concurrency: "Concurrency",
+    concurrencyAuto: "Automatic",
+    concurrencyManual: "Controlled",
+    concurrencyText: "Concurrent text requests",
+    concurrencySpeech: "Concurrent speech requests",
+    concurrencyQueue: "Queue length",
+    concurrencyBody:
+      "When the runtime is saturated, Nova answers “busy” rather than letting requests hang until they time out.",
+
+    stateTitle: "Desired and applied",
+    desiredRevision: "Desired revision",
+    appliedRevision: "Applied revision",
+    applyStatus: "Apply status",
+    pending: "Saved, not yet applied by the runtime",
+    appliedLocal: "Applied by this server",
+    localDefault: "Server defaults, never configured here",
+    awaitingConnector:
+      "Saved. This control plane cannot yet reconfigure a remote private runtime — apply it on the organization's server, or wait for the private connector.",
+    remoteUnsupported:
+      "Remote apply is not available in this version. Configuration written here is applied only when Nova runs on the organization's own server.",
+
+    save: "Save configuration",
+    saving: "Saving…",
+    saved: "Configuration saved.",
+    unsaved: "Unsaved changes.",
+    discard: "Discard",
+    conflict:
+      "Someone changed this configuration while you were editing. Reload to see the current state.",
+    reload: "Reload",
+    readOnly: "Your role can read this page but not change the runtime.",
+    hardwareIncompatible:
+      "This server's GPU memory is too small for the Advanced profile. Choose Standard or Efficient.",
+  },
+
   configuration: {
     title: "Configuration",
     lead: "Technical settings for this organization.",
@@ -423,6 +521,13 @@ export function errorMessage(kind: ApiErrorKind, code?: string | null): string {
   if (code === "MEMBER_ROLE_INVALID") return "That member type is not recognised.";
   if (code === "SECURITY_ROLE_INVALID") return "That role is not recognised.";
   if (code === "POLICY_REVISION_CONFLICT") return t.policies.conflict;
+  if (code === "AI_RUNTIME_REVISION_CONFLICT") return t.aiRuntime.conflict;
+  if (code === "AI_RUNTIME_HARDWARE_INCOMPATIBLE")
+    return t.aiRuntime.hardwareIncompatible;
+  if (code?.startsWith("AI_RUNTIME_CONCURRENCY"))
+    return "These concurrency values are out of range. Reload and try again.";
+  if (code === "AI_RUNTIME_PROFILE_INVALID")
+    return "That model profile is not recognised.";
   // Le motif porte la cle fautive — `POLICY_KEY_UNKNOWN:ai_skils`. La console
   // ne l'affiche pas telle quelle : un nom de champ interne n'aide personne.
   if (code?.startsWith("POLICY_KEY_UNKNOWN"))

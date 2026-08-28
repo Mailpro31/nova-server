@@ -34,9 +34,25 @@ services:
       NOVA_SMTP_USER: "${NOVA_SMTP_USER:-}"
       NOVA_SMTP_PASS: "${NOVA_SMTP_PASS:-}"
       NOVA_SMTP_FROM: "${NOVA_SMTP_FROM:-nova@ipsa.fr}"
+      # Runtime IA prive de l'organisation. Les noms de modeles vivent ici, dans
+      # la configuration du deploiement : aucun endpoint produit ne les connait.
+      # Le serveur n'invente plus de modele par defaut — un deploiement qui n'en
+      # declare pas obtient AI_MODEL_NOT_READY, jamais un choix silencieux.
       NOVA_WHISPER_URL: "http://whisper:8000"
+      NOVA_WHISPER_MODEL: "${NOVA_WHISPER_MODEL:-large-v3-turbo}"
       NOVA_LLM_URL: "http://llm:8000/v1"
       NOVA_LLM_MODEL: "${NOVA_LLM_MODEL:-Qwen/Qwen2.5-14B-Instruct}"
+      NOVA_AI_PROFILE: "${NOVA_AI_PROFILE:-standard}"
+      NOVA_AI_REASONING_ALLOWED: "${NOVA_AI_REASONING_ALLOWED:-false}"
+      NOVA_AI_MAX_CONCURRENT_TEXT: "${NOVA_AI_MAX_CONCURRENT_TEXT:-2}"
+      NOVA_AI_MAX_CONCURRENT_SPEECH: "${NOVA_AI_MAX_CONCURRENT_SPEECH:-1}"
+      NOVA_AI_MAX_QUEUE: "${NOVA_AI_MAX_QUEUE:-4}"
+      # Profil `custom` : declare par le deploiement, ou pas du tout. Les deux
+      # premieres valeurs sont exigees ensemble ; sans elles, `custom` n'est pas
+      # proposable dans Nova Admin. Ni URL, ni modele, ni secret ici.
+      NOVA_AI_CUSTOM_MAX_OUTPUT_TOKENS: "${NOVA_AI_CUSTOM_MAX_OUTPUT_TOKENS:-}"
+      NOVA_AI_CUSTOM_TEMPERATURE: "${NOVA_AI_CUSTOM_TEMPERATURE:-}"
+      NOVA_AI_CUSTOM_REASONING: "${NOVA_AI_CUSTOM_REASONING:-auto}"
     volumes:
       - nova-data:/data
     depends_on: [whisper, llm]

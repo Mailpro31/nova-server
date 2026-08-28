@@ -30,6 +30,23 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel, EmailStr
 
+from ai_runtime import (
+    AI_MODEL_NOT_READY,
+    AI_RUNTIME_BUSY,
+    AI_RUNTIME_CONFIG_INVALID,
+    AI_RUNTIME_FAILED,
+    AI_RUNTIME_STARTING,
+    AI_RUNTIME_TIMEOUT,
+    AI_RUNTIME_UNAVAILABLE,
+    AIRuntimeError,
+    ModelProfile,
+    ReasoningMode,
+    TaskType,
+    detect_hardware,
+    recommend_profile,
+    router_from_environment,
+)
+
 # ---------------------------------------------------------------- config
 DB_PATH = Path(os.getenv("NOVA_DB", "nova.db"))
 ALLOWED_DOMAINS = [d.strip().lower() for d in os.getenv("NOVA_DOMAINS", "eleves.ipsa.fr,ipsa.fr").split(",")]
@@ -141,9 +158,7 @@ SMTP_PASS = os.getenv("NOVA_SMTP_PASS", "")
 SMTP_FROM = os.getenv("NOVA_SMTP_FROM", "nova@ipsa.fr")
 
 # Moteurs d'inférence (services du docker-compose)
-WHISPER_URL = os.getenv("NOVA_WHISPER_URL", "http://whisper:8000")   # faster-whisper-server
-LLM_URL = os.getenv("NOVA_LLM_URL", "http://llm:8000/v1")            # vLLM (API OpenAI)
-LLM_MODEL = os.getenv("NOVA_LLM_MODEL", "Qwen/Qwen2.5-14B-Instruct")
+ORGANIZATION_AI_ROUTER = router_from_environment()
 
 # Environnement d'exécution. Le défaut est `production` : un déploiement qui
 # oublie de le déclarer obtient le comportement le plus prudent, jamais le plus
@@ -494,6 +509,20 @@ def init_db():
             -- declaree dans POLICY_SETTINGS et validee a l'ecriture.
             settings           TEXT NOT NULL,
             updated_at         REAL NOT NULL,
+            updated_by_user_id TEXT
+        );
+        CREATE TABLE IF NOT EXISTS organization_ai_runtime_config(
+            organization_id TEXT PRIMARY KEY,
+            schema_version INTEGER NOT NULL,
+            desired_revision INTEGER NOT NULL,
+            desired_profile TEXT NOT NULL,
+            reasoning_allowed INTEGER NOT NULL,
+            max_concurrent_text INTEGER NOT NULL,
+            max_concurrent_speech INTEGER NOT NULL,
+            max_queue INTEGER NOT NULL,
+            applied_revision INTEGER NOT NULL DEFAULT 0,
+            apply_status TEXT NOT NULL DEFAULT 'pending',
+            updated_at REAL NOT NULL,
             updated_by_user_id TEXT
         );
         """)
@@ -1773,6 +1802,59 @@ init_db()
 
 print(f"[admin] server_mode={NOVA_SERVER_MODE}")
 
+AI_RUNTIME_CONFIG_SCHEMA_VERSION = 1
+
+
+def read_ai_runtime_config(organization_id: str) -> dict:
+    with db() as conn:
+        row = conn.execute(
+            "SELECT * FROM organization_ai_runtime_config WHERE organization_id=?",
+            (organization_id,),
+        ).fetchone()
+    if row:
+        return dict(row)
+    return {
+        "organization_id": organization_id,
+        "schema_version": AI_RUNTIME_CONFIG_SCHEMA_VERSION,
+        "desired_revision": 0,
+        "desired_profile": ORGANIZATION_AI_ROUTER.profile.value,
+        "reasoning_allowed": int(ORGANIZATION_AI_ROUTER.reasoning_allowed),
+        "max_concurrent_text": ORGANIZATION_AI_ROUTER.text_capacity.limit,
+        "max_concurrent_speech": ORGANIZATION_AI_ROUTER.speech_capacity.limit,
+        "max_queue": ORGANIZATION_AI_ROUTER.text_capacity.max_queue,
+        "applied_revision": ORGANIZATION_AI_ROUTER.applied_revision,
+        "apply_status": "local_default",
+        "updated_at": None,
+        "updated_by_user_id": None,
+    }
+
+
+def apply_ai_runtime_config_locally(config: dict) -> None:
+    ORGANIZATION_AI_ROUTER.apply_local_config(
+        profile=ModelProfile(config["desired_profile"]),
+        reasoning_allowed=bool(config["reasoning_allowed"]),
+        max_concurrent_text=int(config["max_concurrent_text"]),
+        max_concurrent_speech=int(config["max_concurrent_speech"]),
+        max_queue=int(config["max_queue"]),
+        revision=int(config["desired_revision"]),
+    )
+
+
+_startup_runtime_config = read_ai_runtime_config(nova_organization_id())
+if NOVA_SERVER_MODE == SERVER_MODE_DEDICATED and _startup_runtime_config["desired_revision"]:
+    try:
+        apply_ai_runtime_config_locally(_startup_runtime_config)
+    except AIRuntimeError as error:
+        # Une configuration enregistree que ce deploiement ne sait plus servir
+        # — un profil `custom` dont les parametres ont disparu de
+        # l'environnement, par exemple. Refuser de demarrer priverait
+        # l'etablissement de sa dictee pour un reglage de confort ; appliquer
+        # autre chose en silence lui mentirait. Le serveur demarre sur la
+        # configuration de son environnement, et la console montre un
+        # `desired` non applique — ce que la separation desired/applied existe
+        # precisement pour dire.
+        print(f"[ai_runtime] configuration enregistree non applicable: {error.code}")
+
 
 # ────────────────────── Accès aux comptes ─────────────────────────────────
 #
@@ -2537,6 +2619,13 @@ def package_identifier(package_type: str, package_id: str) -> str:
     integre — ou en heriter les privileges de palier.
     """
     return f"org_{package_type}_{package_id}"
+
+
+# Le prefixe des Styles d'organisation, derive de la meme regle que les
+# identifiants eux-memes. Le poste porte la meme constante
+# (`licensing::ORGANIZATION_STYLE_PREFIX`) : deux litteraux qui divergeraient
+# feraient echouer la resolution d'un cote sans que l'autre le sache.
+ORGANIZATION_STYLE_PREFIX = f"org_{PACKAGE_TYPE_STYLE}_"
 
 
 def organization_policy_for_account(account) -> dict:
@@ -3379,7 +3468,11 @@ class VerifyCode(BaseModel):
 
 class ReformulateRequest(BaseModel):
     text: str
-    style_prompt: str = "Reformule le texte dicté en un texte clair et professionnel. Conserve la langue d'origine."
+    # Organization Styles are designated by id and resolved server-side. The
+    # legacy prompt remains accepted for builtin/personal Styles so existing
+    # Desktop versions keep working during migration.
+    style_id: str | None = None
+    style_prompt: str | None = None
 
 class UserUpdate(BaseModel):
     role: str | None = None
@@ -3572,6 +3665,16 @@ if NOVA_ADMIN_ORIGINS:
 
 @app.get("/api/health")
 def health():
+    """Vivacite du serveur, et rien d'autre.
+
+    Chaque poste interroge cette route toutes les trente secondes pour decider
+    s'il bascule en mode local. Y sonder le runtime d'inference ferait deux
+    appels reseau supplementaires par poste et par cycle vers le moteur prive,
+    et un modele en cours de chargement suffirait a faire decrocher tout le
+    parc alors que le serveur repond parfaitement. L'etat reel du runtime est
+    une information d'exploitation : elle est servie, authentifiee, par
+    `/api/control/organization/ai-runtime`.
+    """
     return {
         "status": "ok",
         "domains": ALLOWED_DOMAINS,
@@ -5540,6 +5643,232 @@ def control_update_policy(
     return policy_view(organization_id)
 
 
+# ───────────────────── Private AI runtime ────────────────────────────────
+
+
+class AIRuntimeConfigUpdateRequest(BaseModel):
+    expected_revision: int
+    profile: str
+    reasoning_allowed: bool
+    concurrency_mode: str = "auto"
+    max_concurrent_text: int | None = None
+    max_concurrent_speech: int | None = None
+    max_queue: int | None = None
+
+
+def validate_ai_runtime_update(body: AIRuntimeConfigUpdateRequest) -> dict:
+    try:
+        profile = ModelProfile(body.profile.strip().lower())
+    except ValueError as error:
+        raise auth_error(400, "AI_RUNTIME_PROFILE_INVALID") from error
+    if profile == ModelProfile.CUSTOM and not ORGANIZATION_AI_ROUTER.custom_available:
+        # `custom` n'est pas un preset Nova : ses valeurs viennent du
+        # deploiement. Tant qu'il n'en a pas declare, l'accepter enregistrerait
+        # un profil qui se comporterait comme `standard` en pretendant autre
+        # chose — et la console afficherait un reglage qui ne regle rien.
+        raise auth_error(409, "AI_RUNTIME_PROFILE_UNAVAILABLE")
+    mode = body.concurrency_mode.strip().lower()
+    if mode not in {"auto", "manual"}:
+        raise auth_error(400, "AI_RUNTIME_CONCURRENCY_MODE_INVALID")
+    if mode == "auto":
+        text, speech, queue = 2, 1, 4
+    else:
+        text = body.max_concurrent_text
+        speech = body.max_concurrent_speech
+        queue = body.max_queue
+        if not all(isinstance(value, int) for value in (text, speech, queue)):
+            raise auth_error(400, "AI_RUNTIME_CONCURRENCY_REQUIRED")
+        if not (1 <= text <= 64 and 1 <= speech <= 32 and 0 <= queue <= 256):
+            raise auth_error(400, "AI_RUNTIME_CONCURRENCY_INVALID")
+    hardware = detect_hardware()
+    if (
+        NOVA_SERVER_MODE == SERVER_MODE_DEDICATED
+        and profile == ModelProfile.ADVANCED
+        and hardware.vram_gb is not None
+        and hardware.vram_gb < 16
+    ):
+        raise auth_error(409, "AI_RUNTIME_HARDWARE_INCOMPATIBLE")
+    return {
+        "profile": profile,
+        "reasoning_allowed": body.reasoning_allowed,
+        "max_concurrent_text": int(text),
+        "max_concurrent_speech": int(speech),
+        "max_queue": int(queue),
+        "concurrency_mode": mode,
+    }
+
+
+def available_profiles() -> list[str]:
+    profiles = [
+        ModelProfile.EFFICIENT.value,
+        ModelProfile.STANDARD.value,
+        ModelProfile.ADVANCED.value,
+    ]
+    if ORGANIZATION_AI_ROUTER.custom_available:
+        profiles.append(ModelProfile.CUSTOM.value)
+    return profiles
+
+
+def custom_profile_view() -> dict:
+    """Les parametres Custom, en lecture seule.
+
+    Ils viennent de la configuration du deploiement et n'y retournent pas :
+    aucune route ne les ecrit. Les montrer sert au diagnostic — savoir sous
+    quels reglages le parc tourne — pas a les changer depuis un navigateur.
+    """
+    options = ORGANIZATION_AI_ROUTER.custom_options
+    if options is None:
+        return {"available": False}
+    return {
+        "available": True,
+        "max_output_tokens": options.max_output_tokens,
+        "temperature": options.temperature,
+        "reasoning": options.reasoning.value,
+    }
+
+
+async def ai_runtime_admin_view(organization_id: str) -> dict:
+    config = read_ai_runtime_config(organization_id)
+    hardware = detect_hardware()
+    runtime = await ORGANIZATION_AI_ROUTER.health()
+    return {
+        "schema_version": config["schema_version"],
+        "processing_location": "organization_private_infrastructure",
+        "deployment_mode": NOVA_SERVER_MODE,
+        "desired": {
+            "revision": config["desired_revision"],
+            "profile": config["desired_profile"],
+            "reasoning_allowed": bool(config["reasoning_allowed"]),
+            "max_concurrent_text": config["max_concurrent_text"],
+            "max_concurrent_speech": config["max_concurrent_speech"],
+            "max_queue": config["max_queue"],
+            "cloud_fallback": "disabled",
+        },
+        "reported": {
+            "applied_revision": config["applied_revision"],
+            "apply_status": config["apply_status"],
+            "runtime_status": runtime["status"],
+            "text_engine": runtime["text_engine"],
+            "speech_engine": runtime["speech_engine"],
+            "capacity": runtime["capacity"],
+            "last_health_check": runtime["checked_at"],
+        },
+        "hardware": {
+            "cpu": hardware.cpu,
+            "architecture": hardware.architecture,
+            "ram_gb": hardware.ram_gb,
+            "gpu_vendor": hardware.gpu_vendor,
+            "gpu_model": hardware.gpu_model,
+            "vram_gb": hardware.vram_gb,
+            "driver_version": hardware.driver_version,
+        },
+        "recommended_profile": recommend_profile(hardware).value,
+        # Ce que ce deploiement permet reellement de choisir. La console s'en
+        # sert plutot que d'afficher les quatre valeurs de l'enumeration : un
+        # choix propose puis refuse a l'enregistrement n'est pas un choix.
+        "available_profiles": available_profiles(),
+        "custom_profile": custom_profile_view(),
+        "remote_apply": {
+            "supported": False,
+            "requires_private_connector": NOVA_SERVER_MODE == SERVER_MODE_CONTROL_PLANE,
+        },
+    }
+
+
+@app.get("/api/control/organization/ai-runtime")
+async def control_read_ai_runtime(
+    principal: AdminPrincipal = Depends(
+        require_admin_capability(CAPABILITY_DIAGNOSTICS_READ)
+    ),
+):
+    return await ai_runtime_admin_view(principal.organization_id)
+
+
+@app.put("/api/control/organization/ai-runtime")
+async def control_update_ai_runtime(
+    body: AIRuntimeConfigUpdateRequest,
+    principal: AdminPrincipal = Depends(
+        require_admin_capability(CAPABILITY_DEPLOYMENT_MANAGE)
+    ),
+):
+    requested = validate_ai_runtime_update(body)
+    organization_id = principal.organization_id
+    now = time.time()
+    with db() as conn:
+        current = conn.execute(
+            "SELECT * FROM organization_ai_runtime_config WHERE organization_id=?",
+            (organization_id,),
+        ).fetchone()
+        current_revision = current["desired_revision"] if current else 0
+        if body.expected_revision != current_revision:
+            raise auth_error(409, "AI_RUNTIME_REVISION_CONFLICT")
+        new_revision = current_revision + 1
+        applied_revision = current["applied_revision"] if current else 0
+        apply_status = (
+            "applying_local"
+            if NOVA_SERVER_MODE == SERVER_MODE_DEDICATED
+            else "awaiting_private_connector"
+        )
+        conn.execute(
+            "INSERT INTO organization_ai_runtime_config("
+            "organization_id,schema_version,desired_revision,desired_profile,"
+            "reasoning_allowed,max_concurrent_text,max_concurrent_speech,max_queue,"
+            "applied_revision,apply_status,updated_at,updated_by_user_id) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(organization_id) DO UPDATE SET "
+            "schema_version=excluded.schema_version,desired_revision=excluded.desired_revision,"
+            "desired_profile=excluded.desired_profile,reasoning_allowed=excluded.reasoning_allowed,"
+            "max_concurrent_text=excluded.max_concurrent_text,"
+            "max_concurrent_speech=excluded.max_concurrent_speech,max_queue=excluded.max_queue,"
+            "apply_status=excluded.apply_status,updated_at=excluded.updated_at,"
+            "updated_by_user_id=excluded.updated_by_user_id",
+            (
+                organization_id,
+                AI_RUNTIME_CONFIG_SCHEMA_VERSION,
+                new_revision,
+                requested["profile"].value,
+                int(requested["reasoning_allowed"]),
+                requested["max_concurrent_text"],
+                requested["max_concurrent_speech"],
+                requested["max_queue"],
+                applied_revision,
+                apply_status,
+                now,
+                principal.user_id,
+            ),
+        )
+        record_admin_action(
+            principal,
+            "ai_runtime.desired_config.update",
+            target_type="organization",
+            target_id=organization_id,
+            metadata={
+                "old_revision": current_revision,
+                "new_revision": new_revision,
+                "apply_mode": "local" if NOVA_SERVER_MODE == SERVER_MODE_DEDICATED else "connector_required",
+            },
+            conn=conn,
+        )
+
+    if NOVA_SERVER_MODE == SERVER_MODE_DEDICATED:
+        config = read_ai_runtime_config(organization_id)
+        try:
+            apply_ai_runtime_config_locally(config)
+        except AIRuntimeError as error:
+            # `applied_revision` n'avance pas : la console dira « enregistre,
+            # pas encore applique » plutot que d'afficher un etat que le
+            # runtime ne porte pas. Le code voyage tel quel, sans type de tache
+            # — aucune inference n'est en jeu ici.
+            raise auth_error(409, error.code) from error
+        with db() as conn:
+            conn.execute(
+                "UPDATE organization_ai_runtime_config SET applied_revision=?,apply_status=? "
+                "WHERE organization_id=?",
+                (new_revision, "applied_local", organization_id),
+            )
+    return await ai_runtime_admin_view(organization_id)
+
+
 # ────────────────── Policies produit : cote membre ────────────────────────
 
 
@@ -6142,7 +6471,24 @@ def member_read_packages(response: Response, account=Depends(current_account),
     response.headers["ETag"] = etag
     if if_none_match.strip() == etag:
         return Response(status_code=304, headers={"ETag": etag})
-    return catalog
+    # La consigne d'un AI Skill ne descend pas : le poste envoie un `skill_id`
+    # et le serveur retrouve la consigne dans le package actif. La renvoyer ici
+    # rendrait ce controle decoratif.
+    #
+    # Un Style, lui, garde la sienne. Ce n'est pas une inconsequence : la
+    # consigne d'un Style *est* le Style, le membre y a droit par son
+    # appartenance, et le moteur local du poste doit pouvoir l'appliquer sans
+    # serveur. La lui retirer ne protegerait rien et supprimerait les Styles
+    # d'organisation du catalogue.
+    public_packages = []
+    for package in catalog["packages"]:
+        visible = dict(package)
+        content = dict(package["content"])
+        if package["type"] == PACKAGE_TYPE_AI_SKILL:
+            content.pop("instruction", None)
+        visible["content"] = content
+        public_packages.append(visible)
+    return {"packages": public_packages, "catalog_version": catalog["catalog_version"]}
 
 
 @app.get("/api/organization/policy")
@@ -7193,19 +7539,35 @@ def ai_skills():
 #     /api/import/transcribe   import fichier — gouvernee par `file_import_enabled`
 
 
-async def transcribe_audio(file: UploadFile, user: str) -> dict:
-    """Le moteur, appele par les deux routes."""
+def runtime_http_error(error: AIRuntimeError, task_type: TaskType) -> HTTPException:
+    status_by_code = {
+        AI_RUNTIME_BUSY: 429,
+        AI_RUNTIME_TIMEOUT: 504,
+        AI_RUNTIME_FAILED: 502,
+        AI_RUNTIME_UNAVAILABLE: 503,
+        AI_RUNTIME_STARTING: 503,
+        AI_MODEL_NOT_READY: 503,
+        AI_RUNTIME_CONFIG_INVALID: 503,
+    }
+    detail = {"code": error.code, "task_type": task_type.value}
+    if error.retry_after is not None:
+        detail["retry_after"] = error.retry_after
+    return HTTPException(status_by_code.get(error.code, 502), detail)
+
+
+async def transcribe_audio(file: UploadFile, user: str, task_type: TaskType) -> dict:
+    """Shared speech service; authorization remains route-specific."""
     audio = await file.read()
-    async with httpx.AsyncClient(timeout=120) as client:
-        r = await client.post(
-            f"{WHISPER_URL}/v1/audio/transcriptions",
-            files={"file": (file.filename or "audio.wav", audio)},
-            data={"model": "large-v3-turbo"},
+    try:
+        result = await ORGANIZATION_AI_ROUTER.transcribe(
+            task_type,
+            audio,
+            file.filename or "audio.wav",
         )
-    if r.status_code != 200:
-        raise HTTPException(502, "Moteur de transcription indisponible")
-    count_usage(user, "transcription")
-    return {"text": r.json().get("text", "")}
+    except AIRuntimeError as error:
+        raise runtime_http_error(error, task_type) from error
+    count_usage(user, "transcription", result.duration_seconds or 0.0)
+    return {"text": result.text}
 
 
 @app.post("/api/transcribe")
@@ -7219,7 +7581,7 @@ async def transcribe(file: UploadFile, user: str = Depends(current_user)):
     demandera son propre examen — connexion, recuperation, hors ligne — pas
     une case cochee par inadvertance dans un panneau d'import.
     """
-    return await transcribe_audio(file, user)
+    return await transcribe_audio(file, user, TaskType.TRANSCRIPTION_REALTIME)
 
 
 @app.post(
@@ -7231,24 +7593,22 @@ async def transcribe_import(file: UploadFile, user: str = Depends(current_user))
 
     Meme moteur que la dictee, meme comptage — seule l'autorisation differe.
     """
-    return await transcribe_audio(file, user)
+    return await transcribe_audio(file, user, TaskType.TRANSCRIPTION_FILE)
 
-async def llm_complete(system_prompt: str, text: str) -> str:
-    async with httpx.AsyncClient(timeout=120) as client:
-        r = await client.post(
-            f"{LLM_URL}/chat/completions",
-            json={
-                "model": LLM_MODEL,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": text},
-                ],
-                "temperature": 0.3,
-            },
-        )
-    if r.status_code != 200:
-        raise HTTPException(502, "Moteur de reformulation indisponible")
-    return r.json()["choices"][0]["message"]["content"]
+async def execute_text(task_type: TaskType, instruction: str, text: str) -> str:
+    try:
+        result = await ORGANIZATION_AI_ROUTER.generate(task_type, text, instruction)
+    except AIRuntimeError as error:
+        raise runtime_http_error(error, task_type) from error
+    return result.text
+
+
+def organization_style_instruction(organization_id: str, style_id: str) -> str | None:
+    for package in effective_packages(organization_id)["packages"]:
+        if package["type"] == PACKAGE_TYPE_STYLE and package["id"] == style_id:
+            instruction = package["content"].get("instruction")
+            return instruction if isinstance(instruction, str) and instruction.strip() else None
+    return None
 
 # --- reformulation (proxy vers LLM, API OpenAI-compatible)
 @app.post("/api/reformulate")
@@ -7258,10 +7618,25 @@ async def reformulate(body: ReformulateRequest, user: str = Depends(current_user
     # l'instance ne serait pas forcement la sienne.
     context, snippets = writing_context(user, account_organization(account))
     source_text = apply_snippets(body.text, snippets)
-    system_prompt = body.style_prompt
+    style_id = (body.style_id or "").strip()
+    if style_id.startswith(ORGANIZATION_STYLE_PREFIX):
+        system_prompt = organization_style_instruction(
+            account_organization(account), style_id
+        )
+        if not system_prompt:
+            raise auth_error(404, "STYLE_NOT_AVAILABLE")
+        task_type = TaskType.STYLE_TRANSFORM
+    else:
+        system_prompt = (body.style_prompt or "").strip()
+        if not system_prompt:
+            system_prompt = (
+                "Reformule le texte dicte en un texte clair et professionnel. "
+                "Conserve la langue d'origine."
+            )
+        task_type = TaskType.STYLE_TRANSFORM if style_id else TaskType.REFORMULATION
     if context:
         system_prompt = f"{system_prompt}\n\n{context}"
-    result = await llm_complete(system_prompt, source_text)
+    result = await execute_text(task_type, system_prompt, source_text)
     count_usage(user, "reformulation")
     return {"text": result}
 
@@ -7269,7 +7644,7 @@ async def reformulate(body: ReformulateRequest, user: str = Depends(current_user
 async def command(body: CommandRequest, user: str = Depends(current_user)):
     instruction = clean_required(body.instruction, "instruction", 2000)
     system_prompt = command_prompt(instruction, vocabulary_context(user))
-    return {"text": await llm_complete(system_prompt, body.text)}
+    return {"text": await execute_text(TaskType.VOICE_COMMAND, system_prompt, body.text)}
 
 class SkillRunRequest(BaseModel):
     skill_id: str
@@ -7289,7 +7664,7 @@ async def run_skill(body: SkillRunRequest, user: str = Depends(current_user),
     passer les AI Skills aurait couple deux policies : fermer les commandes
     vocales aurait ferme les Skills, sans que personne ne l'ait demande.
 
-    D'ou une route qui reutilise `llm_complete` et `command_prompt`, et ne
+    D'ou une route qui reutilise `execute_text` et `command_prompt`, et ne
     differe que par son autorisation — le meme choix qu'entre `/api/transcribe`
     et `/api/import/transcribe`.
 
@@ -7312,7 +7687,7 @@ async def run_skill(body: SkillRunRequest, user: str = Depends(current_user),
         raise auth_error(404, "SKILL_NOT_AVAILABLE")
 
     system_prompt = command_prompt(instruction, vocabulary_context(user))
-    return {"text": await llm_complete(system_prompt, body.text),
+    return {"text": await execute_text(TaskType.AI_SKILL, system_prompt, body.text),
             "skill_id": body.skill_id}
 
 
@@ -7330,6 +7705,6 @@ async def engineering_notes(body: CommandRequest, user: str = Depends(current_us
         prompt += f"\nAdditional instruction: {body.instruction.strip()}"
     if context:
         prompt += f"\n\n{context}"
-    return {"text": await llm_complete(prompt, source_text)}
+    return {"text": await execute_text(TaskType.ENGINEERING_NOTES, prompt, source_text)}
 
 # ================================================================ ADMIN

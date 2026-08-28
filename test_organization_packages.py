@@ -579,6 +579,23 @@ class PackageDeliveryTests(AdminTestCase):
         package = self.delivered(user).json()["packages"][0]
         self.assertTrue(package["id"].startswith("org_style_"))
 
+    def test_a_style_keeps_its_instruction_and_a_skill_does_not(self):
+        """La frontiere n'est pas la meme pour les deux.
+
+        La consigne d'un Style *est* le Style : le poste doit pouvoir
+        l'appliquer avec son moteur local, sans serveur. La retirer viderait
+        les Styles d'organisation. La consigne d'un AI Skill, elle, reste au
+        serveur : le poste n'envoie qu'un identifiant, et la publier ici
+        rendrait ce controle decoratif.
+        """
+        self.published_package("style", STYLE)
+        self.published_package("ai_skill", {**AI_SKILL, "instruction": "Consigne."})
+        user = self.sign_in("etudiant@example.com")
+        delivered = {p["type"]: p["content"] for p in self.delivered(user).json()["packages"]}
+        self.assertEqual(delivered["style"]["instruction"], STYLE["instruction"])
+        self.assertNotIn("instruction", delivered["ai_skill"])
+        self.assertEqual(delivered["ai_skill"]["title"], AI_SKILL["title"])
+
 
 class PolicyCapabilityMappingTests(unittest.TestCase):
     """Le nom de capacite doit exister cote **serveur**.
@@ -805,12 +822,13 @@ class SkillExecutionTests(AdminTestCase):
     def execute(self, skill_id, token, text="bonjour"):
         seen = {}
 
-        async def engine(system_prompt, source):
+        async def engine(task_type, system_prompt, source):
+            seen["task_type"] = task_type
             seen["prompt"] = system_prompt
             seen["text"] = source
             return "resultat"
 
-        with patch.object(main, "llm_complete", engine):
+        with patch.object(main, "execute_text", engine):
             response = self.client.post(
                 self.PATH, headers=self.auth(token),
                 json={"skill_id": skill_id, "text": text})
@@ -832,12 +850,12 @@ class SkillExecutionTests(AdminTestCase):
         _, _, skill_id = self.publish_skill("Consigne publiee.")
         user = self.sign_in("etudiant@example.com")
 
-        async def engine(system_prompt, source):
+        async def engine(task_type, system_prompt, source):
             self.assertIn("Consigne publiee.", system_prompt)
             self.assertNotIn("Consigne injectee.", system_prompt)
             return "resultat"
 
-        with patch.object(main, "llm_complete", engine):
+        with patch.object(main, "execute_text", engine):
             response = self.client.post(
                 self.PATH, headers=self.auth(user),
                 json={"skill_id": skill_id, "text": "x",

@@ -17,6 +17,7 @@ import { CAPABILITY, can, secondsRemaining } from "../lib/session";
 import { useResource } from "../lib/useResource";
 import { useSession } from "../lib/useAdminSession";
 import { AsyncSection, Facts, Notice, Panel, Tag } from "../components/primitives";
+import { AIRuntime } from "./AIRuntime";
 
 function formatDuration(seconds: number): string {
   if (seconds <= 0) return "—";
@@ -76,6 +77,9 @@ export function Deployment() {
           </>
         )}
       </AsyncSection>
+      {/* Ou tourne reellement l'IA de cette organisation. Sa place est ici :
+          c'est une propriete du deploiement, pas un reglage produit. */}
+      <AIRuntime />
     </>
   );
 }

@@ -800,7 +800,7 @@ class DictationInvariantTests(AdminTestCase):
         self.assertEqual(response.status_code, 200, response.text)
 
     def transcribe(self, path: str, token: str):
-        async def engine(file, user):
+        async def engine(file, user, task_type):
             return {"text": "bonjour"}
 
         with patch.object(main, "transcribe_audio", engine):
