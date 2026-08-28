@@ -25,6 +25,7 @@ export const t = {
     identity: "Identity",
     administrators: "Administrators",
     members: "Members",
+    packages: "Packages",
     deployment: "Deployment",
     configuration: "Configuration",
     security: "Security",
@@ -281,6 +282,92 @@ export const t = {
     dictationSafe: "Microphone dictation always stays available.",
     modeRestricted:
       "Some features may still be unavailable because of this deployment's education mode.",
+  },
+
+  // Libelles produit. Un administrateur choisit du contenu a distribuer ; il
+  // n'a pas a connaitre les noms de types du serveur.
+  packages: {
+    title: "Packages",
+    lead: "Content this organization distributes to its members.",
+    policyBoundary:
+      "Publishing content does not grant permission. A published package only reaches members if the matching product policy is enabled in Configuration.",
+    empty: "This organization does not distribute any content yet.",
+    readOnly: "You can view this content, but not change it.",
+    createTitle: "New package",
+    create: "Create package",
+    type: "Type",
+    name: "Name",
+    description: "Description",
+    typeStyle: "Style",
+    typeAiSkill: "AI Skill",
+    typeVocabulary: "Vocabulary",
+    typeLabel: (value: string) =>
+      value === "style"
+        ? "Style"
+        : value === "ai_skill"
+          ? "AI Skill"
+          : value === "vocabulary"
+            ? "Vocabulary"
+            : value,
+    status: "Status",
+    // Un libelle, pas seulement une couleur : un etat ne doit pas se deviner a
+    // la teinte.
+    statusLabel: (value: string) =>
+      value === "draft"
+        ? "Draft"
+        : value === "published"
+          ? "Published"
+          : value === "archived"
+            ? "Archived"
+            : value,
+    active: "Active",
+    incomplete: "Incomplete",
+    completeFirst: "Fill in the required fields before publishing.",
+
+    activeVersion: "Active version",
+    versions: "Versions",
+    noVersion: "No version yet. Create a draft to add content.",
+    open: "Open",
+    close: "Close",
+    newDraft: "Create draft",
+    editDraft: "Edit draft",
+    editing: "Editing",
+    deleteDraft: "Delete draft",
+    archive: "Archive",
+    archiveTitle: "Archive this package?",
+    archiveBody:
+      "Members stop receiving this content. Nothing is deleted — every version is kept, and you can restore the package later.",
+    restore: "Restore",
+    archivedNote:
+      "This package is archived. Members no longer receive it. Restore it to work on it again.",
+    save: "Save draft",
+    discard: "Discard",
+    unsaved: "You have unsaved changes.",
+    publish: "Publish",
+    publishTitle: "Publish this version?",
+    publishBody: (version: number) =>
+      `Version ${version} will be distributed to members of this organization. Published versions can never be edited — to change the content, create a new draft.`,
+    activate: "Make active",
+    activateTitle: "Change the active version?",
+    activateBody: (version: number) =>
+      `Members will receive version ${version}. Nothing is rewritten: the version becomes active again exactly as it was published.`,
+    styleName: "Style name",
+    styleInstruction: "Instruction",
+    skillTitle: "Skill title",
+    skillSummary: "Summary",
+    skillInstruction: "Instruction (required)",
+    skillInstructionHint:
+      "What the model should do with the text. This is what runs.",
+    skillPractice: "Usage tip",
+    skillPracticeHint: "Shown to members. Not sent to the model.",
+    skillDuration: "Duration (minutes)",
+    skillSteps: "Steps",
+    addStep: "Add step",
+    vocabularyEntries: "Entries",
+    vocabularyTerm: "Term",
+    vocabularyReplacement: "Replacement",
+    addEntry: "Add entry",
+    removeRow: "Remove",
   },
 
   security: {

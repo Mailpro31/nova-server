@@ -67,6 +67,39 @@ export interface PolicyView {
   configured: boolean;
 }
 
+export interface PackageVersionSummary {
+  version_id: string;
+  version_number: number;
+  status: string;
+  validation_status: string;
+  content_hash: string;
+  created_at: number;
+  published_at: number | null;
+  active: boolean;
+}
+
+/** Metadonnees seulement : le contenu vit sur sa propre route. */
+export interface PackageView {
+  package_id: string;
+  package_type: string;
+  name: string;
+  description: string;
+  status: string;
+  active_version_id: string | null;
+  active_version_number: number | null;
+  revision: number;
+  updated_at: number;
+  versions: PackageVersionSummary[];
+}
+
+export interface PackageVersionDetail extends PackageVersionSummary {
+  package_id: string;
+  schema_version: number;
+  validation_error: string | null;
+  revision: number;
+  content: Record<string, unknown>;
+}
+
 export interface AdminSessionView {
   token: string;
   role: string;
@@ -228,6 +261,103 @@ export class ControlPlane {
       method: "PUT",
       body: { expected_revision: expectedRevision, settings },
     });
+  }
+
+  packages(organizationId: string) {
+    return this.client.request<{ packages: PackageView[] }>(
+      `/api/control/organizations/${organizationId}/packages`,
+    );
+  }
+
+  createPackage(organizationId: string, body: Record<string, unknown>) {
+    return this.client.request<PackageView>(
+      `/api/control/organizations/${organizationId}/packages`,
+      { method: "POST", body },
+    );
+  }
+
+  packageVersion(organizationId: string, packageId: string, versionId: string) {
+    return this.client.request<PackageVersionDetail>(
+      `/api/control/organizations/${organizationId}/packages/${packageId}` +
+        `/versions/${versionId}`,
+    );
+  }
+
+  createPackageDraft(
+    organizationId: string,
+    packageId: string,
+    body: Record<string, unknown>,
+  ) {
+    return this.client.request<PackageView>(
+      `/api/control/organizations/${organizationId}/packages/${packageId}/versions`,
+      { method: "POST", body },
+    );
+  }
+
+  /** `expected_revision` obligatoire : deux consoles ne s'ecrasent pas. */
+  updatePackageDraft(
+    organizationId: string,
+    packageId: string,
+    versionId: string,
+    body: { expected_revision: number; content: Record<string, unknown> },
+  ) {
+    return this.client.request<PackageView>(
+      `/api/control/organizations/${organizationId}/packages/${packageId}` +
+        `/versions/${versionId}`,
+      { method: "PUT", body },
+    );
+  }
+
+  discardPackageDraft(
+    organizationId: string,
+    packageId: string,
+    versionId: string,
+  ) {
+    return this.client.request<PackageView>(
+      `/api/control/organizations/${organizationId}/packages/${packageId}` +
+        `/versions/${versionId}`,
+      { method: "DELETE" },
+    );
+  }
+
+  publishPackageVersion(
+    organizationId: string,
+    packageId: string,
+    versionId: string,
+  ) {
+    return this.client.request<PackageView>(
+      `/api/control/organizations/${organizationId}/packages/${packageId}` +
+        `/versions/${versionId}/publish`,
+      { method: "POST", body: { activate: true } },
+    );
+  }
+
+  /** Activer une version anterieure **est** le retour arriere. */
+  activatePackageVersion(
+    organizationId: string,
+    packageId: string,
+    versionId: string,
+  ) {
+    return this.client.request<PackageView>(
+      `/api/control/organizations/${organizationId}/packages/${packageId}` +
+        `/versions/${versionId}/activate`,
+      { method: "POST", body: {} },
+    );
+  }
+
+  /** Sortir de l'archive. Le package repart en brouillon, pas en distribution. */
+  restorePackage(organizationId: string, packageId: string) {
+    return this.client.request<PackageView>(
+      `/api/control/organizations/${organizationId}/packages/${packageId}/restore`,
+      { method: "POST", body: {} },
+    );
+  }
+
+  archivePackage(organizationId: string, packageId: string) {
+    return this.client.request<PackageView>(
+      `/api/control/organizations/${organizationId}/packages/${packageId}/archive`,
+      { method: "POST", body: {} },
+    );
   }
 
   updateDiscovery(body: Record<string, unknown>) {

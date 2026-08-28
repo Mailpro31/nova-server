@@ -32,13 +32,30 @@ export class ApiError extends Error {
   readonly kind: ApiErrorKind;
   readonly code: string | null;
   readonly status: number;
+  /**
+   * Refus structuré, quand le serveur en renvoie un.
+   *
+   * Certains refus portent plus qu'un code : la validation d'un package nomme
+   * le champ fautif et propose un message affichable. Le réduire à une chaîne
+   * obligerait la console à dire « erreur » là où le serveur a pris la peine
+   * d'expliquer.
+   *
+   * `null` pour les refus à code simple, qui restent la majorité.
+   */
+  readonly detail: Record<string, unknown> | null;
 
-  constructor(kind: ApiErrorKind, status: number, code: string | null) {
+  constructor(
+    kind: ApiErrorKind,
+    status: number,
+    code: string | null,
+    detail: Record<string, unknown> | null = null,
+  ) {
     super(code ?? kind);
     this.name = "ApiError";
     this.kind = kind;
     this.status = status;
     this.code = code;
+    this.detail = detail;
   }
 }
 
@@ -122,11 +139,30 @@ export class ApiClient {
     }
 
     if (!response.ok) {
-      const code =
+      const raw =
         payload && typeof payload === "object" && "detail" in payload
-          ? String((payload as { detail: unknown }).detail)
+          ? (payload as { detail: unknown }).detail
           : null;
-      throw new ApiError(classify(response.status, code), response.status, code);
+      // Un refus structuré porte son code dans `code` ; un refus simple *est*
+      // son code. Les deux formes coexistent, et la console n'a pas à savoir
+      // laquelle elle vient de recevoir.
+      const structured =
+        raw && typeof raw === "object" && !Array.isArray(raw)
+          ? (raw as Record<string, unknown>)
+          : null;
+      const code = structured
+        ? typeof structured.code === "string"
+          ? structured.code
+          : null
+        : raw === null
+          ? null
+          : String(raw);
+      throw new ApiError(
+        classify(response.status, code),
+        response.status,
+        code,
+        structured,
+      );
     }
 
     const version =

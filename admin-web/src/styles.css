@@ -422,3 +422,21 @@ input[aria-invalid="true"] {
   color: var(--text-faint);
   margin: 18px 0 6px;
 }
+
+/* Champ de formulaire : libelle au-dessus, controle en dessous. Utilise par
+   les editeurs de package, ou chaque type a sa propre forme. */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 220px;
+  min-width: 0;
+}
+.field > span {
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+.field textarea {
+  resize: vertical;
+  font: inherit;
+}

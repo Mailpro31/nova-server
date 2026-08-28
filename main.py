@@ -25,7 +25,7 @@ from urllib.parse import urlencode, urlparse
 
 import httpx
 import jwt
-from fastapi import Depends, FastAPI, Header, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, Header, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel, EmailStr
@@ -430,6 +430,59 @@ def init_db():
         -- L'absence de ligne n'est pas une erreur : c'est le cas normal d'une
         -- organisation qui n'a jamais rien restreint. Elle obtient alors
         -- DEFAULT_ORGANIZATION_POLICY, et rien ne change pour elle.
+        -- Packages distribues par l'organisation : Styles, AI Skills,
+        -- vocabulaire. Un package a un nom et une identite ; ce sont ses
+        -- **versions** qui portent du contenu.
+        CREATE TABLE IF NOT EXISTS organization_packages(
+            package_id         TEXT PRIMARY KEY,
+            organization_id    TEXT NOT NULL,
+            package_type       TEXT NOT NULL,
+            name               TEXT NOT NULL,
+            description        TEXT NOT NULL DEFAULT '',
+            status             TEXT NOT NULL DEFAULT 'draft',
+            -- La version que les membres recoivent. `NULL` tant que rien n'est
+            -- publie : un package existe avant d'avoir quoi que ce soit a dire.
+            active_version_id  TEXT,
+            -- Concurrence optimiste sur la fiche, comme pour les policies.
+            revision           INTEGER NOT NULL DEFAULT 0,
+            created_at         REAL NOT NULL,
+            created_by_user_id TEXT,
+            updated_at         REAL NOT NULL,
+            updated_by_user_id TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_packages_org
+            ON organization_packages(organization_id, package_type);
+
+        -- Une version publiee n'est **jamais** modifiee. Changer de contenu
+        -- demande un nouveau brouillon ; revenir en arriere ne fait que
+        -- redesigner une version anterieure, restee intacte. C'est ce qui rend
+        -- le retour arriere sur : on republie ce qui avait ete publie, pas une
+        -- reconstruction de memoire.
+        CREATE TABLE IF NOT EXISTS organization_package_versions(
+            version_id         TEXT PRIMARY KEY,
+            package_id         TEXT NOT NULL,
+            -- Denormalise : toute lecture peut ainsi etre cadree par
+            -- l'organisation sans jointure, et une jointure oubliee est
+            -- exactement la faute qui produit une fuite entre tenants.
+            organization_id    TEXT NOT NULL,
+            version_number     INTEGER NOT NULL,
+            schema_version     INTEGER NOT NULL,
+            content            TEXT NOT NULL,
+            content_hash       TEXT NOT NULL,
+            status             TEXT NOT NULL DEFAULT 'draft',
+            validation_status  TEXT NOT NULL DEFAULT 'unknown',
+            validation_error   TEXT,
+            revision           INTEGER NOT NULL DEFAULT 0,
+            created_at         REAL NOT NULL,
+            created_by_user_id TEXT,
+            updated_at         REAL NOT NULL,
+            updated_by_user_id TEXT,
+            published_at       REAL,
+            UNIQUE(package_id, version_number)
+        );
+        CREATE INDEX IF NOT EXISTS idx_package_versions_package
+            ON organization_package_versions(package_id, version_number);
+
         CREATE TABLE IF NOT EXISTS organization_policies(
             organization_id    TEXT PRIMARY KEY,
             schema_version     INTEGER NOT NULL,
@@ -1842,6 +1895,10 @@ CAPABILITY_DIAGNOSTICS_READ = "diagnostics_read"
 # securite. Reutiliser une capacite voisine ferait grossir son sens jusqu'a
 # ce qu'on ne sache plus ce qu'elle protege.
 CAPABILITY_POLICY_MANAGE = "policy_manage"
+# Preparer et publier le contenu distribue par l'organisation. Une seule
+# capacite pour les trois types : une par type ferait grossir la matrice
+# sans repondre a une question differente — qui peut publier du contenu ?
+CAPABILITY_CONTENT_MANAGE = "content_manage"
 
 # La matrice. Aucun rôle n'est un sur-ensemble des autres : `organization_admin`
 # gère les personnes, `it_admin` gère la machine. Les faire coïncider
@@ -1859,6 +1916,7 @@ CAPABILITIES_BY_ROLE: dict[str, frozenset[str]] = {
         # Il gere la machine — fournisseurs, deploiement, diagnostics — et la
         # frontiere posee en Phase 22 tient sans exception ajoutee.
         CAPABILITY_POLICY_MANAGE,
+        CAPABILITY_CONTENT_MANAGE,
     }),
     SECURITY_ROLE_IT_ADMIN: frozenset({
         CAPABILITY_ORGANIZATION_READ,
@@ -2139,6 +2197,346 @@ def resolve_effective_product_capabilities(
             effective[setting.capability]
         ) and bool(policy_settings.get(setting.key, setting.default))
     return effective
+
+
+# ──────────────────── Packages d'organisation ─────────────────────────────
+#
+# ## Policy et Package repondent a deux questions differentes
+#
+#     POLICY                              PACKAGE
+#     `organization_vocabulary_enabled`   « Vocabulaire Ingenierie v3 »
+#     cette capacite est-elle autorisee ? quel contenu l'organisation distribue-t-elle ?
+#
+# Les confondre produirait un systeme ou desactiver une fonction demanderait de
+# depublier du contenu, et ou publier du contenu accorderait une permission.
+# **Un package ne porte donc aucun `enabled`** : la permission vit dans la
+# policy, et un package actif reste inutilisable si la policy est fermee.
+#
+# ## Package et Version
+#
+#     Package  « Vocabulaire Ingenierie »   ce qui a un nom et une identite
+#     Version  v1, v2, v3                   ce qui a un contenu
+#
+# Une seule version est **active** a la fois. Publier ne modifie jamais une
+# version existante : on cree un brouillon, on le publie, et l'active change.
+# Revenir en arriere ne reecrit rien non plus — c'est l'active qui redesigne
+# une version anterieure, restee intacte.
+#
+# C'est ce qui rend le retour arriere sur : ce que l'on republie est
+# exactement ce qui avait ete publie, et non une reconstruction de memoire.
+
+PACKAGE_TYPE_STYLE = "style"
+PACKAGE_TYPE_AI_SKILL = "ai_skill"
+PACKAGE_TYPE_VOCABULARY = "vocabulary"
+PACKAGE_TYPES = (PACKAGE_TYPE_STYLE, PACKAGE_TYPE_AI_SKILL, PACKAGE_TYPE_VOCABULARY)
+
+PACKAGE_STATUS_DRAFT = "draft"
+PACKAGE_STATUS_PUBLISHED = "published"
+PACKAGE_STATUS_ARCHIVED = "archived"
+PACKAGE_STATUSES = (PACKAGE_STATUS_DRAFT, PACKAGE_STATUS_PUBLISHED,
+                    PACKAGE_STATUS_ARCHIVED)
+
+VERSION_STATUS_DRAFT = "draft"
+VERSION_STATUS_PUBLISHED = "published"
+
+# Version du **format de contenu**, distincte du numero de version du package.
+# La version 8 d'un package peut parfaitement porter un contenu de schema 1 :
+# l'une compte les publications, l'autre decrit la forme. Les lier obligerait a
+# republier pour changer de format, ou a changer de format pour republier.
+# Passe a 2 en Phase 31B : un AI Skill porte desormais une `instruction`, et
+# elle est obligatoire. Sans elle, un Skill n'aurait rien a dire au modele — ce
+# serait une fiche, pas une action. Le numero de version du package, lui, ne
+# bouge pas : les deux notions restent independantes.
+PACKAGE_CONTENT_SCHEMA_VERSION = 2
+
+# Limites, appliquees **par le serveur**. Une limite dans l'interface seule
+# n'est pas une limite : elle indique une intention a qui veut bien la lire.
+# SQLite stocke ces documents en ligne ; sans plafond, un package finirait par
+# ralentir chaque lecture de la table.
+PACKAGE_NAME_MAX = 120
+PACKAGE_DESCRIPTION_MAX = 500
+PACKAGE_CONTENT_MAX_BYTES = 256 * 1024
+VOCABULARY_ENTRY_MAX = 2000
+VOCABULARY_TERM_MAX = 200
+STYLE_INSTRUCTION_MAX = 8000
+AI_SKILL_TEXT_MAX = 4000
+AI_SKILL_STEPS_MAX = 20
+AI_SKILL_INSTRUCTION_MAX = 8000
+
+
+class PackageValidationError(ValueError):
+    """Refus structure : un code, un champ, un message affichable.
+
+    Jamais une trace d'execution. Un administrateur qui corrige un package a
+    besoin de savoir **quel champ** et **pourquoi** ; l'etat interne du serveur
+    ne l'aide pas et le renseignerait sur son implementation.
+    """
+
+    def __init__(self, code: str, field: str, message: str):
+        super().__init__(f"{code}:{field}")
+        self.code = code
+        self.field = field
+        self.message = message
+
+    def as_detail(self) -> dict:
+        return {
+            "code": "PACKAGE_VALIDATION_FAILED",
+            "reason": self.code,
+            "field": self.field,
+            "message": self.message,
+        }
+
+
+def _text(value, field: str, maximum: int, required: bool = True) -> str:
+    if value is None:
+        value = ""
+    if not isinstance(value, str):
+        raise PackageValidationError("not_a_string", field, "This field must be text.")
+    cleaned = value.strip()
+    if required and not cleaned:
+        raise PackageValidationError("required", field, "This field is required.")
+    if len(cleaned) > maximum:
+        raise PackageValidationError(
+            "too_long", field, f"This field is limited to {maximum} characters."
+        )
+    # Les caracteres de controle n'ont aucun sens dans un contenu declaratif et
+    # servent surtout a masquer du texte a la relecture.
+    if any(ord(character) < 32 and character not in "\n\t" for character in cleaned):
+        raise PackageValidationError(
+            "control_characters", field, "This field contains invalid characters."
+        )
+    return cleaned
+
+
+def validate_style_content(content: dict) -> dict:
+    """Un Style d'organisation : un nom, une consigne.
+
+    Volontairement proche de `LLMPrompt` cote poste — `{id, name, prompt}` —
+    pour qu'un Style publie se consomme sans traduction. L'identifiant, lui,
+    est attribue par Nova (§ identifiants), jamais par l'auteur.
+    """
+    return {
+        "name": _text(content.get("name"), "name", PACKAGE_NAME_MAX),
+        "instruction": _text(
+            content.get("instruction"), "instruction", STYLE_INSTRUCTION_MAX
+        ),
+    }
+
+
+def validate_ai_skill_content(content: dict) -> dict:
+    """Une action IA : ce qu'elle fait, et ce qu'elle dit au modele.
+
+    **Declaratif, et rien d'autre.** Pas de script, pas d'URL a executer, pas
+    d'interpolation de secret. Un package est du contenu distribue a des
+    postes : lui laisser porter du code executable ferait de la console
+    d'administration un moyen d'executer du code chez chaque membre — ce qui
+    n'est pas une fonction produit mais une porte.
+    """
+    steps = content.get("steps") or []
+    if not isinstance(steps, list):
+        raise PackageValidationError("not_a_list", "steps", "Steps must be a list.")
+    if len(steps) > AI_SKILL_STEPS_MAX:
+        raise PackageValidationError(
+            "too_many", "steps", f"At most {AI_SKILL_STEPS_MAX} steps."
+        )
+    duration = content.get("duration_minutes", 5)
+    if not isinstance(duration, int) or isinstance(duration, bool):
+        raise PackageValidationError(
+            "not_an_integer", "duration_minutes", "Duration must be a whole number."
+        )
+    if not 1 <= duration <= 240:
+        raise PackageValidationError(
+            "out_of_range", "duration_minutes", "Duration must be between 1 and 240."
+        )
+    return {
+        "title": _text(content.get("title"), "title", PACKAGE_NAME_MAX),
+        "summary": _text(content.get("summary"), "summary", AI_SKILL_TEXT_MAX),
+        # **Obligatoire.** C'est ce qui distingue une action d'une fiche : sans
+        # instruction, il n'y a rien a executer, et publier un Skill inerte
+        # ferait croire a une fonction qui ne fera jamais rien.
+        "instruction": _text(
+            content.get("instruction"), "instruction", AI_SKILL_INSTRUCTION_MAX
+        ),
+        # Facultatifs : ils aident la personne, ils ne parlent pas au modele.
+        "practice": _text(content.get("practice"), "practice", AI_SKILL_TEXT_MAX,
+                          required=False),
+        "duration_minutes": duration,
+        "steps": [
+            _text(step, f"steps[{index}]", AI_SKILL_TEXT_MAX)
+            for index, step in enumerate(steps)
+        ],
+    }
+
+
+def validate_vocabulary_content(content: dict) -> dict:
+    """Une liste de termes et de leurs remplacements.
+
+    Les doublons sont refuses plutot que silencieusement dedupliques : deux
+    lignes pour le meme terme signifient que quelqu'un attend deux resultats
+    differents, et en choisir un sans le dire produirait un comportement que
+    personne ne saurait expliquer.
+    """
+    entries = content.get("entries")
+    if not isinstance(entries, list):
+        raise PackageValidationError("not_a_list", "entries", "Entries must be a list.")
+    if not entries:
+        raise PackageValidationError(
+            "required", "entries", "A vocabulary needs at least one entry."
+        )
+    if len(entries) > VOCABULARY_ENTRY_MAX:
+        raise PackageValidationError(
+            "too_many", "entries", f"At most {VOCABULARY_ENTRY_MAX} entries."
+        )
+    seen = set()
+    cleaned = []
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            raise PackageValidationError(
+                "not_an_object", f"entries[{index}]", "Each entry must be an object."
+            )
+        term = _text(entry.get("term"), f"entries[{index}].term", VOCABULARY_TERM_MAX)
+        replacement = _text(
+            entry.get("replacement"),
+            f"entries[{index}].replacement",
+            VOCABULARY_TERM_MAX,
+        )
+        key = term.casefold()
+        if key in seen:
+            raise PackageValidationError(
+                "duplicate", f"entries[{index}].term", f"'{term}' appears twice."
+            )
+        seen.add(key)
+        cleaned.append({"term": term, "replacement": replacement})
+    return {"entries": cleaned}
+
+
+PACKAGE_VALIDATORS = {
+    PACKAGE_TYPE_STYLE: validate_style_content,
+    PACKAGE_TYPE_AI_SKILL: validate_ai_skill_content,
+    PACKAGE_TYPE_VOCABULARY: validate_vocabulary_content,
+}
+
+
+def validate_package_content(package_type: str, content) -> dict:
+    """Valide **structurellement**, pas seulement syntaxiquement.
+
+    « Le JSON se parse » ne veut rien dire : un document vide se parse aussi.
+    Chaque type declare ses champs, ses limites et ses interdits, et ce qui
+    ressort est un document normalise — pas celui qui est entre.
+    """
+    if package_type not in PACKAGE_VALIDATORS:
+        raise PackageValidationError(
+            "unknown_type", "package_type", "This package type is not supported."
+        )
+    if not isinstance(content, dict):
+        raise PackageValidationError(
+            "not_an_object", "content", "Content must be an object."
+        )
+    normalized = PACKAGE_VALIDATORS[package_type](content)
+    encoded = json.dumps(normalized, ensure_ascii=False)
+    if len(encoded.encode("utf-8")) > PACKAGE_CONTENT_MAX_BYTES:
+        raise PackageValidationError(
+            "too_large", "content",
+            f"Content is limited to {PACKAGE_CONTENT_MAX_BYTES // 1024} KB.",
+        )
+    return normalized
+
+
+def normalize_draft_content(package_type: str, content) -> tuple[dict, str | None]:
+    """Un brouillon a le droit d'etre incomplet.
+
+    ## Pourquoi deux niveaux de validation
+
+    Un brouillon commence vide. Lui appliquer la validation de publication
+    rendrait sa creation impossible : il faudrait l'avoir rempli pour avoir le
+    droit de commencer a le remplir. C'est le defaut que la recette de la
+    Phase 31B a trouve — aucun test ne pouvait le voir, tous partaient d'un
+    document deja complet.
+
+    Ce qui reste applique au brouillon : les types, les cles declarees, les
+    limites de taille. Ce qui attend la publication : les champs obligatoires.
+    Autrement dit, on refuse ce qui est **faux**, on tolere ce qui est
+    **inacheve**.
+
+    Renvoie le document normalise et, le cas echeant, le motif qui empechera la
+    publication — pour que la console puisse le dire avant que l'on clique.
+    """
+    if package_type not in PACKAGE_VALIDATORS:
+        raise PackageValidationError(
+            "unknown_type", "package_type", "This package type is not supported.")
+    if not isinstance(content, dict):
+        raise PackageValidationError(
+            "not_an_object", "content", "Content must be an object.")
+
+    # Le document est conserve tel quel, cles inconnues retirees : le brouillon
+    # doit pouvoir etre relu exactement comme il a ete saisi.
+    allowed = set(PACKAGE_DRAFT_FIELDS[package_type])
+    unknown = set(content) - allowed
+    if unknown:
+        raise PackageValidationError(
+            f"POLICY_KEY_UNKNOWN", sorted(unknown)[0],
+            "This field is not part of this package type.")
+    draft = {key: value for key, value in content.items() if key in allowed}
+
+    encoded = json.dumps(draft, ensure_ascii=False, default=str)
+    if len(encoded.encode("utf-8")) > PACKAGE_CONTENT_MAX_BYTES:
+        raise PackageValidationError(
+            "too_large", "content",
+            f"Content is limited to {PACKAGE_CONTENT_MAX_BYTES // 1024} KB.")
+
+    try:
+        validate_package_content(package_type, draft)
+        return draft, None
+    except PackageValidationError as error:
+        if error.code not in DRAFT_TOLERATED_CODES:
+            # Un type faux, une limite depassee, un doublon : ce n'est pas un
+            # brouillon inacheve, c'est un document errone. Le garder ferait
+            # decouvrir la faute au moment de publier — c'est-a-dire au plus
+            # mauvais moment.
+            raise
+        # Inacheve, pas faux : on garde le brouillon et on retient pourquoi il
+        # n'est pas encore publiable.
+        return draft, f"{error.code}:{error.field}"
+
+
+# Le seul motif qu'un brouillon a le droit de porter : un champ pas encore
+# rempli. Tout le reste — type invalide, limite depassee, doublon — est une
+# erreur, et la signaler tout de suite vaut mieux que de la laisser surgir au
+# moment de publier.
+DRAFT_TOLERATED_CODES = frozenset({"required"})
+
+# Les cles qu'un brouillon a le droit de porter, par type. Utilisees pour
+# retirer l'inconnu sans exiger le complet.
+PACKAGE_DRAFT_FIELDS = {
+    PACKAGE_TYPE_STYLE: ("name", "instruction"),
+    PACKAGE_TYPE_AI_SKILL: ("title", "summary", "instruction", "practice",
+                            "duration_minutes", "steps"),
+    PACKAGE_TYPE_VOCABULARY: ("entries",),
+}
+
+
+def package_content_hash(content: dict) -> str:
+    """Empreinte du contenu normalise.
+
+    Pas une signature — rien ici ne prouve *qui* a publie. Elle detecte la
+    corruption et permet a un poste de savoir qu'un contenu n'a pas change sans
+    le retelecharger. Une vraie signature demanderait une gestion de cles, et
+    en fabriquer une a moitie donnerait une assurance que le mecanisme ne tient
+    pas.
+    """
+    encoded = json.dumps(content, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def package_identifier(package_type: str, package_id: str) -> str:
+    """Identifiant expose au poste, impossible a confondre.
+
+    Les Styles integres portent `nova_style_…`, les Styles personnels un
+    identifiant libre. Un Style d'organisation prend donc un prefixe qui
+    n'appartient qu'a lui : sans cela, un package pourrait masquer un preset
+    integre — ou en heriter les privileges de palier.
+    """
+    return f"org_{package_type}_{package_id}"
 
 
 def organization_policy_for_account(account) -> dict:
@@ -5145,6 +5543,608 @@ def control_update_policy(
 # ────────────────── Policies produit : cote membre ────────────────────────
 
 
+# ─────────────── Packages : administration et distribution ────────────────
+#
+# Deux surfaces distinctes, et la separation est la propriete de securite :
+#
+#     /api/control/organizations/{org}/packages   administration
+#     /api/organization/packages                  distribution aux membres
+#
+# La premiere voit les brouillons, les auteurs, les erreurs de validation. La
+# seconde ne voit que ce qui est publie et actif. Melanger les deux exposerait
+# un brouillon a un membre — c'est-a-dire du contenu que l'organisation n'a
+# precisement pas decide de distribuer.
+
+
+def package_row(conn, organization_id: str, package_id: str):
+    """Une fiche de package, **cadree par l'organisation**.
+
+    L'organisation fait partie de la requete, pas d'un controle qui suivrait :
+    un identifiant appartenant a une autre organisation ne renvoie rien, quelle
+    que soit la maniere dont il a ete obtenu.
+    """
+    return conn.execute(
+        "SELECT * FROM organization_packages WHERE package_id=? AND organization_id=?",
+        (package_id, organization_id),
+    ).fetchone()
+
+
+def package_version_row(conn, organization_id: str, version_id: str):
+    return conn.execute(
+        "SELECT * FROM organization_package_versions "
+        "WHERE version_id=? AND organization_id=?",
+        (version_id, organization_id),
+    ).fetchone()
+
+
+def package_view(conn, row) -> dict:
+    """Ce que la console affiche pour une fiche.
+
+    Metadonnees seulement — jamais le contenu. Une liste qui embarquerait
+    chaque document deviendrait lourde a mesure que l'organisation publie, et
+    personne ne lit trois cents entrees de vocabulaire dans un tableau.
+    """
+    versions = conn.execute(
+        "SELECT version_id, version_number, status, validation_status, "
+        "content_hash, created_at, published_at FROM organization_package_versions "
+        "WHERE package_id=? ORDER BY version_number DESC",
+        (row["package_id"],),
+    ).fetchall()
+    active = row["active_version_id"]
+    return {
+        "package_id": row["package_id"],
+        "package_type": row["package_type"],
+        "name": row["name"],
+        "description": row["description"],
+        "status": row["status"],
+        "active_version_id": active,
+        "active_version_number": next(
+            (v["version_number"] for v in versions if v["version_id"] == active), None
+        ),
+        "revision": row["revision"],
+        "updated_at": row["updated_at"],
+        "versions": [
+            {
+                "version_id": v["version_id"],
+                "version_number": v["version_number"],
+                "status": v["status"],
+                "validation_status": v["validation_status"],
+                "content_hash": v["content_hash"],
+                "created_at": v["created_at"],
+                "published_at": v["published_at"],
+                "active": v["version_id"] == active,
+            }
+            for v in versions
+        ],
+    }
+
+
+class PackageCreateRequest(BaseModel):
+    package_type: str
+    name: str
+    description: str = ""
+
+
+class PackageDraftRequest(BaseModel):
+    content: dict
+
+
+class PackageDraftUpdateRequest(BaseModel):
+    # La revision sur laquelle l'administrateur a travaille. Sans elle, deux
+    # consoles ouvertes cote a cote s'ecraseraient en silence.
+    expected_revision: int
+    content: dict
+
+
+def require_package_organization(principal: AdminPrincipal, organization_id: str):
+    require_organization_access(principal, organization_id)
+
+
+@app.get("/api/control/organizations/{organization_id}/packages")
+def control_list_packages(
+    organization_id: str,
+    principal: AdminPrincipal = Depends(
+        require_admin_capability(CAPABILITY_ORGANIZATION_READ)),
+):
+    require_package_organization(principal, organization_id)
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM organization_packages WHERE organization_id=? "
+            "ORDER BY package_type, name",
+            (organization_id,),
+        ).fetchall()
+        return {"packages": [package_view(conn, row) for row in rows]}
+
+
+@app.post("/api/control/organizations/{organization_id}/packages")
+def control_create_package(
+    organization_id: str,
+    body: PackageCreateRequest,
+    principal: AdminPrincipal = Depends(
+        require_admin_capability(CAPABILITY_CONTENT_MANAGE)),
+):
+    require_package_organization(principal, organization_id)
+    if body.package_type not in PACKAGE_TYPES:
+        raise auth_error(400, "PACKAGE_TYPE_UNKNOWN")
+    try:
+        name = _text(body.name, "name", PACKAGE_NAME_MAX)
+        description = _text(
+            body.description, "description", PACKAGE_DESCRIPTION_MAX, required=False)
+    except PackageValidationError as error:
+        raise HTTPException(400, error.as_detail())
+
+    package_id = uuid.uuid4().hex
+    now = time.time()
+    with db() as conn:
+        conn.execute(
+            "INSERT INTO organization_packages(package_id, organization_id, "
+            "package_type, name, description, status, revision, created_at, "
+            "created_by_user_id, updated_at, updated_by_user_id) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (package_id, organization_id, body.package_type, name, description,
+             PACKAGE_STATUS_DRAFT, 0, now, principal.user_id, now, principal.user_id),
+        )
+        record_admin_action(
+            principal, "package.create", target_type="package", target_id=package_id,
+            metadata={"package_type": body.package_type}, conn=conn)
+        return package_view(conn, package_row(conn, organization_id, package_id))
+
+
+@app.get("/api/control/organizations/{organization_id}/packages/{package_id}")
+def control_read_package(
+    organization_id: str,
+    package_id: str,
+    principal: AdminPrincipal = Depends(
+        require_admin_capability(CAPABILITY_ORGANIZATION_READ)),
+):
+    require_package_organization(principal, organization_id)
+    with db() as conn:
+        row = package_row(conn, organization_id, package_id)
+        if row is None:
+            raise auth_error(404, "PACKAGE_NOT_FOUND")
+        return package_view(conn, row)
+
+
+@app.post("/api/control/organizations/{organization_id}/packages/{package_id}/versions")
+def control_create_draft(
+    organization_id: str,
+    package_id: str,
+    body: PackageDraftRequest,
+    principal: AdminPrincipal = Depends(
+        require_admin_capability(CAPABILITY_CONTENT_MANAGE)),
+):
+    """Ouvre un brouillon.
+
+    Un seul brouillon a la fois : deux brouillons concurrents poseraient la
+    question « lequel devient v4 ? », et toute reponse serait arbitraire.
+    """
+    require_package_organization(principal, organization_id)
+    with db() as conn:
+        package = package_row(conn, organization_id, package_id)
+        if package is None:
+            raise auth_error(404, "PACKAGE_NOT_FOUND")
+        existing = conn.execute(
+            "SELECT version_id FROM organization_package_versions "
+            "WHERE package_id=? AND status=?", (package_id, VERSION_STATUS_DRAFT)
+        ).fetchone()
+        if existing is not None:
+            raise auth_error(409, "PACKAGE_DRAFT_EXISTS")
+
+        try:
+            content, invalid = normalize_draft_content(
+                package["package_type"], body.content)
+        except PackageValidationError as error:
+            raise HTTPException(400, error.as_detail())
+
+        highest = conn.execute(
+            "SELECT COALESCE(MAX(version_number), 0) n FROM "
+            "organization_package_versions WHERE package_id=?", (package_id,)
+        ).fetchone()["n"]
+        version_id = uuid.uuid4().hex
+        now = time.time()
+        conn.execute(
+            "INSERT INTO organization_package_versions(version_id, package_id, "
+            "organization_id, version_number, schema_version, content, content_hash, "
+            "status, validation_status, revision, created_at, created_by_user_id, "
+            "updated_at, updated_by_user_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (version_id, package_id, organization_id, highest + 1,
+             PACKAGE_CONTENT_SCHEMA_VERSION, json.dumps(content, ensure_ascii=False),
+             package_content_hash(content), VERSION_STATUS_DRAFT,
+             "invalid" if invalid else "valid", 0,
+             now, principal.user_id, now, principal.user_id),
+        )
+        record_admin_action(
+            principal, "package.draft_create", target_type="package",
+            target_id=package_id,
+            metadata={"package_type": package["package_type"],
+                      "version": highest + 1}, conn=conn)
+        return package_view(conn, package_row(conn, organization_id, package_id))
+
+
+@app.get("/api/control/organizations/{organization_id}/packages/{package_id}"
+         "/versions/{version_id}")
+def control_read_version(
+    organization_id: str,
+    package_id: str,
+    version_id: str,
+    principal: AdminPrincipal = Depends(
+        require_admin_capability(CAPABILITY_ORGANIZATION_READ)),
+):
+    """Le contenu d'une version, sur sa propre route.
+
+    Separee de la liste a dessein : afficher un tableau de packages ne doit pas
+    ramener chaque document au passage.
+    """
+    require_package_organization(principal, organization_id)
+    with db() as conn:
+        row = package_version_row(conn, organization_id, version_id)
+        if row is None or row["package_id"] != package_id:
+            raise auth_error(404, "PACKAGE_NOT_FOUND")
+        return {
+            "version_id": row["version_id"],
+            "package_id": row["package_id"],
+            "version_number": row["version_number"],
+            "schema_version": row["schema_version"],
+            "status": row["status"],
+            "validation_status": row["validation_status"],
+            "validation_error": row["validation_error"],
+            "content_hash": row["content_hash"],
+            "revision": row["revision"],
+            "content": json.loads(row["content"]),
+        }
+
+
+@app.put("/api/control/organizations/{organization_id}/packages/{package_id}"
+         "/versions/{version_id}")
+def control_update_draft(
+    organization_id: str,
+    package_id: str,
+    version_id: str,
+    body: PackageDraftUpdateRequest,
+    principal: AdminPrincipal = Depends(
+        require_admin_capability(CAPABILITY_CONTENT_MANAGE)),
+):
+    """Modifie un brouillon — **jamais** une version publiee.
+
+    C'est la garantie qui rend le retour arriere fiable : ce qui a ete distribue
+    reste exactement ce qui avait ete distribue. Une version publiee modifiable
+    ferait de l'historique une reconstitution.
+    """
+    require_package_organization(principal, organization_id)
+    with db() as conn:
+        package = package_row(conn, organization_id, package_id)
+        row = package_version_row(conn, organization_id, version_id)
+        if package is None or row is None or row["package_id"] != package_id:
+            raise auth_error(404, "PACKAGE_NOT_FOUND")
+        if row["status"] != VERSION_STATUS_DRAFT:
+            raise auth_error(409, "PACKAGE_VERSION_IMMUTABLE")
+        if body.expected_revision != row["revision"]:
+            raise auth_error(409, "PACKAGE_REVISION_CONFLICT")
+
+        try:
+            content, invalid = normalize_draft_content(
+                package["package_type"], body.content)
+        except PackageValidationError as error:
+            raise HTTPException(400, error.as_detail())
+
+        now = time.time()
+        conn.execute(
+            "UPDATE organization_package_versions SET content=?, content_hash=?, "
+            "validation_status=?, validation_error=?, revision=revision+1, "
+            "updated_at=?, updated_by_user_id=? WHERE version_id=?",
+            (json.dumps(content, ensure_ascii=False), package_content_hash(content),
+             "invalid" if invalid else "valid", invalid,
+             now, principal.user_id, version_id),
+        )
+        record_admin_action(
+            principal, "package.draft_update", target_type="package",
+            target_id=package_id,
+            metadata={"package_type": package["package_type"],
+                      "version": row["version_number"]}, conn=conn)
+        return package_view(conn, package_row(conn, organization_id, package_id))
+
+
+@app.delete("/api/control/organizations/{organization_id}/packages/{package_id}"
+            "/versions/{version_id}")
+def control_delete_draft(
+    organization_id: str,
+    package_id: str,
+    version_id: str,
+    principal: AdminPrincipal = Depends(
+        require_admin_capability(CAPABILITY_CONTENT_MANAGE)),
+):
+    """Abandonne un brouillon. Une version publiee ne se supprime pas."""
+    require_package_organization(principal, organization_id)
+    with db() as conn:
+        row = package_version_row(conn, organization_id, version_id)
+        if row is None or row["package_id"] != package_id:
+            raise auth_error(404, "PACKAGE_NOT_FOUND")
+        if row["status"] != VERSION_STATUS_DRAFT:
+            raise auth_error(409, "PACKAGE_VERSION_IMMUTABLE")
+        conn.execute(
+            "DELETE FROM organization_package_versions WHERE version_id=?", (version_id,))
+        record_admin_action(
+            principal, "package.draft_discard", target_type="package",
+            target_id=package_id, metadata={"version": row["version_number"]}, conn=conn)
+        return package_view(conn, package_row(conn, organization_id, package_id))
+
+
+class PackagePublishRequest(BaseModel):
+    # Publier sans activer permet de preparer une version et de la mettre en
+    # service plus tard. Le defaut suit l'attente courante : on publie pour
+    # distribuer.
+    activate: bool = True
+
+
+@app.post("/api/control/organizations/{organization_id}/packages/{package_id}"
+          "/versions/{version_id}/publish")
+def control_publish_version(
+    organization_id: str,
+    package_id: str,
+    version_id: str,
+    body: PackagePublishRequest,
+    principal: AdminPrincipal = Depends(
+        require_admin_capability(CAPABILITY_CONTENT_MANAGE)),
+):
+    """Publie un brouillon, et l'active si demande.
+
+    Tout se fait dans une transaction : la version passe en publie, l'active
+    change, et l'audit s'ecrit. Une publication a moitie appliquee laisserait
+    l'organisation dans un etat que personne n'a choisi.
+    """
+    require_package_organization(principal, organization_id)
+    with db() as conn:
+        package = package_row(conn, organization_id, package_id)
+        row = package_version_row(conn, organization_id, version_id)
+        if package is None or row is None or row["package_id"] != package_id:
+            raise auth_error(404, "PACKAGE_NOT_FOUND")
+        if row["status"] == VERSION_STATUS_PUBLISHED:
+            raise auth_error(409, "PACKAGE_ALREADY_PUBLISHED")
+
+        # Revalidation au moment de publier : le schema a pu evoluer depuis la
+        # redaction du brouillon, et distribuer un contenu qui ne passerait plus
+        # la validation serait publier une erreur connue.
+        try:
+            validate_package_content(package["package_type"],
+                                     json.loads(row["content"]))
+        except PackageValidationError as error:
+            raise HTTPException(400, error.as_detail())
+
+        now = time.time()
+        conn.execute(
+            "UPDATE organization_package_versions SET status=?, published_at=?, "
+            "updated_at=?, updated_by_user_id=? WHERE version_id=?",
+            (VERSION_STATUS_PUBLISHED, now, now, principal.user_id, version_id))
+        previous = package["active_version_id"]
+        if body.activate:
+            conn.execute(
+                "UPDATE organization_packages SET active_version_id=?, status=?, "
+                "revision=revision+1, updated_at=?, updated_by_user_id=? "
+                "WHERE package_id=?",
+                (version_id, PACKAGE_STATUS_PUBLISHED, now, principal.user_id,
+                 package_id))
+        record_admin_action(
+            principal, "package.version_publish", target_type="package",
+            target_id=package_id,
+            # Les numeros, jamais le contenu : un journal qui recopierait un
+            # dictionnaire entier a chaque publication cesserait d'etre lisible,
+            # et porterait du contenu qu'il n'a pas a porter.
+            metadata={"package_type": package["package_type"],
+                      "version": row["version_number"],
+                      "activated": bool(body.activate)}, conn=conn)
+        return package_view(conn, package_row(conn, organization_id, package_id))
+
+
+@app.post("/api/control/organizations/{organization_id}/packages/{package_id}"
+          "/versions/{version_id}/activate")
+def control_activate_version(
+    organization_id: str,
+    package_id: str,
+    version_id: str,
+    principal: AdminPrincipal = Depends(
+        require_admin_capability(CAPABILITY_CONTENT_MANAGE)),
+):
+    """Change la version active — c'est aussi le retour arriere.
+
+    Revenir a v1 ne reecrit pas v1 : l'active redesigne une version restee
+    intacte. Il n'y a donc pas deux mecanismes, un pour avancer et un pour
+    reculer, mais un seul pointeur.
+    """
+    require_package_organization(principal, organization_id)
+    with db() as conn:
+        package = package_row(conn, organization_id, package_id)
+        row = package_version_row(conn, organization_id, version_id)
+        if package is None or row is None or row["package_id"] != package_id:
+            raise auth_error(404, "PACKAGE_NOT_FOUND")
+        if row["status"] != VERSION_STATUS_PUBLISHED:
+            raise auth_error(409, "PACKAGE_VERSION_NOT_PUBLISHED")
+
+        previous = package["active_version_id"]
+        if previous == version_id:
+            return package_view(conn, package)
+        previous_number = None
+        if previous:
+            earlier = package_version_row(conn, organization_id, previous)
+            previous_number = earlier["version_number"] if earlier else None
+        now = time.time()
+        conn.execute(
+            "UPDATE organization_packages SET active_version_id=?, status=?, "
+            "revision=revision+1, updated_at=?, updated_by_user_id=? "
+            "WHERE package_id=?",
+            (version_id, PACKAGE_STATUS_PUBLISHED, now, principal.user_id, package_id))
+        rollback = previous_number is not None and row["version_number"] < previous_number
+        record_admin_action(
+            principal,
+            "package.version_rollback" if rollback else "package.version_activate",
+            target_type="package", target_id=package_id,
+            metadata={"package_type": package["package_type"],
+                      "old_version": previous_number,
+                      "new_version": row["version_number"]}, conn=conn)
+        return package_view(conn, package_row(conn, organization_id, package_id))
+
+
+@app.post("/api/control/organizations/{organization_id}/packages/{package_id}/archive")
+def control_archive_package(
+    organization_id: str,
+    package_id: str,
+    principal: AdminPrincipal = Depends(
+        require_admin_capability(CAPABILITY_CONTENT_MANAGE)),
+):
+    """Retire le package de la distribution, sans rien effacer.
+
+    Archiver plutot que supprimer : les versions restent lisibles, et un retour
+    en arriere ne demande pas de tout ressaisir. C'est le meme choix qu'en
+    Phase 22 pour les fournisseurs d'identite.
+    """
+    require_package_organization(principal, organization_id)
+    with db() as conn:
+        package = package_row(conn, organization_id, package_id)
+        if package is None:
+            raise auth_error(404, "PACKAGE_NOT_FOUND")
+        now = time.time()
+        conn.execute(
+            "UPDATE organization_packages SET status=?, active_version_id=NULL, "
+            "revision=revision+1, updated_at=?, updated_by_user_id=? "
+            "WHERE package_id=?",
+            (PACKAGE_STATUS_ARCHIVED, now, principal.user_id, package_id))
+        record_admin_action(
+            principal, "package.archive", target_type="package", target_id=package_id,
+            metadata={"package_type": package["package_type"]}, conn=conn)
+        return package_view(conn, package_row(conn, organization_id, package_id))
+
+
+@app.post("/api/control/organizations/{organization_id}/packages/{package_id}/restore")
+def control_restore_package(
+    organization_id: str,
+    package_id: str,
+    principal: AdminPrincipal = Depends(
+        require_admin_capability(CAPABILITY_CONTENT_MANAGE)),
+):
+    """Sort un package de l'archive.
+
+    Archiver n'efface rien — c'etait le principe. Encore fallait-il pouvoir
+    revenir, sans quoi « archiver plutot que supprimer » etait une promesse que
+    le produit ne tenait pas : un clic malencontreux devenait definitif.
+
+    Le package repart en brouillon, pas en publie : sortir de l'archive ne doit
+    pas redistribuer du contenu a l'improviste. C'est un geste separe —
+    reactiver une version — et il merite de le rester.
+    """
+    require_package_organization(principal, organization_id)
+    with db() as conn:
+        package = package_row(conn, organization_id, package_id)
+        if package is None:
+            raise auth_error(404, "PACKAGE_NOT_FOUND")
+        if package["status"] != PACKAGE_STATUS_ARCHIVED:
+            raise auth_error(409, "PACKAGE_NOT_ARCHIVED")
+        now = time.time()
+        conn.execute(
+            "UPDATE organization_packages SET status=?, revision=revision+1, "
+            "updated_at=?, updated_by_user_id=? WHERE package_id=?",
+            (PACKAGE_STATUS_DRAFT, now, principal.user_id, package_id))
+        record_admin_action(
+            principal, "package.restore", target_type="package",
+            target_id=package_id,
+            metadata={"package_type": package["package_type"]}, conn=conn)
+        return package_view(conn, package_row(conn, organization_id, package_id))
+
+
+# ─────────────────── Packages : distribution aux membres ──────────────────
+
+
+# Quelle policy gouverne quel type. Un package actif dont la policy est fermee
+# n'est **pas** distribue : le contenu existe, la permission non.
+# Ce sont les noms **du serveur** — `styles`, pas `writingStyles` : le poste
+# rebaptise certaines capacites, et confondre les deux vocabulaires ferait
+# passer une faute de frappe pour un refus de policy.
+POLICY_BY_PACKAGE_TYPE = {
+    PACKAGE_TYPE_STYLE: "styles",
+    PACKAGE_TYPE_AI_SKILL: "aiSkills",
+    PACKAGE_TYPE_VOCABULARY: "dictionary",
+}
+
+
+def effective_packages(organization_id: str) -> dict:
+    """Ce qu'un membre recoit : les versions actives, filtrees par les policies.
+
+    Jamais un brouillon, jamais une version publiee mais inactive, jamais un
+    package archive. Ce que l'organisation n'a pas decide de distribuer ne
+    quitte pas la console.
+    """
+    capabilities = public_campus_config(organization_id)["capabilities"]
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT p.package_id, p.package_type, p.name, p.description, "
+            "v.version_id, v.version_number, v.schema_version, v.content, "
+            "v.content_hash, v.published_at "
+            "FROM organization_packages p "
+            "JOIN organization_package_versions v ON v.version_id=p.active_version_id "
+            "WHERE p.organization_id=? AND p.status=? AND v.status=? "
+            "ORDER BY p.package_type, p.name",
+            (organization_id, PACKAGE_STATUS_PUBLISHED, VERSION_STATUS_PUBLISHED),
+        ).fetchall()
+
+    packages = []
+    for row in rows:
+        capability = POLICY_BY_PACKAGE_TYPE.get(row["package_type"])
+        if capability is not None:
+            if capability not in capabilities:
+                # Une capacite mal nommee ferait taire la distribution en
+                # silence, exactement comme un refus de policy. Mieux vaut une
+                # panne bruyante qu'un contenu qui n'arrive jamais sans que
+                # personne ne sache pourquoi.
+                raise RuntimeError(
+                    f"capacite inconnue pour le type {row['package_type']}: "
+                    f"{capability}")
+            if not capabilities[capability]:
+                continue
+        packages.append({
+            # Prefixe : un Style d'organisation ne doit jamais pouvoir se
+            # confondre avec un preset integre ni avec un Style personnel.
+            "id": package_identifier(row["package_type"], row["package_id"]),
+            "package_id": row["package_id"],
+            "type": row["package_type"],
+            "name": row["name"],
+            "description": row["description"],
+            "version": row["version_number"],
+            "schema_version": row["schema_version"],
+            "content_hash": row["content_hash"],
+            "content": json.loads(row["content"]),
+        })
+
+    # Empreinte de l'ensemble distribue. Le poste sait ainsi qu'il detient deja
+    # la bonne chose, sans comparer chaque document — et sans qu'aucune
+    # infrastructure de cache n'ait a etre construite.
+    fingerprint = hashlib.sha256(
+        "|".join(f"{p['package_id']}:{p['version']}:{p['content_hash']}"
+                 for p in packages).encode("utf-8")
+    ).hexdigest()
+    return {"packages": packages, "catalog_version": fingerprint}
+
+
+@app.get("/api/organization/packages")
+def member_read_packages(response: Response, account=Depends(current_account),
+                         if_none_match: str = Header(default="")):
+    """Le contenu distribue au membre connecte.
+
+    L'organisation vient du **compte**, jamais d'un parametre : accepter un
+    identifiant du client ferait de cette route un moyen de lire le contenu
+    d'une autre organisation en changeant une chaine dans l'URL.
+
+    `ETag` et `304` evitent de retelecharger un catalogue inchange. C'est tout
+    ce qu'il faut ici : un poste demande rarement, et le contenu est petit.
+    """
+    organization_id = (
+        account["organization_id"] if account is not None else None
+    ) or nova_organization_id()
+    catalog = effective_packages(organization_id)
+    etag = f'W/"{catalog["catalog_version"]}"'
+    response.headers["ETag"] = etag
+    if if_none_match.strip() == etag:
+        return Response(status_code=304, headers={"ETag": etag})
+    return catalog
+
+
 @app.get("/api/organization/policy")
 def member_read_policy(account=Depends(current_account)):
     """La policy applicable au membre connecte.
@@ -5837,12 +6837,66 @@ def clean_required(value: str, field: str, limit: int = 4000) -> str:
         raise HTTPException(400, f"{field} est trop long")
     return cleaned
 
-def writing_context(user: str) -> tuple[str, list[sqlite3.Row]]:
-    """Return a compact prompt addition and snippets without storing content."""
+def account_organization(account) -> str:
+    """L'organisation d'un compte, jamais celle que le client annoncerait."""
+    return (account["organization_id"] if account is not None else None
+            ) or nova_organization_id()
+
+
+def organization_vocabulary(organization_id: str) -> list[dict]:
+    """Le vocabulaire distribue par l'organisation, s'il y en a un.
+
+    Passe par le catalogue effectif : une policy fermee ou un package archive
+    n'arrive donc pas ici, sans que cette fonction ait a s'en souvenir.
+    """
+    entries = []
+    for package in effective_packages(organization_id)["packages"]:
+        if package["type"] != PACKAGE_TYPE_VOCABULARY:
+            continue
+        entries.extend(package["content"].get("entries", []))
+    return entries
+
+
+def legacy_shared_vocabulary(conn) -> list:
+    """Le vocabulaire partage historique — **mode dedie uniquement**.
+
+    `shared_dictionary` n'a jamais porte de colonne `organization_id`. En mode
+    dedie, une instance sert une seule organisation : la table lui appartient
+    donc entierement, et la lire est sans risque.
+
+    En mode Control Plane, elle appartiendrait a tout le monde a la fois. La
+    lire y ferait recevoir a chaque organisation le vocabulaire de ses voisines
+    — une fuite silencieuse, d'autant plus difficile a voir qu'elle produirait
+    seulement des remplacements inattendus.
+
+    D'ou ce refus explicite plutot qu'une migration : deplacer ces entrees vers
+    un package changerait leur comportement sans que personne ne l'ait demande,
+    et la bonne trajectoire est qu'une organisation publie son propre package.
+    """
+    if NOVA_SERVER_MODE != SERVER_MODE_DEDICATED:
+        return []
+    return conn.execute(
+        "SELECT term,replacement FROM shared_dictionary ORDER BY term LIMIT 200"
+    ).fetchall()
+
+
+def writing_context(user: str, organization_id: str | None = None
+                    ) -> tuple[str, list[sqlite3.Row]]:
+    """Return a compact prompt addition and snippets without storing content.
+
+    ## Ordre de composition du vocabulaire
+
+        heritage partage  →  package d'organisation  →  personnel
+
+    **La personne l'emporte en cas de collision.** Un membre qui a corrige un
+    terme pour son propre usage l'a fait en connaissance de cause ; le lui
+    reprendre a la prochaine publication serait un contenu qui se defait tout
+    seul. L'organisation fournit une base, elle ne reecrit pas les choix
+    individuels.
+    """
+    organization_id = organization_id or nova_organization_id()
     with db() as conn:
-        shared = conn.execute(
-            "SELECT term,replacement FROM shared_dictionary ORDER BY term LIMIT 200"
-        ).fetchall()
+        shared = legacy_shared_vocabulary(conn)
         personal = conn.execute(
             "SELECT term,replacement FROM personal_dictionary WHERE email=? "
             "ORDER BY term LIMIT 200", (user,)
@@ -5854,7 +6908,18 @@ def writing_context(user: str) -> tuple[str, list[sqlite3.Row]]:
         snippets = conn.execute(
             "SELECT trigger,content FROM snippets WHERE email=? ORDER BY trigger", (user,)
         ).fetchall()
-    vocabulary = [*shared, *personal]
+    # Un dictionnaire plutot qu'une concatenation : sans lui, un terme present
+    # dans deux sources apparaitrait deux fois dans la consigne, avec deux
+    # remplacements differents — et le modele choisirait.
+    merged = {}
+    for row in shared:
+        merged[row["term"].casefold()] = (row["term"], row["replacement"])
+    for entry in organization_vocabulary(organization_id):
+        merged[entry["term"].casefold()] = (entry["term"], entry["replacement"])
+    for row in personal:
+        merged[row["term"].casefold()] = (row["term"], row["replacement"])
+    vocabulary = [{"term": term, "replacement": replacement}
+                  for term, replacement in merged.values()]
     additions = []
     if vocabulary:
         additions.append(
@@ -6187,8 +7252,11 @@ async def llm_complete(system_prompt: str, text: str) -> str:
 
 # --- reformulation (proxy vers LLM, API OpenAI-compatible)
 @app.post("/api/reformulate")
-async def reformulate(body: ReformulateRequest, user: str = Depends(current_user)):
-    context, snippets = writing_context(user)
+async def reformulate(body: ReformulateRequest, user: str = Depends(current_user),
+                      account=Depends(current_account)):
+    # L'organisation vient du compte : en multi-tenant, l'organisation active de
+    # l'instance ne serait pas forcement la sienne.
+    context, snippets = writing_context(user, account_organization(account))
     source_text = apply_snippets(body.text, snippets)
     system_prompt = body.style_prompt
     if context:
@@ -6203,9 +7271,55 @@ async def command(body: CommandRequest, user: str = Depends(current_user)):
     system_prompt = command_prompt(instruction, vocabulary_context(user))
     return {"text": await llm_complete(system_prompt, body.text)}
 
+class SkillRunRequest(BaseModel):
+    skill_id: str
+    text: str
+
+
+@app.post("/api/skills/run",
+          dependencies=[Depends(product_capability("aiSkills", "ai_skills"))])
+async def run_skill(body: SkillRunRequest, user: str = Depends(current_user),
+                    account=Depends(current_account)):
+    """Execute un AI Skill publie par l'organisation.
+
+    ## Une route distincte, le meme moteur
+
+    `/api/command` fait deja exactement ce travail — une instruction, un texte,
+    le modele. Mais elle est gouvernee par `voice_commands_enabled`, et y faire
+    passer les AI Skills aurait couple deux policies : fermer les commandes
+    vocales aurait ferme les Skills, sans que personne ne l'ait demande.
+
+    D'ou une route qui reutilise `llm_complete` et `command_prompt`, et ne
+    differe que par son autorisation — le meme choix qu'entre `/api/transcribe`
+    et `/api/import/transcribe`.
+
+    ## L'instruction vient du package, jamais du client
+
+    Le poste envoie un **identifiant** et le texte a traiter. S'il envoyait
+    l'instruction, n'importe qui pourrait faire executer n'importe quoi au
+    modele en se reclamant d'un Skill — et le catalogue publie ne serait plus
+    qu'une suggestion.
+    """
+    organization_id = account_organization(account)
+    instruction = None
+    for package in effective_packages(organization_id)["packages"]:
+        if package["type"] == PACKAGE_TYPE_AI_SKILL and package["id"] == body.skill_id:
+            instruction = package["content"].get("instruction")
+            break
+    if not instruction:
+        # Indistinguable d'un identifiant faux : un membre n'a pas a decouvrir
+        # ce que son organisation prepare sans l'avoir publie.
+        raise auth_error(404, "SKILL_NOT_AVAILABLE")
+
+    system_prompt = command_prompt(instruction, vocabulary_context(user))
+    return {"text": await llm_complete(system_prompt, body.text),
+            "skill_id": body.skill_id}
+
+
 @app.post("/api/engineering-notes", dependencies=[Depends(product_capability("engineeringNotes", "engineering_notes"))])
-async def engineering_notes(body: CommandRequest, user: str = Depends(current_user)):
-    context, snippets = writing_context(user)
+async def engineering_notes(body: CommandRequest, user: str = Depends(current_user),
+                            account=Depends(current_account)):
+    context, snippets = writing_context(user, account_organization(account))
     source_text = apply_snippets(body.text, snippets)
     prompt = (
         "Transform the raw engineering dictation into concise sections: Observation, "

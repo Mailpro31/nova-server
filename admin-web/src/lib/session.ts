@@ -84,6 +84,10 @@ export const CAPABILITY = {
   // gouverner ce que l'organisation offre a ses membres n'est ni gerer
   // des personnes, ni administrer la machine.
   policyManage: "policy_manage",
+  // Preparer et publier le contenu distribue. Une seule capacite pour les
+  // trois types : une par type ferait grossir la matrice sans repondre a
+  // une question differente.
+  contentManage: "content_manage",
 } as const;
 
 /** Secondes restantes avant expiration, jamais négatives. */
