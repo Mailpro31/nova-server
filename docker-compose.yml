@@ -78,6 +78,10 @@ services:
       NOVA_CONNECTOR_STATE: "/data/connector-state.json"
       NOVA_CONNECTOR_LOCAL_TRANSPORT: "unix"
       NOVA_CONNECTOR_LOCAL_SOCKET: "/run/nova/control.sock"
+      # Un conteneur ne remplace pas sa propre image. Le declarer fait que ce
+      # Connector annonce `connector_orchestrator_update_v1` : Nova sait qu'une
+      # mise a jour est possible, et qu'elle appartient a ce deploiement.
+      NOVA_CONNECTOR_DISTRIBUTION: "docker"
       # Injecte par le mecanisme de secrets du deploiement de preference : le
       # credential n'a alors pas a etre pose sur le disque. Il se fait tourner
       # depuis Nova Admin, sans re-enroler ce Connector.

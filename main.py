@@ -30,6 +30,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
+import connector_release
 from ai_runtime import (
     AI_MODEL_NOT_READY,
     AI_RUNTIME_BUSY,
@@ -575,6 +576,21 @@ def init_db():
             rotation_requested_at REAL,
             last_rotated_at REAL
         );
+        -- Les releases publiees du Connector. Le manifeste et sa signature
+        -- sont conserves tels quels : une release publiee est immuable, et
+        -- reecrire son contenu sous la meme version rendrait toute
+        -- verification d'empreinte caduque.
+        CREATE TABLE IF NOT EXISTS connector_releases(
+            release_id TEXT PRIMARY KEY,
+            connector_version TEXT NOT NULL UNIQUE,
+            protocol_version INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'draft',
+            manifest TEXT NOT NULL,
+            signature TEXT NOT NULL,
+            released_at REAL NOT NULL,
+            created_by_user_id TEXT,
+            revoked_at REAL
+        );
         CREATE INDEX IF NOT EXISTS idx_connectors_org
             ON connectors(organization_id);
         CREATE UNIQUE INDEX IF NOT EXISTS idx_connectors_credential
@@ -870,6 +886,15 @@ def migrate_schema(conn):
             "rotation_state": "TEXT NOT NULL DEFAULT 'stable'",
             "rotation_requested_at": "REAL",
             "last_rotated_at": "REAL",
+            "platform_os": "TEXT",
+            "platform_arch": "TEXT",
+            "distribution_mode": "TEXT",
+            "update_state": "TEXT NOT NULL DEFAULT 'up_to_date'",
+            "update_policy": "TEXT NOT NULL DEFAULT 'manual'",
+            "target_version": "TEXT",
+            "last_known_good_version": "TEXT",
+            "last_update_at": "REAL",
+            "last_update_error": "TEXT",
         }.items():
             if column not in connector_columns:
                 conn.execute(f"ALTER TABLE connectors ADD COLUMN {column} {definition}")
@@ -6037,8 +6062,32 @@ CONNECTOR_KNOWN_CAPABILITIES = frozenset(
         # conduire : la console dira « re-enroler » plutot que d'emettre un
         # ordre dans le vide.
         "credential_rotation_v1",
+        # Deux mecanismes, deux contrats. `self` sait conduire sa propre
+        # bascule ; `orchestrator` sait qu'une mise a jour existe mais qu'elle
+        # appartient au deploiement. Les confondre ferait envoyer un ordre
+        # d'auto-mise a jour a un conteneur, qui ne peut pas remplacer sa
+        # propre image.
+        "connector_update_v1",
+        "connector_self_update_v1",
+        "connector_orchestrator_update_v1",
     }
 )
+CONNECTOR_UPDATE_CAPABILITY = "connector_update_v1"
+CONNECTOR_SELF_UPDATE_CAPABILITY = "connector_self_update_v1"
+CONNECTOR_ORCHESTRATOR_UPDATE_CAPABILITY = "connector_orchestrator_update_v1"
+
+
+def update_mechanism(capabilities: set[str]) -> str:
+    """Qui applique la bascule sur ce deploiement.
+
+    `none` n'est pas une erreur : un Connector d'avant cette phase ne declare
+    aucun des deux, et la console doit le dire plutot que de supposer.
+    """
+    if CONNECTOR_SELF_UPDATE_CAPABILITY in capabilities:
+        return "self"
+    if CONNECTOR_ORCHESTRATOR_UPDATE_CAPABILITY in capabilities:
+        return "external"
+    return "none"
 CONNECTOR_ROTATION_CAPABILITY = "credential_rotation_v1"
 
 # La fenetre pendant laquelle l'ancien et le nouveau credential sont acceptes.
@@ -6297,6 +6346,26 @@ def connector_view(row) -> dict:
         # L'age du credential et l'etat de la bascule. Ni empreinte, ni
         # fragment de secret : rien de tout cela n'aiderait a exploiter la
         # console, et tout cela aiderait a exploiter une fuite.
+        "platform": {
+            "os": row["platform_os"],
+            "arch": row["platform_arch"],
+            "distribution": row["distribution_mode"],
+            # Un conteneur ne remplace pas sa propre image. Le dire ici evite
+            # d'offrir un bouton qui echouerait a chaque fois.
+            "self_update_supported": CONNECTOR_SELF_UPDATE_CAPABILITY in capabilities,
+            "update_mechanism": update_mechanism(set(capabilities)),
+        },
+        "update": {
+            "state": row["update_state"],
+            "policy": row["update_policy"],
+            "target_version": row["target_version"],
+            "last_known_good_version": row["last_known_good_version"],
+            "last_update_at": row["last_update_at"],
+            "last_error_code": row["last_update_error"],
+            "support_status": connector_support_status(row["connector_version"]),
+            "recommended_version": recommended_connector_version(),
+            "minimum_supported_version": minimum_supported_connector_version(),
+        },
         "credential": {
             "generation": row["credential_generation"],
             "created_at": row["credential_created_at"] or row["created_at"],
@@ -6541,6 +6610,14 @@ class ConnectorHealthBody(BaseModel):
     last_error_code: str | None = Field(default=None, max_length=64)
 
 
+class ConnectorPlatformBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    os: str = Field(default="", max_length=32)
+    arch: str = Field(default="", max_length=32)
+    distribution: str = Field(default="", max_length=32)
+
+
 class ConnectorSyncBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -6554,6 +6631,11 @@ class ConnectorSyncBody(BaseModel):
     apply_status: str = Field(default=APPLY_STATUS_PENDING, max_length=32)
     last_error_code: str | None = Field(default=None, max_length=64)
     health: ConnectorHealthBody | None = None
+    # Ce sur quoi ce Connector tourne, tel qu'il le declare. Sert a ne lui
+    # proposer qu'un artefact installable chez lui, jamais a lui accorder quoi
+    # que ce soit : l'autorisation vient toujours du credential.
+    platform: ConnectorPlatformBody | None = None
+    update_state: str = Field(default="up_to_date", max_length=32)
     # Horodatage local, purement indicatif. L'autorite temporelle est le
     # serveur : l'horloge d'une machine distante n'engage personne.
     local_time: float | None = None
@@ -6654,6 +6736,12 @@ def connector_sync(
     organization_id = principal.organization_id
     capabilities = validated_capabilities(body.capabilities)
     health = body.health.model_dump() if body.health else None
+    reported_platform = body.platform.model_dump() if body.platform else {}
+    update_state = (
+        body.update_state
+        if body.update_state in connector_release.UPDATE_STATES
+        else connector_release.UPDATE_UP_TO_DATE
+    )
 
     desired = None
     if "ai_runtime_config_v1" in capabilities:
@@ -6678,11 +6766,17 @@ def connector_sync(
         if desired is not None:
             delivered = max(delivered, int(desired["revision"]))
 
+        # Une intention satisfaite s'efface : garder `target_version` apres la
+        # bascule ferait croire a une mise a jour perpetuellement en cours.
+        target = current["target_version"]
+        if target and body.connector_version == target:
+            target = None
         conn.execute(
             "UPDATE connectors SET protocol_version=?, connector_version=?, "
             "server_version=?, capabilities=?, runtime_state=?, applied_revision=?, "
-            "delivered_revision=?, apply_status=?, last_error_code=?, last_seen_at=? "
-            "WHERE connector_id=?",
+            "delivered_revision=?, apply_status=?, last_error_code=?, last_seen_at=?, "
+            "platform_os=?, platform_arch=?, distribution_mode=?, update_state=?, "
+            "target_version=? WHERE connector_id=?",
             (
                 body.protocol_version,
                 body.connector_version,
@@ -6694,6 +6788,11 @@ def connector_sync(
                 apply_status,
                 body.last_error_code,
                 now,
+                reported_platform.get("os"),
+                reported_platform.get("arch"),
+                reported_platform.get("distribution"),
+                update_state,
+                target,
                 principal.connector_id,
             ),
         )
@@ -6731,6 +6830,11 @@ def connector_sync(
         # il conduit la rotation, et c'est lui qui recevra le nouveau
         # credential — jamais la console.
         "rotation_requested": rotation_requested,
+        # Une intention typee : une version, jamais une commande.
+        "update": connector_update_payload(current)
+        if CONNECTOR_UPDATE_CAPABILITY in capabilities
+        else {},
+        "update_mechanism": update_mechanism(set(capabilities)),
         # Les seules operations que ce protocole connait. Il n'y a pas de
         # commande generique, et il ne doit pas y en avoir.
         "supported_operations": ["apply_ai_runtime_config", "report_health"],
@@ -6767,6 +6871,311 @@ def sync_connector_state_into_config(
             organization_id,
         ),
     )
+
+
+# ── Distribution du Connector ────────────────────────────────────────────
+#
+# Le plan de controle annonce une **intention** : « passe a telle version ».
+# Il n'envoie jamais de commande, de chemin d'executable ni d'argument. Le
+# Connector sait comment se mettre a jour ; un canal capable de le lui dicter
+# serait un shell distant sous un autre nom.
+#
+# Il ne transporte pas non plus l'artefact : le binaire passe par la source de
+# distribution, verifie par signature et par empreinte. Le faire transiter par
+# la synchronisation melangerait le plan de controle et la chaine
+# d'approvisionnement.
+
+# Racine de confiance : la cle publique dont les releases doivent porter la
+# signature. Sans elle, le plan de controle refuse de publier — accepter « en
+# attendant » ouvrirait exactement ce que cette verification protege.
+NOVA_CONNECTOR_RELEASE_PUBLIC_KEY = os.getenv(
+    "NOVA_CONNECTOR_RELEASE_PUBLIC_KEY", ""
+).strip()
+
+
+def published_releases() -> list[dict]:
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM connector_releases WHERE status=? ORDER BY released_at DESC",
+            (connector_release.RELEASE_PUBLISHED,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def recommended_connector_version() -> str | None:
+    """La version publiee la plus recente, par ordre de version — pas de date.
+
+    Publier une correction ancienne apres une version majeure ne doit pas faire
+    reculer tout un parc.
+    """
+    best = None
+    for row in published_releases():
+        try:
+            if best is None or connector_release.is_newer(
+                row["connector_version"], best
+            ):
+                best = row["connector_version"]
+        except connector_release.UpdateError:
+            continue
+    return best
+
+
+def minimum_supported_connector_version() -> str:
+    return os.getenv("NOVA_CONNECTOR_MINIMUM_VERSION", "0.0.0")
+
+
+def connector_support_status(version: str | None) -> str:
+    """Supporte, obsolete, ou trop ancien — sans jamais couper le plan local.
+
+    Un Connector sous le minimum est signale, pas debranche : couper la
+    synchronisation le priverait de la mise a jour qui le remettrait a niveau.
+    """
+    if not version:
+        return "unknown"
+    try:
+        if connector_release.is_newer(minimum_supported_connector_version(), version):
+            return "unsupported"
+        recommended = recommended_connector_version()
+        if recommended and connector_release.is_newer(recommended, version):
+            return "update_available"
+    except connector_release.UpdateError:
+        return "unknown"
+    return "up_to_date"
+
+
+class ConnectorReleaseBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # Le manifeste tel qu'il a ete signe, octet pour octet. Le re-serialiser
+    # invaliderait la signature.
+    manifest: str = Field(min_length=2, max_length=connector_release.MAX_MANIFEST_BYTES)
+    signature: str = Field(min_length=16, max_length=512)
+
+
+@app.post("/api/control/connector-releases")
+def control_publish_connector_release(
+    body: ConnectorReleaseBody,
+    principal: AdminPrincipal = Depends(
+        require_admin_capability(CAPABILITY_DEPLOYMENT_MANAGE)
+    ),
+):
+    """Enregistre une release, apres avoir verifie sa signature.
+
+    Le plan de controle ne stocke jamais une release non signee : s'il le
+    faisait, la verification cote Connector deviendrait la seule barriere, et
+    un plan de controle compromis suffirait a distribuer n'importe quoi.
+    """
+    try:
+        manifest = connector_release.verify_manifest(
+            body.manifest.encode("utf-8"),
+            bytes.fromhex(body.signature.strip()),
+            NOVA_CONNECTOR_RELEASE_PUBLIC_KEY,
+        )
+    except ValueError as error:
+        raise auth_error(400, connector_release.UPDATE_SIGNATURE_INVALID) from error
+    except connector_release.UpdateError as error:
+        raise auth_error(400, error.code) from error
+
+    now = time.time()
+    release_id = uuid.uuid4().hex
+    with db() as conn:
+        existing = conn.execute(
+            "SELECT * FROM connector_releases WHERE connector_version=?",
+            (manifest.connector_version,),
+        ).fetchone()
+        if existing is not None:
+            # Une release publiee est immuable. Corriger un artefact se fait en
+            # publiant une nouvelle version, jamais en changeant le contenu
+            # d'une version deja distribuee.
+            raise auth_error(409, "CONNECTOR_RELEASE_IMMUTABLE")
+        conn.execute(
+            "INSERT INTO connector_releases(release_id, connector_version, "
+            "protocol_version, status, manifest, signature, released_at, "
+            "created_by_user_id) VALUES (?,?,?,?,?,?,?,?)",
+            (
+                release_id,
+                manifest.connector_version,
+                manifest.protocol_version,
+                manifest.status,
+                body.manifest,
+                body.signature.strip(),
+                now,
+                principal.user_id,
+            ),
+        )
+        record_admin_action(
+            principal,
+            "connector.release.publish",
+            target_type="connector_release",
+            target_id=release_id,
+            metadata={"version": manifest.connector_version, "status": manifest.status},
+            conn=conn,
+        )
+    return connector_release_view(release_id)
+
+
+def connector_release_view(release_id: str) -> dict:
+    with db() as conn:
+        row = conn.execute(
+            "SELECT * FROM connector_releases WHERE release_id=?", (release_id,)
+        ).fetchone()
+    if row is None:
+        raise auth_error(404, "CONNECTOR_RELEASE_NOT_FOUND")
+    # Ni manifeste complet, ni signature : la console n'a pas a les porter, et
+    # les afficher inviterait a les recopier ailleurs.
+    return {
+        "release_id": row["release_id"],
+        "connector_version": row["connector_version"],
+        "protocol_version": row["protocol_version"],
+        "status": row["status"],
+        "released_at": row["released_at"],
+        "revoked_at": row["revoked_at"],
+    }
+
+
+@app.get("/api/control/connector-releases")
+def control_list_connector_releases(
+    principal: AdminPrincipal = Depends(
+        require_admin_capability(CAPABILITY_DIAGNOSTICS_READ)
+    ),
+):
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT release_id FROM connector_releases ORDER BY released_at DESC"
+        ).fetchall()
+    return {
+        "releases": [connector_release_view(row["release_id"]) for row in rows],
+        "recommended_version": recommended_connector_version(),
+        "minimum_supported_version": minimum_supported_connector_version(),
+        "trust_root_configured": bool(NOVA_CONNECTOR_RELEASE_PUBLIC_KEY),
+    }
+
+
+@app.post("/api/control/connector-releases/{release_id}/revoke")
+def control_revoke_connector_release(
+    release_id: str,
+    principal: AdminPrincipal = Depends(
+        require_admin_capability(CAPABILITY_DEPLOYMENT_MANAGE)
+    ),
+):
+    """Retire une release de la distribution.
+
+    Elle cesse d'etre installable. Les Connectors qui la portent deja ne sont
+    pas coupes : les debrancher ferait d'un probleme de chaine
+    d'approvisionnement une panne de service.
+    """
+    with db() as conn:
+        row = conn.execute(
+            "SELECT * FROM connector_releases WHERE release_id=?", (release_id,)
+        ).fetchone()
+        if row is None:
+            raise auth_error(404, "CONNECTOR_RELEASE_NOT_FOUND")
+        conn.execute(
+            "UPDATE connector_releases SET status=?, revoked_at=? WHERE release_id=?",
+            (connector_release.RELEASE_REVOKED, time.time(), release_id),
+        )
+        record_admin_action(
+            principal,
+            "connector.release.revoke",
+            target_type="connector_release",
+            target_id=release_id,
+            metadata={"version": row["connector_version"]},
+            conn=conn,
+        )
+    return connector_release_view(release_id)
+
+
+class ConnectorUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # Une version, et rien d'autre. Ni commande, ni chemin, ni argument.
+    target_version: str = Field(min_length=5, max_length=32)
+
+
+@app.post("/api/control/connectors/{connector_id}/update")
+def control_request_connector_update(
+    connector_id: str,
+    body: ConnectorUpdateRequest,
+    principal: AdminPrincipal = Depends(
+        require_admin_capability(CAPABILITY_DEPLOYMENT_MANAGE)
+    ),
+):
+    """Demande une mise a jour. Intention typee, jamais une commande."""
+    with db() as conn:
+        row = conn.execute(
+            "SELECT * FROM connectors WHERE connector_id=? AND organization_id=?",
+            (connector_id, principal.organization_id),
+        ).fetchone()
+        if row is None:
+            raise auth_error(404, "CONNECTOR_NOT_FOUND")
+        if row["revoked_at"] is not None:
+            raise auth_error(409, "CONNECTOR_REVOKED")
+        try:
+            capabilities = set(json.loads(row["capabilities"] or "[]"))
+        except (ValueError, TypeError):
+            capabilities = set()
+        if CONNECTOR_SELF_UPDATE_CAPABILITY not in capabilities:
+            # P0 : ne jamais envoyer un ordre d'auto-mise a jour a un Connector
+            # qui ne declare pas savoir la conduire. Un conteneur resterait
+            # « en cours de mise a jour » indefiniment, et la console
+            # afficherait une operation qui n'arrivera jamais.
+            raise auth_error(409, "CONNECTOR_UPDATE_NOT_SUPPORTED_HERE")
+
+        release = conn.execute(
+            "SELECT * FROM connector_releases WHERE connector_version=?",
+            (body.target_version.strip(),),
+        ).fetchone()
+        if release is None:
+            raise auth_error(404, "CONNECTOR_RELEASE_NOT_FOUND")
+        if release["status"] != connector_release.RELEASE_PUBLISHED:
+            raise auth_error(409, connector_release.UPDATE_RELEASE_REVOKED)
+        try:
+            if not connector_release.is_newer(
+                release["connector_version"], row["connector_version"] or "0.0.0"
+            ):
+                # Revenir en arriere passe par le retour arriere du Connector,
+                # qui sait vers quelle version saine revenir. Le faire passer
+                # par une demande arbitraire permettrait de rejouer une
+                # ancienne release.
+                raise auth_error(409, connector_release.UPDATE_DOWNGRADE_REFUSED)
+        except connector_release.UpdateError as error:
+            raise auth_error(400, error.code) from error
+
+        conn.execute(
+            "UPDATE connectors SET target_version=?, update_state=? WHERE connector_id=?",
+            (release["connector_version"], connector_release.UPDATE_AVAILABLE, connector_id),
+        )
+        record_admin_action(
+            principal,
+            "connector.update.requested",
+            target_type="connector",
+            target_id=connector_id,
+            metadata={
+                "from_version": row["connector_version"],
+                "to_version": release["connector_version"],
+            },
+            conn=conn,
+        )
+        row = conn.execute(
+            "SELECT * FROM connectors WHERE connector_id=?", (connector_id,)
+        ).fetchone()
+    return connector_view(row)
+
+
+def connector_update_payload(row) -> dict:
+    """Ce que la synchronisation dit d'une mise a jour : une intention.
+
+    Le manifeste n'est pas ici. Le Connector le recupere a la source de
+    distribution et en verifie la signature lui-meme : le plan de controle
+    n'est pas un maillon de la chaine d'approvisionnement.
+    """
+    return {
+        "recommended_version": recommended_connector_version(),
+        "minimum_supported_version": minimum_supported_connector_version(),
+        "support_status": connector_support_status(row["connector_version"]),
+        "requested_version": row["target_version"],
+        "policy": row["update_policy"],
+    }
 
 
 class ConnectorRotateBody(BaseModel):

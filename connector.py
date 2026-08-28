@@ -51,17 +51,39 @@ from urllib.parse import urlparse
 
 import httpx
 
-CONNECTOR_VERSION = "0.1.0"
-PROTOCOL_VERSION = 1
+import connector_release
+
+# Version canonique : une seule source de verite. La recopier ici la ferait
+# diverger du manifeste au premier oubli.
+CONNECTOR_VERSION = connector_release.CONNECTOR_VERSION
+PROTOCOL_VERSION = connector_release.CONNECTOR_PROTOCOL_VERSION
 
 # Ce que ce Connector sait faire. Le plan de controle ne lui enverra rien
 # d'autre : une capacite absente d'ici n'est jamais poussee.
-CAPABILITIES = [
+BASE_CAPABILITIES = [
     "ai_runtime_config_v1",
     "health_reporting_v1",
     "diagnostics_v1",
     "credential_rotation_v1",
 ]
+
+
+def capabilities() -> list[str]:
+    """Les capacites reellement exercables sur ce deploiement.
+
+    Deux contrats, pas une presence et une absence. `package` declare
+    `connector_self_update_v1` : il sait conduire sa propre bascule. `docker`
+    declare `connector_orchestrator_update_v1` : une mise a jour est possible,
+    mais elle appartient a l'orchestrateur. Un conteneur ne remplace pas sa
+    propre image, et la console doit le dire plutot que d'offrir un bouton qui
+    echouerait a chaque fois.
+    """
+    return list(BASE_CAPABILITIES) + connector_release.update_capabilities()
+
+
+# Conserve pour les appelants qui lisent une liste figee ; le calcul ci-dessus
+# reste l'autorite.
+CAPABILITIES = BASE_CAPABILITIES
 
 DEFAULT_HEARTBEAT_SECONDS = 45
 BACKOFF_INITIAL_SECONDS = 5.0
@@ -390,7 +412,7 @@ def enroll(control_plane: str, enrollment_token: str) -> dict:
             "enrollment_token": enrollment_token,
             "protocol_version": PROTOCOL_VERSION,
             "connector_version": CONNECTOR_VERSION,
-            "capabilities": CAPABILITIES,
+            "capabilities": capabilities(),
         },
         timeout=REQUEST_TIMEOUT_SECONDS,
     )
@@ -415,6 +437,212 @@ def enroll(control_plane: str, enrollment_token: str) -> dict:
     return state
 
 
+# ── Mise a jour ──────────────────────────────────────────────────────────
+
+
+def install_base() -> Path:
+    return connector_release.install_root()
+
+
+def fetch_manifest(url: str) -> tuple[bytes, bytes]:
+    """Recupere le manifeste et sa signature depuis la source de distribution.
+
+    Deux fichiers : le manifeste, et sa signature detachee a cote. Le plan de
+    controle n'est pas dans ce chemin — il n'est pas un maillon de la chaine
+    d'approvisionnement.
+    """
+    connector_release.validate_release_url(url)
+    manifest = httpx.get(url, timeout=REQUEST_TIMEOUT_SECONDS, follow_redirects=False)
+    signature = httpx.get(
+        url + ".sig", timeout=REQUEST_TIMEOUT_SECONDS, follow_redirects=False
+    )
+    if manifest.status_code != 200 or signature.status_code != 200:
+        raise connector_release.UpdateError(connector_release.UPDATE_DOWNLOAD_FAILED)
+    return manifest.content, bytes.fromhex(signature.text.strip())
+
+
+def trust_root() -> str:
+    return os.getenv("NOVA_CONNECTOR_RELEASE_PUBLIC_KEY", "").strip()
+
+
+def manifest_url_for(version: str) -> str:
+    """L'adresse du manifeste d'une version, derivee d'une base configuree.
+
+    La base appartient au deploiement. Si le plan de controle pouvait envoyer
+    une adresse, il ferait telecharger et executer du code arbitraire par tous
+    les Connectors d'un tenant.
+    """
+    base = os.getenv("NOVA_CONNECTOR_RELEASE_BASE", "").rstrip("/")
+    if not base:
+        raise connector_release.UpdateError(connector_release.UPDATE_SOURCE_UNTRUSTED)
+    return f"{base}/connector-{version}.json"
+
+
+def start_update(state: dict, target_version: str) -> dict:
+    """Telecharge, verifie, deballe, bascule — puis demande a etre relance.
+
+    Rien n'est active avant que la signature du manifeste et l'empreinte de
+    l'artefact soient toutes deux confirmees. La derniere action de ce
+    processus est de sortir avec un code que le superviseur comprend : c'est la
+    frontiere processus, et elle est reelle.
+    """
+    base = install_base()
+    transaction = connector_release.read_transaction(base)
+
+    if connector_release.blocked_by_cooldown(transaction, target_version):
+        print(f"[connector] {target_version} a echoue recemment — pas de nouvelle tentative", flush=True)
+        return state
+    if pending_credential(state):
+        # Deux machines a etats critiques en meme temps produiraient des
+        # combinaisons que personne n'a raisonnees.
+        print("[connector] rotation en cours — mise a jour differee", flush=True)
+        return {**state, "update_error": connector_release.UPDATE_BLOCKED_BY_ROTATION}
+
+    transaction = connector_release.new_transaction(
+        CONNECTOR_VERSION, target_version, target_version
+    )
+    transaction["attempt_count"] = transaction.get("attempt_count", 0) + 1
+
+    def fail(code: str) -> dict:
+        transaction.update(
+            state=connector_release.UPDATE_FAILED,
+            last_error_code=code,
+            failed_at=time.time(),
+        )
+        connector_release.write_transaction(transaction, base)
+        print(f"[connector] mise a jour refusee : {code}", flush=True)
+        return {**state, "update_error": code}
+
+    try:
+        transaction["state"] = connector_release.UPDATE_VERIFYING
+        connector_release.write_transaction(transaction, base)
+        raw, signature = fetch_manifest(manifest_url_for(target_version))
+        manifest = connector_release.verify_manifest(raw, signature, trust_root())
+        artifact = connector_release.check_installable(
+            manifest, CONNECTOR_VERSION, connector_release.current_platform()
+        )
+
+        transaction["state"] = connector_release.UPDATE_DOWNLOADING
+        connector_release.write_transaction(transaction, base)
+        staged = connector_release.download_artifact(artifact, base / "staging")
+
+        transaction.update(state=connector_release.UPDATE_STAGED, staged_path=str(staged))
+        connector_release.write_transaction(transaction, base)
+
+        transaction["state"] = connector_release.UPDATE_APPLYING
+        connector_release.write_transaction(transaction, base)
+        connector_release.activate(staged, manifest.connector_version, base)
+
+        # Persister AVANT de sortir : si le processus meurt ici, le suivant
+        # retrouve une transaction en `restarting` et sait quoi verifier.
+        transaction["state"] = connector_release.UPDATE_RESTARTING
+        transaction["activated_at"] = time.time()
+        connector_release.write_transaction(transaction, base)
+    except connector_release.UpdateError as error:
+        return fail(error.code)
+
+    print(
+        f"[connector] {CONNECTOR_VERSION} -> {target_version} active, redemarrage",
+        flush=True,
+    )
+    raise SystemExit(connector_release.EXIT_RESTART_FOR_UPDATE)
+
+
+def verify_after_restart(state: dict) -> dict:
+    """Le nouveau processus fait ses preuves, ou rend la main a l'ancien.
+
+    « Le processus a demarre » ne vaut pas « la mise a jour a reussi ». Il faut
+    la bonne version, un credential encore valide, un plan de controle joignable
+    et un canal local qui repond. Sans quoi on revient a la derniere version
+    connue saine — et c'est le nouveau processus qui le decide, parce qu'il est
+    le seul a pouvoir constater son propre echec.
+    """
+    base = install_base()
+    transaction = connector_release.read_transaction(base)
+    if transaction.get("state") != connector_release.UPDATE_RESTARTING:
+        return state
+
+    target = transaction.get("target_version")
+    deadline = time.monotonic() + connector_release.HEALTH_TIMEOUT_SECONDS
+    failure = None
+
+    if CONNECTOR_VERSION != target:
+        # Le superviseur a relance l'ancienne version : la bascule n'a pas pris.
+        failure = "version"
+    else:
+        while time.monotonic() < deadline:
+            local = local_health()
+            try:
+                state, _ = sync_once({**state, "update_state": connector_release.UPDATE_RESTARTING})
+                if local.get("last_error_code") is None:
+                    transaction.update(
+                        state=connector_release.UPDATE_HEALTHY,
+                        completed_at=time.time(),
+                    )
+                    connector_release.write_transaction(transaction, base)
+                    connector_release.prune_versions(
+                        base, (target, transaction.get("previous_version") or "")
+                    )
+                    connector_release.cleanup_staging(base / "staging")
+                    print(f"[connector] mise a jour confirmee : {target}", flush=True)
+                    # Retirer la valeur transitoire : sans cela, elle resterait
+                    # collee dans l'etat et le Connector rapporterait
+                    # « restarting » indefiniment apres une bascule reussie.
+                    # C'est la transaction, desormais `healthy`, qui fait foi.
+                    confirmed = dict(state)
+                    confirmed.pop("update_state", None)
+                    return confirmed
+            except (httpx.HTTPError, ValueError, KeyError):
+                # Nova temporairement injoignable n'est pas une mise a jour
+                # ratee : la sante locale et la reconnexion sont deux signaux
+                # distincts. On reessaie jusqu'au delai.
+                pass
+            time.sleep(2)
+        failure = "health"
+
+    previous = transaction.get("previous_version")
+    transaction.update(
+        state=connector_release.UPDATE_ROLLBACK_IN_PROGRESS,
+        last_error_code=connector_release.UPDATE_HEALTH_FAILED,
+        failed_at=time.time(),
+    )
+    connector_release.write_transaction(transaction, base)
+    print(f"[connector] mise a jour non confirmee ({failure}) — retour a {previous}", flush=True)
+    try:
+        connector_release.rollback(base, previous)
+    except connector_release.UpdateError:
+        transaction["state"] = connector_release.UPDATE_FAILED
+        connector_release.write_transaction(transaction, base)
+        return state
+    transaction["state"] = connector_release.UPDATE_ROLLED_BACK
+    connector_release.write_transaction(transaction, base)
+    raise SystemExit(connector_release.EXIT_RESTART_AFTER_ROLLBACK)
+
+
+def report_update_state() -> str:
+    """L'etat de bascule tel que ce processus le voit, pour le rapport."""
+    transaction = connector_release.read_transaction(install_base())
+    if not transaction:
+        return connector_release.UPDATE_UP_TO_DATE
+    return transaction.get("state", connector_release.UPDATE_UP_TO_DATE)
+
+
+def process_update_intent(state: dict, update: dict) -> dict:
+    """Le point d'insertion : une intention recue, une decision locale.
+
+    En mode `docker`, il n'y a rien a faire ici : le remplacement appartient a
+    l'orchestrateur. Le Connector se contente de rapporter que la cible n'est
+    pas atteinte.
+    """
+    target = (update or {}).get("requested_version")
+    if not target or target == CONNECTOR_VERSION:
+        return state
+    if not connector_release.self_update_supported():
+        print(f"[connector] {target} demandee — remplacement par l'orchestrateur requis", flush=True)
+        return {**state, "external_update_required": target}
+    return start_update(state, target)
+
+
 # ── Boucle de synchronisation ────────────────────────────────────────────
 
 
@@ -431,7 +659,11 @@ def sync_once(state: dict) -> tuple[dict, float]:
         "protocol_version": PROTOCOL_VERSION,
         "connector_version": CONNECTOR_VERSION,
         "server_version": state.get("server_version", ""),
-        "capabilities": CAPABILITIES,
+        "capabilities": capabilities(),
+        # Ce sur quoi ce Connector tourne. Le plan de controle s'en sert pour
+        # ne proposer qu'un artefact reellement installable ici.
+        "platform": connector_release.current_platform(),
+        "update_state": state.get("update_state") or report_update_state(),
         "applied_revision": int(state.get("last_applied_revision", 0)),
         "apply_status": state.get("last_apply_status", APPLY_STATUS_PENDING),
         "last_error_code": state.get("last_error_code"),
@@ -459,8 +691,12 @@ def sync_once(state: dict) -> tuple[dict, float]:
     desired = (answer.get("desired") or {}).get("ai_runtime")
     if desired:
         state = reconcile(state, desired)
+    # La rotation d'abord : une bascule de version pendant une transition de
+    # credential ferait tourner deux machines a etats critiques ensemble.
     if answer.get("rotation_requested"):
         state = rotate_credential(state)
+    elif answer.get("update"):
+        state = process_update_intent(state, answer["update"])
     return state, heartbeat
 
 
@@ -514,6 +750,10 @@ def run() -> int:
         # un etat ambigu ferait osciller les deux secrets.
         print("[connector] reprise d'une rotation interrompue", flush=True)
         state = confirm_rotation(state)
+
+    # Symetrique de la reprise de rotation : une bascule interrompue se termine
+    # avant que la synchronisation ordinaire ne reprenne.
+    state = verify_after_restart(state)
 
     stopping = {"now": False}
 

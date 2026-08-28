@@ -874,6 +874,11 @@ class ConnectorServiceTests(unittest.TestCase):
                 "last_error_code",
                 "health",
                 "local_time",
+                # Phase 35 : de quoi choisir un artefact installable ici, et
+                # ou en est une bascule. Des metadonnees de controle, comme
+                # tout le reste de ce corps.
+                "platform",
+                "update_state",
             },
         )
         blob = json.dumps(captured["body"]).lower()

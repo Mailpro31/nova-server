@@ -34,6 +34,20 @@ const STATUS_TONE: Record<string, "ok" | "warn" | "danger" | undefined> = {
   revoked: undefined,
 };
 
+const SUPPORT_TONE: Record<string, "ok" | "warn" | "danger" | undefined> = {
+  up_to_date: "ok",
+  update_available: "warn",
+  unsupported: "danger",
+  unknown: undefined,
+};
+
+function supportLabel(status: string): string {
+  if (status === "up_to_date") return t.connector.supportUpToDate;
+  if (status === "update_available") return t.connector.supportUpdateAvailable;
+  if (status === "unsupported") return t.connector.supportUnsupported;
+  return t.connector.supportUnknown;
+}
+
 const ROTATION_TONE: Record<string, "ok" | "warn" | "danger" | undefined> = {
   stable: "ok",
   requested: "warn",
@@ -134,6 +148,7 @@ export function PrivateConnector() {
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const [rotating, setRotating] = useState<string | null>(null);
+  const [updating, setUpdating] = useState<string | null>(null);
   // Le code vit dans l'état de ce composant, le temps de l'afficher. Il ne va
   // ni dans le stockage du navigateur, ni dans l'URL.
   const [issued, setIssued] = useState<ConnectorEnrollmentView | null>(null);
@@ -177,6 +192,24 @@ export function PrivateConnector() {
       );
     } finally {
       setRotating(null);
+    }
+  }
+
+  async function requestUpdate(connectorId: string, version: string) {
+    setUpdating(connectorId);
+    setFailure(null);
+    try {
+      await control!.requestConnectorUpdate(connectorId, version);
+      // Re-lecture autoritative : « demande » n'est pas « installe ».
+      retry();
+    } catch (raised) {
+      setFailure(
+        raised instanceof ApiError
+          ? errorMessage(raised.kind, raised.code)
+          : errorMessage("server"),
+      );
+    } finally {
+      setUpdating(null);
     }
   }
 
@@ -227,6 +260,140 @@ export function PrivateConnector() {
                 connector.protocol_version < view.protocol_version && (
                   <Notice>{t.connector.updateRecommended}</Notice>
                 )}
+              {/* Version, plateforme et mise a jour. Ce bloc dit aussi ce
+                  que ce deploiement ne peut PAS faire : un conteneur ne
+                  remplace pas sa propre image. */}
+              <h3 className="policy-group">{t.connector.versionTitle}</h3>
+              <Facts
+                entries={[
+                  [
+                    t.connector.installedVersion,
+                    <span className="mono">
+                      {connector.connector_version ?? t.state.notConfigured}
+                    </span>,
+                  ],
+                  [
+                    t.connector.recommendedVersion,
+                    connector.update.recommended_version ? (
+                      <span className="mono">
+                        {connector.update.recommended_version}
+                      </span>
+                    ) : (
+                      t.state.notConfigured
+                    ),
+                  ],
+                  [
+                    t.connector.minimumVersion,
+                    <span className="mono">
+                      {connector.update.minimum_supported_version}
+                    </span>,
+                  ],
+                  [
+                    t.connector.supportStatus,
+                    <Tag tone={SUPPORT_TONE[connector.update.support_status]}>
+                      {supportLabel(connector.update.support_status)}
+                    </Tag>,
+                  ],
+                  [
+                    t.connector.runsOn,
+                    <span className="mono">
+                      {connector.platform.os ?? "?"}/{connector.platform.arch ?? "?"}
+                    </span>,
+                  ],
+                  [
+                    t.connector.distribution,
+                    <span className="mono">
+                      {connector.platform.distribution ?? t.state.notConfigured}
+                    </span>,
+                  ],
+                  [
+                    t.connector.selfUpdate,
+                    // Pilote par la capacite declaree, jamais deduit de l'OS :
+                    // un meme Linux peut porter les deux mecanismes.
+                    connector.platform.update_mechanism === "self" ? (
+                      <Tag tone="ok">{t.connector.selfUpdateYes}</Tag>
+                    ) : connector.platform.update_mechanism === "external" ? (
+                      <Tag>{t.connector.selfUpdateNo}</Tag>
+                    ) : (
+                      <Tag>{t.connector.selfUpdateUnknown}</Tag>
+                    ),
+                  ],
+                  [
+                    t.connector.updateState,
+                    <span className="mono">{connector.update.state}</span>,
+                  ],
+                  [
+                    t.connector.lastKnownGood,
+                    connector.update.last_known_good_version ? (
+                      <span className="mono">
+                        {connector.update.last_known_good_version}
+                      </span>
+                    ) : (
+                      "\u2014"
+                    ),
+                  ],
+                  [
+                    t.connector.lastUpdate,
+                    connector.update.last_update_at
+                      ? new Date(connector.update.last_update_at * 1000).toLocaleString()
+                      : t.connector.neverUpdated,
+                  ],
+                  [
+                    t.connector.updateError,
+                    connector.update.last_error_code ? (
+                      <span className="mono">{connector.update.last_error_code}</span>
+                    ) : (
+                      "\u2014"
+                    ),
+                  ],
+                ]}
+              />
+              {connector.update.support_status === "unsupported" && (
+                <Notice tone="danger">{t.connector.unsupportedBody}</Notice>
+              )}
+              {/* Ce qui remplace le bouton absent : un etat explicite et une
+                  phrase qui dit quoi faire, plutot qu'un controle qui
+                  echouerait. « Deployment-managed update required » est un
+                  statut, pas une excuse. */}
+              {connector.platform.update_mechanism === "external" &&
+                connector.update.support_status !== "up_to_date" && (
+                  <Notice tone="danger">
+                    {t.connector.externalRequired} — {t.connector.externalBody}
+                  </Notice>
+                )}
+              {connector.platform.update_mechanism === "external" &&
+                connector.update.support_status === "up_to_date" && (
+                  <Notice>{t.connector.selfUpdateBody}</Notice>
+                )}
+              {mayManage &&
+                connector.platform.update_mechanism === "self" &&
+                connector.status !== "revoked" &&
+                connector.update.recommended_version &&
+                connector.update.support_status !== "up_to_date" && (
+                  <>
+                    <p className="policy-hint">{t.connector.updateBody}</p>
+                    <div className="row">
+                      <button
+                        disabled={
+                          busy ||
+                          updating === connector.connector_id ||
+                          connector.update.target_version !== null
+                        }
+                        onClick={() =>
+                          void requestUpdate(
+                            connector.connector_id,
+                            connector.update.recommended_version!,
+                          )
+                        }
+                      >
+                        {updating === connector.connector_id
+                          ? t.connector.requestingUpdate
+                          : `${t.connector.requestUpdate} ${connector.update.recommended_version}`}
+                      </button>
+                    </div>
+                  </>
+                )}
+
               {/* Le credential : son age, sa generation, l'etat de sa
                   bascule. Jamais le secret, jamais son empreinte. */}
               <h3 className="policy-group">{t.connector.credentialTitle}</h3>

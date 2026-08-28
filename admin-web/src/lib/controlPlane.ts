@@ -181,6 +181,26 @@ export interface ConnectorView {
    * secret : rien de tout cela n'aiderait a administrer, et tout cela
    * aiderait a exploiter une fuite.
    */
+  /** Ou tourne ce Connector, et s'il peut conduire sa propre bascule. */
+  platform: {
+    os: string | null;
+    arch: string | null;
+    distribution: string | null;
+    self_update_supported: boolean;
+    /** Qui applique la bascule : le Connector lui-meme, ou le deploiement. */
+    update_mechanism: "self" | "external" | "none";
+  };
+  update: {
+    state: string;
+    policy: string;
+    target_version: string | null;
+    last_known_good_version: string | null;
+    last_update_at: number | null;
+    last_error_code: string | null;
+    support_status: "up_to_date" | "update_available" | "unsupported" | "unknown";
+    recommended_version: string | null;
+    minimum_supported_version: string;
+  };
   credential: {
     generation: number;
     created_at: number;
@@ -464,6 +484,20 @@ export class ControlPlane {
     return this.client.request<ConnectorView>(
       `/api/control/connectors/${connectorId}/rotate`,
       { method: "POST", body: {} },
+    );
+  }
+
+  /**
+   * Demande une mise a jour. Une version, et rien d'autre.
+   *
+   * Pas de commande, pas de chemin, pas d'argument : le Connector sait comment
+   * se mettre a jour, et un canal capable de le lui dicter serait un shell
+   * distant sous un autre nom.
+   */
+  requestConnectorUpdate(connectorId: string, targetVersion: string) {
+    return this.client.request<ConnectorView>(
+      `/api/control/connectors/${connectorId}/update`,
+      { method: "POST", body: { target_version: targetVersion } },
     );
   }
 

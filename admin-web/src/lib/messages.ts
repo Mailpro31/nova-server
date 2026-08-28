@@ -264,6 +264,42 @@ export const t = {
     enrollCommand: "Run on the organization's server",
     enrollDone: "Done",
 
+    versionTitle: "Version and updates",
+    // Ce champ dit un OS et une architecture. Le terme generique auquel on
+    // penserait d'abord appartient au vocabulaire d'une console operateur
+    // multi-tenant, qu'un garde de test empeche d'apparaitre ici — y compris
+    // dans les commentaires, puisqu'il lit le fichier brut.
+    runsOn: "Runs on",
+    distribution: "Distribution",
+    selfUpdate: "Self-update",
+    selfUpdateYes: "Supported",
+    selfUpdateNo: "Orchestrated by your deployment",
+    selfUpdateUnknown: "Not reported — this connector predates update support",
+    externalRequired: "Deployment-managed update required",
+    externalBody:
+      "A newer version is available. This connector runs as a container and cannot replace its own image, so Nova will not attempt it. Pull the new image and recreate the service the way you deploy it; the connector keeps its identity, its credential and its applied configuration across the replacement.",
+    selfUpdateBody:
+      "This connector runs as a container, and a container cannot replace its own image. Update it the way you deploy it \u2014 pull the new image and recreate the service. Nova will not offer a button that could not work.",
+    installedVersion: "Installed",
+    recommendedVersion: "Recommended",
+    minimumVersion: "Minimum supported",
+    supportStatus: "Support",
+    supportUpToDate: "Up to date",
+    supportUpdateAvailable: "Update available",
+    supportUnsupported: "Too old \u2014 update recommended",
+    supportUnknown: "Unknown",
+    unsupportedBody:
+      "This connector is older than the minimum supported version. It keeps running and keeps serving your deployment \u2014 disconnecting it would only deny it the update that brings it back into support.",
+    updateState: "Update state",
+    lastUpdate: "Last update",
+    lastKnownGood: "Last known good",
+    updateError: "Last update error",
+    requestUpdate: "Update to",
+    requestingUpdate: "Requesting\u2026",
+    updateBody:
+      "Nova sends a version, never a command. The connector fetches the release itself, verifies its signature and its digest, stages it, and only reports success once the new version is running and healthy. If it is not, it returns to the previous one.",
+    neverUpdated: "Never",
+
     credentialTitle: "Credential",
     credentialAge: "Age",
     credentialGeneration: "Generation",

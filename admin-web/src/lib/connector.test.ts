@@ -195,6 +195,94 @@ describe("Credential rotation", () => {
   });
 });
 
+describe("Version and updates", () => {
+  test("the update surface follows the declared capability, not the OS", () => {
+    // Un meme Linux peut porter les deux mecanismes. Deduire de l'OS
+    // proposerait un jour un bouton a un conteneur.
+    const source = code(PAGE);
+    expect(source).toContain('connector.platform.update_mechanism === "self"');
+    expect(source).toContain('connector.platform.update_mechanism === "external"');
+    expect(source).not.toContain('platform.os === "linux"');
+  });
+
+  test("an orchestrator-managed connector gets a status, not an excuse", () => {
+    // « Deployment-managed update required » est un etat affiche, avec la
+    // marche a suivre — pas un silence.
+    const source = code(PAGE);
+    expect(source).toContain("externalRequired");
+    expect(source).toContain("externalBody");
+  });
+
+  test("a connector predating update support is not assumed capable", () => {
+    expect(code(PAGE)).toContain("selfUpdateUnknown");
+  });
+
+  test("a deployment that cannot update itself is told what to do instead", () => {
+    // Un conteneur ne remplace pas sa propre image. Offrir le bouton quand
+    // meme produirait un controle qui echoue a chaque fois ; la page explique
+    // la marche a suivre a la place.
+    const source = code(PAGE);
+    expect(source).toContain('connector.platform.update_mechanism === "external"');
+    expect(source).toContain("selfUpdateBody");
+  });
+
+  test("the update button is gated on capability, role and state", () => {
+    const source = code(PAGE);
+    expect(source).toContain("mayManage &&");
+    expect(source).toContain('connector.platform.update_mechanism === "self" &&');
+    expect(source).toContain('connector.update.support_status !== "up_to_date"');
+    // Une demande deja en cours ne se redemande pas.
+    expect(source).toContain("connector.update.target_version !== null");
+  });
+
+  test("the request carries a version and nothing executable", () => {
+    const update = code(CONTROL).slice(
+      code(CONTROL).indexOf("requestConnectorUpdate"),
+      code(CONTROL).indexOf("revokeConnector"),
+    );
+    expect(update).toContain("target_version: targetVersion");
+    for (const forbidden of ["command", "shell", "script", "args", "exec", "url"]) {
+      expect(update.toLowerCase()).not.toContain(forbidden);
+    }
+  });
+
+  test("requested is not shown as installed", () => {
+    // « Demande » et « installe » sont deux faits differents, comme livre et
+    // applique. L'ecran re-lit le serveur plutot que de refleter le clic.
+    const update = code(PAGE).slice(code(PAGE).indexOf("async function requestUpdate"));
+    expect(update).toContain("retry()");
+    expect(code(PAGE)).toContain("connector.update.state");
+  });
+
+  test("an unsupported connector is flagged, not presented as disconnected", () => {
+    const source = code(PAGE);
+    expect(source).toContain('connector.update.support_status === "unsupported"');
+    expect(source).toContain("unsupportedBody");
+  });
+
+  test("the screen shows the version chain without inventing it", () => {
+    const source = code(PAGE);
+    for (const field of [
+      "connector.connector_version",
+      "connector.update.recommended_version",
+      "connector.update.minimum_supported_version",
+      "connector.update.last_known_good_version",
+      "connector.update.last_error_code",
+    ]) {
+      expect(source).toContain(field);
+    }
+  });
+
+  test("no release manifest, signature or artifact url reaches the console", () => {
+    // La console administre ; elle n'est pas un maillon de la chaine
+    // d'approvisionnement, et n'a donc rien a porter de tout cela.
+    const source = code(PAGE) + code(CONTROL);
+    for (const forbidden of ["signature", "manifest", "digest", "artifact"]) {
+      expect(source.toLowerCase()).not.toContain(forbidden);
+    }
+  });
+});
+
 describe("Mounting", () => {
   test("the connector lives under Deployment, before the runtime", () => {
     const source = code(REST);
