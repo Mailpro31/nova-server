@@ -147,10 +147,30 @@ souhaitée et configuration réellement appliquée. La console distingue les deu
 un réglage enregistré n'est marqué appliqué que lorsque le runtime l'a
 confirmé.
 
-**Limite actuelle.** Ce plan de contrôle applique la configuration uniquement
-lorsque Nova tourne sur le serveur de l'organisation (`dedicated`). Il ne
-reconfigure pas encore un runtime privé distant : la console l'indique
-explicitement plutôt que d'afficher un « appliqué » que rien ne confirme.
+## Private Connector
+
+Pour reconfigurer un runtime privé **à distance**, l'organisation déploie le
+Private Connector à côté de son nova-server. C'est lui qui appelle Nova : aucun
+port entrant à ouvrir, aucune adresse privée connue de Nova.
+
+```powershell
+# Nova Admin -> Deployment -> Private Connector -> créer un code d'enrôlement
+python connector.py enroll --control-plane https://nova.exemple.fr --token <code>
+python connector.py run
+```
+
+Le canal transporte des métadonnées de contrôle uniquement — révisions,
+statuts, versions, santé. Les prompts, l'audio dicté, les transcriptions et les
+sorties de modèle restent dans le plan de données de l'organisation.
+
+Nova Admin distingue trois faits : **souhaité**, **livré** et **appliqué**. Une
+révision n'est marquée appliquée que lorsque le Connector l'a confirmée.
+
+Architecture, protocole et modèle de menace :
+[`docs/architecture/private-connector.md`](docs/architecture/private-connector.md).
+
+Sans Connector, un déploiement `dedicated` continue de se configurer lui-même :
+le serveur applique directement, comme en Phase 32.
 
 Le parcours AI Skills est activé avec `NOVA_AI_SKILLS_TRACK_PROGRESS=true`.
 `NOVA_AI_SKILLS_REQUIRED=false` conserve le parcours entièrement facultatif ;

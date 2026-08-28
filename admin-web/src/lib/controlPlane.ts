@@ -143,6 +143,65 @@ export interface AIRuntimeView {
   remote_apply: { supported: boolean; requires_private_connector: boolean };
 }
 
+/**
+ * Un Private Connector, vu du plan de controle.
+ *
+ * Aucun credential n'apparait ici, meme hache. Ce que la console montre sert a
+ * savoir si un deploiement repond et ou en est sa configuration — pas a
+ * reconstituer une identite.
+ */
+export interface ConnectorView {
+  connector_id: string;
+  deployment_id: string;
+  display_name: string;
+  status: "online" | "degraded" | "offline" | "revoked";
+  protocol_version: number;
+  protocol_supported: boolean;
+  connector_version: string | null;
+  server_version: string | null;
+  capabilities: string[];
+  runtime_state: {
+    runtime_status?: string;
+    text_engine?: string;
+    speech_engine?: string;
+    queue_length?: number;
+    gpu_model?: string | null;
+    vram_gb?: number | null;
+    last_error_code?: string | null;
+  } | null;
+  delivered_revision: number;
+  applied_revision: number;
+  apply_status: string;
+  last_error_code: string | null;
+  created_at: number;
+  last_seen_at: number | null;
+  revoked_at: number | null;
+}
+
+export interface ConnectorListView {
+  connectors: ConnectorView[];
+  pending_enrollments: number;
+  protocol_version: number;
+  heartbeat_seconds: number;
+  offline_after_seconds: number;
+}
+
+/**
+ * Un code d'enrolement fraichement cree.
+ *
+ * `enrollment_token` n'existe en clair qu'ici, et une seule fois : le serveur
+ * n'en garde que l'empreinte et ne pourra jamais le reafficher. Il ne doit donc
+ * pas etre range dans le stockage du navigateur.
+ */
+export interface ConnectorEnrollmentView {
+  enrollment_id: string;
+  enrollment_token: string;
+  expires_at: number;
+  expires_in: number;
+  deployment_id: string;
+  display_name: string;
+}
+
 export interface PackageVersionSummary {
   version_id: string;
   version_number: number;
@@ -366,6 +425,24 @@ export class ControlPlane {
     return this.client.request<AIRuntimeView>(
       "/api/control/organization/ai-runtime",
       { method: "PUT", body: { expected_revision: expectedRevision, ...desired } },
+    );
+  }
+
+  connectors() {
+    return this.client.request<ConnectorListView>("/api/control/connectors");
+  }
+
+  createConnectorEnrollment(body: { display_name: string; deployment_id: string }) {
+    return this.client.request<ConnectorEnrollmentView>(
+      "/api/control/connectors/enrollments",
+      { method: "POST", body },
+    );
+  }
+
+  revokeConnector(connectorId: string) {
+    return this.client.request<ConnectorView>(
+      `/api/control/connectors/${connectorId}/revoke`,
+      { method: "POST", body: {} },
     );
   }
 

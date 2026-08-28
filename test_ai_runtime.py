@@ -806,7 +806,7 @@ class AIRuntimeAdminTests(AdminTestCase):
         self.assertEqual(response.status_code, 200)
         reported = response.json()["reported"]
         self.assertEqual(reported["applied_revision"], 1)
-        self.assertEqual(reported["apply_status"], "applied_local")
+        self.assertEqual(reported["apply_status"], main.APPLY_STATUS_APPLIED)
         self.assertEqual(router.applied_revision, 1)
         self.assertEqual(router.text_capacity.limit, 3)
 
@@ -855,10 +855,14 @@ class AIRuntimeAdminTests(AdminTestCase):
                 },
             )
         body = response.json()
-        self.assertEqual(body["reported"]["apply_status"], "awaiting_private_connector")
+        # La revision est enregistree et attend. Sans Connector joignable, elle
+        # n'est ni livree ni appliquee — et la console ne pretend pas l'inverse.
+        self.assertEqual(body["reported"]["apply_status"], main.APPLY_STATUS_PENDING)
         self.assertEqual(body["reported"]["applied_revision"], 0)
+        self.assertEqual(body["delivered"]["revision"], 0)
         self.assertTrue(body["remote_apply"]["requires_private_connector"])
         self.assertFalse(body["remote_apply"]["supported"])
+        self.assertEqual(body["remote_apply"]["capable_connectors"], 0)
 
     def test_organization_admin_cannot_reconfigure_deployment(self):
         headers = grant_admin_session("org@example.com", "organization_admin")

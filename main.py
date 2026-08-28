@@ -28,7 +28,7 @@ import jwt
 from fastapi import Depends, FastAPI, Header, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, PlainTextResponse
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 from ai_runtime import (
     AI_MODEL_NOT_READY,
@@ -525,6 +525,48 @@ def init_db():
             updated_at REAL NOT NULL,
             updated_by_user_id TEXT
         );
+        -- Un code d'enrolement, a usage unique et de duree de vie courte.
+        -- Empreinte seule : une copie de la base ne permet d'enroler personne.
+        CREATE TABLE IF NOT EXISTS connector_enrollments(
+            enrollment_id TEXT PRIMARY KEY,
+            -- L'organisation est fixee ICI, par un administrateur authentifie.
+            -- Elle ne viendra jamais du corps d'une requete de Connector.
+            organization_id TEXT NOT NULL,
+            deployment_id TEXT NOT NULL,
+            display_name TEXT NOT NULL,
+            token_hash TEXT NOT NULL,
+            created_at REAL NOT NULL,
+            expires_at REAL NOT NULL,
+            created_by_user_id TEXT,
+            consumed_at REAL,
+            consumed_by_connector_id TEXT
+        );
+        -- Un Connector enrole. Identite machine, distincte des utilisateurs,
+        -- des administrateurs et des operateurs Nova.
+        CREATE TABLE IF NOT EXISTS connectors(
+            connector_id TEXT PRIMARY KEY,
+            organization_id TEXT NOT NULL,
+            deployment_id TEXT NOT NULL,
+            display_name TEXT NOT NULL,
+            credential_hash TEXT NOT NULL,
+            protocol_version INTEGER NOT NULL DEFAULT 0,
+            connector_version TEXT,
+            server_version TEXT,
+            capabilities TEXT NOT NULL DEFAULT '[]',
+            -- Resume de sante, sans aucun contenu utilisateur.
+            runtime_state TEXT,
+            delivered_revision INTEGER NOT NULL DEFAULT 0,
+            applied_revision INTEGER NOT NULL DEFAULT 0,
+            apply_status TEXT NOT NULL DEFAULT 'pending',
+            last_error_code TEXT,
+            created_at REAL NOT NULL,
+            last_seen_at REAL,
+            revoked_at REAL
+        );
+        CREATE INDEX IF NOT EXISTS idx_connectors_org
+            ON connectors(organization_id);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_connectors_credential
+            ON connectors(credential_hash);
         """)
         migrate_schema(conn)
 
@@ -805,6 +847,21 @@ def migrate_schema(conn):
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_tokens_hash ON tokens(token_hash)"
     )
     migrate_tokens_to_hashes(conn)
+
+    runtime_columns = columns("organization_ai_runtime_config")
+    if runtime_columns:
+        for column, definition in {
+            # La chaine complete de la Phase 33 : souhaite -> livre -> applique.
+            "delivered_revision": "INTEGER NOT NULL DEFAULT 0",
+            "delivered_at": "REAL",
+            "applied_at": "REAL",
+            "last_error_code": "TEXT",
+        }.items():
+            if column not in runtime_columns:
+                conn.execute(
+                    f"ALTER TABLE organization_ai_runtime_config "
+                    f"ADD COLUMN {column} {definition}"
+                )
 
     if "google_hosted_domain" not in columns("organizations"):
         conn.execute("ALTER TABLE organizations ADD COLUMN google_hosted_domain TEXT")
@@ -1824,6 +1881,10 @@ def read_ai_runtime_config(organization_id: str) -> dict:
         "max_queue": ORGANIZATION_AI_ROUTER.text_capacity.max_queue,
         "applied_revision": ORGANIZATION_AI_ROUTER.applied_revision,
         "apply_status": "local_default",
+        "delivered_revision": 0,
+        "delivered_at": None,
+        "applied_at": None,
+        "last_error_code": None,
         "updated_at": None,
         "updated_by_user_id": None,
     }
@@ -5744,9 +5805,19 @@ async def ai_runtime_admin_view(organization_id: str) -> dict:
             "max_queue": config["max_queue"],
             "cloud_fallback": "disabled",
         },
+        # La chaine complete, en trois faits distincts. « Livre » n'est pas
+        # « applique » : un Connector peut avoir recu une revision et avoir
+        # echoue a la poser. Les fondre afficherait un succes que rien ne
+        # confirme.
+        "delivered": {
+            "revision": config["delivered_revision"],
+            "delivered_at": config["delivered_at"],
+        },
         "reported": {
             "applied_revision": config["applied_revision"],
+            "applied_at": config["applied_at"],
             "apply_status": config["apply_status"],
+            "last_apply_error": config["last_error_code"],
             "runtime_status": runtime["status"],
             "text_engine": runtime["text_engine"],
             "speech_engine": runtime["speech_engine"],
@@ -5768,10 +5839,33 @@ async def ai_runtime_admin_view(organization_id: str) -> dict:
         # choix propose puis refuse a l'enregistrement n'est pas un choix.
         "available_profiles": available_profiles(),
         "custom_profile": custom_profile_view(),
-        "remote_apply": {
-            "supported": False,
-            "requires_private_connector": NOVA_SERVER_MODE == SERVER_MODE_CONTROL_PLANE,
-        },
+        "remote_apply": remote_apply_view(organization_id),
+        "connectors": connectors_for(organization_id),
+    }
+
+
+def remote_apply_view(organization_id: str) -> dict:
+    """L'application a distance est-elle reellement possible aujourd'hui ?
+
+    Elle ne l'est pas parce qu'un Connector existe en base : il faut qu'il soit
+    joignable et qu'il declare savoir appliquer une configuration de runtime.
+    Repondre oui sans cela promettrait une reconfiguration qui n'arriverait
+    jamais.
+    """
+    if NOVA_SERVER_MODE == SERVER_MODE_DEDICATED:
+        # Le serveur se configure lui-meme : aucun Connector n'est requis.
+        return {"supported": True, "mode": "local", "requires_private_connector": False}
+    capable = [
+        connector
+        for connector in connectors_for(organization_id)
+        if connector["status"] in {CONNECTOR_STATUS_ONLINE, CONNECTOR_STATUS_DEGRADED}
+        and "ai_runtime_config_v1" in connector["capabilities"]
+    ]
+    return {
+        "supported": bool(capable),
+        "mode": "connector",
+        "requires_private_connector": True,
+        "capable_connectors": len(capable),
     }
 
 
@@ -5805,9 +5899,12 @@ async def control_update_ai_runtime(
         new_revision = current_revision + 1
         applied_revision = current["applied_revision"] if current else 0
         apply_status = (
-            "applying_local"
+            APPLY_STATUS_APPLYING
             if NOVA_SERVER_MODE == SERVER_MODE_DEDICATED
-            else "awaiting_private_connector"
+            # En plan de controle, la revision attend qu'un Connector vienne la
+            # chercher. Elle n'est ni livree ni appliquee tant que cela n'a pas
+            # eu lieu.
+            else APPLY_STATUS_PENDING
         )
         conn.execute(
             "INSERT INTO organization_ai_runtime_config("
@@ -5864,9 +5961,720 @@ async def control_update_ai_runtime(
             conn.execute(
                 "UPDATE organization_ai_runtime_config SET applied_revision=?,apply_status=? "
                 "WHERE organization_id=?",
-                (new_revision, "applied_local", organization_id),
+                (new_revision, APPLY_STATUS_APPLIED, organization_id),
             )
     return await ai_runtime_admin_view(organization_id)
+
+
+# ───────────────────── Private Connector ─────────────────────────────────
+#
+# ## Pourquoi un Connector
+#
+# Le plan de controle vit chez Nova ; le runtime IA vit chez l'organisation, sur
+# un reseau prive. Pour appliquer une configuration a distance, Nova pourrait
+# appeler l'infrastructure privee — il faudrait alors qu'un etablissement ouvre
+# un port entrant vers Internet et publie une adresse interne. Personne ne
+# devrait avoir a faire cela pour changer un profil de modele.
+#
+# Le sens de la connexion est donc inverse : c'est le Connector, depuis
+# l'organisation, qui va chercher ce qu'il doit appliquer. Aucun port entrant,
+# aucune adresse privee connue de Nova.
+#
+# ## Ce qui passe, et ce qui ne passe pas
+#
+# Le canal transporte des donnees de controle : identifiants techniques,
+# revisions, statuts, versions, sante, resume materiel, profil choisi. Jamais
+# d'audio, de prompt, de transcription, de sortie de modele, ni le contenu
+# complet d'un Style ou d'un AI Skill. La frontiere de la Phase 32 ne bouge pas
+# parce qu'on ajoute un tuyau.
+#
+# ## Ce que le Connector n'est pas
+#
+# Pas un VPN, pas un shell distant, pas un transfert de fichiers. Le protocole
+# n'expose que des operations typees : appliquer une configuration de runtime,
+# rapporter une sante. Il n'existe aucune commande generique a executer.
+
+
+CONNECTOR_PROTOCOL_VERSION = 1
+CONNECTOR_SUPPORTED_PROTOCOLS = frozenset({1})
+
+# Ce que le plan de controle sait pousser. Il ne pousse a un Connector que ce
+# que celui-ci declare comprendre : deduire une capacite d'un numero de version
+# marcherait jusqu'au jour ou une version intermediaire existe.
+CONNECTOR_KNOWN_CAPABILITIES = frozenset(
+    {"ai_runtime_config_v1", "health_reporting_v1", "diagnostics_v1"}
+)
+
+# Un seul endroit pour les rythmes. Les repeter dans le Connector et dans le
+# serveur les ferait diverger au premier ajustement.
+CONNECTOR_HEARTBEAT_SECONDS = int(os.getenv("NOVA_CONNECTOR_HEARTBEAT_SECONDS", "45"))
+CONNECTOR_OFFLINE_AFTER_SECONDS = CONNECTOR_HEARTBEAT_SECONDS * 4
+CONNECTOR_DEGRADED_AFTER_SECONDS = CONNECTOR_HEARTBEAT_SECONDS * 2
+CONNECTOR_ENROLLMENT_TTL_SECONDS = int(
+    os.getenv("NOVA_CONNECTOR_ENROLLMENT_TTL_SECONDS", "900")
+)
+
+# Bornes de charge utile. Un Connector compromis ne doit pas pouvoir faire
+# grossir la base ni la memoire du serveur en decrivant sa sante.
+CONNECTOR_MAX_CAPABILITIES = 16
+CONNECTOR_MAX_DIAGNOSTIC_FIELDS = 24
+CONNECTOR_MAX_BODY_BYTES = 64 * 1024
+
+CONNECTOR_STATUS_ONLINE = "online"
+CONNECTOR_STATUS_DEGRADED = "degraded"
+CONNECTOR_STATUS_OFFLINE = "offline"
+CONNECTOR_STATUS_REVOKED = "revoked"
+
+APPLY_STATUS_PENDING = "pending"
+APPLY_STATUS_DELIVERED = "delivered"
+APPLY_STATUS_APPLYING = "applying"
+APPLY_STATUS_RESTART_REQUIRED = "restart_required"
+APPLY_STATUS_APPLIED = "applied"
+APPLY_STATUS_FAILED = "failed"
+CONNECTOR_APPLY_STATUSES = frozenset(
+    {
+        APPLY_STATUS_PENDING,
+        APPLY_STATUS_DELIVERED,
+        APPLY_STATUS_APPLYING,
+        APPLY_STATUS_RESTART_REQUIRED,
+        APPLY_STATUS_APPLIED,
+        APPLY_STATUS_FAILED,
+    }
+)
+
+
+class ConnectorPrincipal:
+    """Qui synchronise, pour quelle organisation.
+
+    Un troisieme type de principal, a cote de l'utilisateur et de
+    l'administrateur. Il n'herite d'aucune permission humaine : un Connector ne
+    lit pas de membres, ne change pas de policy, ne consulte aucun contenu. Il
+    porte une identite de deploiement, et rien d'autre.
+
+    `organization_id` vient **de la base**, retrouve par l'empreinte du
+    credential presente. Aucun champ de la requete ne peut l'influencer.
+    """
+
+    def __init__(self, row):
+        self.connector_id = row["connector_id"]
+        self.organization_id = row["organization_id"]
+        self.deployment_id = row["deployment_id"]
+        self.row = row
+
+
+# Compteurs de cadence, par Connector. La cle est l'identite, pas le tenant :
+# un Connector bavard ne doit pas faire taire les autres Connectors de son
+# organisation.
+_CONNECTOR_CALLS: dict[str, list[float]] = {}
+
+
+def connector_rate_limit(key: str, limit: int, window_seconds: float) -> None:
+    now = time.time()
+    calls = [moment for moment in _CONNECTOR_CALLS.get(key, []) if now - moment < window_seconds]
+    if len(calls) >= limit:
+        _CONNECTOR_CALLS[key] = calls
+        raise auth_error(429, "CONNECTOR_RATE_LIMITED")
+    calls.append(now)
+    _CONNECTOR_CALLS[key] = calls
+
+
+def connector_principal(
+    authorization: str | None = Header(default=None),
+    content_length: int | None = Header(default=None),
+) -> ConnectorPrincipal:
+    if content_length is not None and content_length > CONNECTOR_MAX_BODY_BYTES:
+        raise auth_error(413, "CONNECTOR_PAYLOAD_TOO_LARGE")
+    scheme, _, credential = (authorization or "").partition(" ")
+    if scheme.lower() != "bearer" or not credential.strip():
+        raise auth_error(401, "CONNECTOR_CREDENTIAL_REQUIRED")
+    with db() as conn:
+        row = conn.execute(
+            "SELECT * FROM connectors WHERE credential_hash=?",
+            (hash_token(credential.strip()),),
+        ).fetchone()
+    # Revoque et inconnu donnent la meme reponse : un credential vole ne doit
+    # pas permettre de distinguer « ce Connector a existe » de « il n'a jamais
+    # existe ».
+    if row is None or row["revoked_at"] is not None:
+        raise auth_error(401, "CONNECTOR_CREDENTIAL_INVALID")
+    connector_rate_limit(f"sync:{row['connector_id']}", limit=120, window_seconds=60)
+    return ConnectorPrincipal(row)
+
+
+def record_connector_action(
+    organization_id: str,
+    connector_id: str,
+    action: str,
+    metadata: dict | None = None,
+    conn=None,
+):
+    """Trace d'audit dont l'acteur est une machine.
+
+    `record_admin_action` exige un principal humain ; un Connector n'en est pas
+    un. Plutot que d'en fabriquer un faux — ce qui attribuerait a une personne
+    des actions qu'elle n'a pas faites — l'acteur est nomme pour ce qu'il est.
+
+    Les metadonnees suivent la meme regle qu'ailleurs : ni credential, ni code
+    d'enrolement, ni contenu utilisateur.
+    """
+
+    def write(connection):
+        connection.execute(
+            "INSERT INTO admin_audit_log(id, organization_id, actor_user_id, "
+            "actor_role, action, target_type, target_id, request_id, metadata, "
+            "created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (
+                uuid.uuid4().hex,
+                organization_id,
+                None,
+                "connector",
+                action,
+                "connector",
+                connector_id,
+                None,
+                json.dumps(metadata or {}, ensure_ascii=False),
+                time.time(),
+            ),
+        )
+
+    if conn is not None:
+        write(conn)
+    else:
+        with db() as connection:
+            write(connection)
+
+
+def connector_status(row) -> str:
+    """L'etat vu du plan de controle, deduit du dernier contact.
+
+    Un Connector revoque le reste : il ne redevient pas « hors ligne » parce
+    qu'il a cesse d'appeler. La distinction compte pour qui lit la console.
+    """
+    if row["revoked_at"] is not None:
+        return CONNECTOR_STATUS_REVOKED
+    last_seen = row["last_seen_at"]
+    if last_seen is None:
+        return CONNECTOR_STATUS_OFFLINE
+    age = time.time() - last_seen
+    if age > CONNECTOR_OFFLINE_AFTER_SECONDS:
+        return CONNECTOR_STATUS_OFFLINE
+    if age > CONNECTOR_DEGRADED_AFTER_SECONDS:
+        return CONNECTOR_STATUS_DEGRADED
+    return CONNECTOR_STATUS_ONLINE
+
+
+def connector_view(row) -> dict:
+    """Ce que la console voit d'un Connector. Aucun credential, meme hache."""
+    try:
+        capabilities = json.loads(row["capabilities"] or "[]")
+    except (ValueError, TypeError):
+        capabilities = []
+    try:
+        runtime_state = json.loads(row["runtime_state"] or "null")
+    except (ValueError, TypeError):
+        runtime_state = None
+    return {
+        "connector_id": row["connector_id"],
+        "deployment_id": row["deployment_id"],
+        "display_name": row["display_name"],
+        "status": connector_status(row),
+        "protocol_version": row["protocol_version"],
+        "protocol_supported": row["protocol_version"] in CONNECTOR_SUPPORTED_PROTOCOLS,
+        "connector_version": row["connector_version"],
+        "server_version": row["server_version"],
+        "capabilities": capabilities,
+        "runtime_state": runtime_state,
+        "delivered_revision": row["delivered_revision"],
+        "applied_revision": row["applied_revision"],
+        "apply_status": row["apply_status"],
+        "last_error_code": row["last_error_code"],
+        "created_at": row["created_at"],
+        "last_seen_at": row["last_seen_at"],
+        "revoked_at": row["revoked_at"],
+    }
+
+
+def connectors_for(organization_id: str) -> list[dict]:
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM connectors WHERE organization_id=? ORDER BY created_at",
+            (organization_id,),
+        ).fetchall()
+    return [connector_view(row) for row in rows]
+
+
+def desired_ai_runtime_for_connector(organization_id: str) -> dict | None:
+    """La configuration souhaitee, reduite a ce qu'un Connector doit appliquer.
+
+    Ni URL de runtime, ni nom de modele, ni secret : ces valeurs appartiennent
+    au deploiement et n'ont jamais transite par le plan de controle. Le
+    Connector applique un comportement, pas une infrastructure.
+    """
+    config = read_ai_runtime_config(organization_id)
+    if not config["desired_revision"]:
+        return None
+    return {
+        "revision": config["desired_revision"],
+        "profile": config["desired_profile"],
+        "reasoning_allowed": bool(config["reasoning_allowed"]),
+        "max_concurrent_text": config["max_concurrent_text"],
+        "max_concurrent_speech": config["max_concurrent_speech"],
+        "max_queue": config["max_queue"],
+    }
+
+
+# ── APIs d'administration ────────────────────────────────────────────────
+
+
+class ConnectorEnrollmentRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    display_name: str = Field(min_length=1, max_length=120)
+    deployment_id: str = Field(min_length=1, max_length=120)
+
+
+@app.post("/api/control/connectors/enrollments")
+def control_create_connector_enrollment(
+    body: ConnectorEnrollmentRequest,
+    principal: AdminPrincipal = Depends(
+        require_admin_capability(CAPABILITY_DEPLOYMENT_MANAGE)
+    ),
+):
+    """Cree un code d'enrolement, affiche une seule fois.
+
+    Le code n'est pas conserve : seule son empreinte l'est. Nova ne peut donc
+    pas le reafficher, et une copie de la base ne permet d'enroler personne.
+    """
+    now = time.time()
+    token = secrets.token_urlsafe(32)
+    enrollment_id = uuid.uuid4().hex
+    with db() as conn:
+        conn.execute(
+            "INSERT INTO connector_enrollments(enrollment_id, organization_id, "
+            "deployment_id, display_name, token_hash, created_at, expires_at, "
+            "created_by_user_id) VALUES (?,?,?,?,?,?,?,?)",
+            (
+                enrollment_id,
+                principal.organization_id,
+                body.deployment_id.strip(),
+                body.display_name.strip(),
+                hash_token(token),
+                now,
+                now + CONNECTOR_ENROLLMENT_TTL_SECONDS,
+                principal.user_id,
+            ),
+        )
+        record_admin_action(
+            principal,
+            "connector.enrollment.create",
+            target_type="connector_enrollment",
+            target_id=enrollment_id,
+            metadata={"deployment_id": body.deployment_id.strip()},
+            conn=conn,
+        )
+    return {
+        "enrollment_id": enrollment_id,
+        # La seule fois ou ce code existe en clair hors du Connector.
+        "enrollment_token": token,
+        "expires_at": now + CONNECTOR_ENROLLMENT_TTL_SECONDS,
+        "expires_in": CONNECTOR_ENROLLMENT_TTL_SECONDS,
+        "deployment_id": body.deployment_id.strip(),
+        "display_name": body.display_name.strip(),
+    }
+
+
+@app.get("/api/control/connectors")
+def control_list_connectors(
+    principal: AdminPrincipal = Depends(
+        require_admin_capability(CAPABILITY_DIAGNOSTICS_READ)
+    ),
+):
+    with db() as conn:
+        pending = conn.execute(
+            "SELECT COUNT(*) FROM connector_enrollments WHERE organization_id=? "
+            "AND consumed_at IS NULL AND expires_at > ?",
+            (principal.organization_id, time.time()),
+        ).fetchone()[0]
+    return {
+        "connectors": connectors_for(principal.organization_id),
+        "pending_enrollments": pending,
+        "protocol_version": CONNECTOR_PROTOCOL_VERSION,
+        "heartbeat_seconds": CONNECTOR_HEARTBEAT_SECONDS,
+        "offline_after_seconds": CONNECTOR_OFFLINE_AFTER_SECONDS,
+    }
+
+
+@app.post("/api/control/connectors/{connector_id}/revoke")
+def control_revoke_connector(
+    connector_id: str,
+    principal: AdminPrincipal = Depends(
+        require_admin_capability(CAPABILITY_DEPLOYMENT_MANAGE)
+    ),
+):
+    """Revoque un Connector. Le plan de donnees local, lui, continue.
+
+    Revoquer coupe la synchronisation, pas la dictee : une organisation qui
+    retire un Connector ne doit pas perdre du meme geste la fonction que ses
+    membres utilisent.
+    """
+    with db() as conn:
+        row = conn.execute(
+            "SELECT * FROM connectors WHERE connector_id=? AND organization_id=?",
+            (connector_id, principal.organization_id),
+        ).fetchone()
+        if row is None:
+            raise auth_error(404, "CONNECTOR_NOT_FOUND")
+        if row["revoked_at"] is None:
+            conn.execute(
+                "UPDATE connectors SET revoked_at=? WHERE connector_id=?",
+                (time.time(), connector_id),
+            )
+            record_admin_action(
+                principal,
+                "connector.revoke",
+                target_type="connector",
+                target_id=connector_id,
+                conn=conn,
+            )
+        row = conn.execute(
+            "SELECT * FROM connectors WHERE connector_id=?", (connector_id,)
+        ).fetchone()
+    return connector_view(row)
+
+
+# ── APIs du Connector ────────────────────────────────────────────────────
+
+
+class ConnectorEnrollBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enrollment_token: str = Field(min_length=16, max_length=256)
+    protocol_version: int
+    connector_version: str = Field(max_length=64)
+    capabilities: list[str] = Field(default_factory=list, max_length=CONNECTOR_MAX_CAPABILITIES)
+
+
+class ConnectorHealthBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    runtime_status: str = Field(default="unavailable", max_length=32)
+    text_engine: str = Field(default="unavailable", max_length=32)
+    speech_engine: str = Field(default="unavailable", max_length=32)
+    queue_length: int = Field(default=0, ge=0, le=1_000_000)
+    gpu_model: str | None = Field(default=None, max_length=120)
+    vram_gb: float | None = Field(default=None, ge=0, le=10_000)
+    last_error_code: str | None = Field(default=None, max_length=64)
+
+
+class ConnectorSyncBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    protocol_version: int
+    connector_version: str = Field(max_length=64)
+    server_version: str = Field(default="", max_length=64)
+    capabilities: list[str] = Field(default_factory=list, max_length=CONNECTOR_MAX_CAPABILITIES)
+    # Reception et application sont deux faits distincts : un Connector peut
+    # avoir recu une revision sans avoir reussi a l'appliquer.
+    applied_revision: int = Field(default=0, ge=0)
+    apply_status: str = Field(default=APPLY_STATUS_PENDING, max_length=32)
+    last_error_code: str | None = Field(default=None, max_length=64)
+    health: ConnectorHealthBody | None = None
+    # Horodatage local, purement indicatif. L'autorite temporelle est le
+    # serveur : l'horloge d'une machine distante n'engage personne.
+    local_time: float | None = None
+
+
+def validated_capabilities(declared: list[str]) -> list[str]:
+    return sorted({item for item in declared if item in CONNECTOR_KNOWN_CAPABILITIES})
+
+
+def require_supported_protocol(protocol_version: int) -> None:
+    if protocol_version not in CONNECTOR_SUPPORTED_PROTOCOLS:
+        raise auth_error(426, "CONNECTOR_PROTOCOL_UNSUPPORTED")
+
+
+@app.post("/api/connector/enroll")
+def connector_enroll(body: ConnectorEnrollBody):
+    """Echange un code a usage unique contre une identite durable.
+
+    L'organisation n'est jamais annoncee par le Connector : elle est portee par
+    le code d'enrolement, qu'un administrateur authentifie a cree pour son
+    propre tenant. C'est ce qui empeche un Connector de se declarer chez
+    quelqu'un d'autre.
+    """
+    require_supported_protocol(body.protocol_version)
+    token = body.enrollment_token.strip()
+    connector_rate_limit(f"enroll:{hash_token(token)}", limit=5, window_seconds=60)
+    now = time.time()
+    credential = secrets.token_urlsafe(40)
+    connector_id = uuid.uuid4().hex
+    with db() as conn:
+        enrollment = conn.execute(
+            "SELECT * FROM connector_enrollments WHERE token_hash=?",
+            (hash_token(token),),
+        ).fetchone()
+        # Inconnu, deja consomme, expire : une seule reponse. Distinguer les
+        # trois cas dirait a qui sonde lequel de ses essais a « presque » marche.
+        if (
+            enrollment is None
+            or enrollment["consumed_at"] is not None
+            or enrollment["expires_at"] <= now
+        ):
+            raise auth_error(401, "CONNECTOR_ENROLLMENT_INVALID")
+        conn.execute(
+            "INSERT INTO connectors(connector_id, organization_id, deployment_id, "
+            "display_name, credential_hash, protocol_version, connector_version, "
+            "capabilities, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+            (
+                connector_id,
+                enrollment["organization_id"],
+                enrollment["deployment_id"],
+                enrollment["display_name"],
+                hash_token(credential),
+                body.protocol_version,
+                body.connector_version,
+                json.dumps(validated_capabilities(body.capabilities)),
+                now,
+            ),
+        )
+        conn.execute(
+            "UPDATE connector_enrollments SET consumed_at=?, consumed_by_connector_id=? "
+            "WHERE enrollment_id=?",
+            (now, connector_id, enrollment["enrollment_id"]),
+        )
+        record_connector_action(
+            enrollment["organization_id"],
+            connector_id,
+            "connector.enrolled",
+            {"deployment_id": enrollment["deployment_id"]},
+            conn=conn,
+        )
+    return {
+        "connector_id": connector_id,
+        # Delivre une seule fois. Le serveur n'en garde que l'empreinte.
+        "connector_credential": credential,
+        "organization_id": enrollment["organization_id"],
+        "deployment_id": enrollment["deployment_id"],
+        "protocol_version": CONNECTOR_PROTOCOL_VERSION,
+        "heartbeat_seconds": CONNECTOR_HEARTBEAT_SECONDS,
+    }
+
+
+@app.post("/api/connector/sync")
+def connector_sync(
+    body: ConnectorSyncBody,
+    principal: ConnectorPrincipal = Depends(connector_principal),
+):
+    """Un aller-retour : le Connector rapporte, le serveur repond ce qu'il veut.
+
+    Rapport et battement de coeur sont le meme appel. Les separer donnerait deux
+    rythmes a accorder et deux occasions de diverger, pour aucune information
+    supplementaire.
+    """
+    require_supported_protocol(body.protocol_version)
+    if body.apply_status not in CONNECTOR_APPLY_STATUSES:
+        raise auth_error(400, "CONNECTOR_APPLY_STATUS_INVALID")
+
+    now = time.time()
+    organization_id = principal.organization_id
+    capabilities = validated_capabilities(body.capabilities)
+    health = body.health.model_dump() if body.health else None
+
+    desired = None
+    if "ai_runtime_config_v1" in capabilities:
+        desired = desired_ai_runtime_for_connector(organization_id)
+
+    with db() as conn:
+        current = conn.execute(
+            "SELECT * FROM connectors WHERE connector_id=?",
+            (principal.connector_id,),
+        ).fetchone()
+
+        # Une revision appliquee ne recule pas. Un Connector qui redemarre avec
+        # un etat local perime ne doit pas faire regresser ce que le plan de
+        # controle sait deja.
+        applied = max(int(current["applied_revision"]), int(body.applied_revision))
+        apply_status = body.apply_status
+        delivered = int(current["delivered_revision"])
+        if desired is not None:
+            delivered = max(delivered, int(desired["revision"]))
+
+        conn.execute(
+            "UPDATE connectors SET protocol_version=?, connector_version=?, "
+            "server_version=?, capabilities=?, runtime_state=?, applied_revision=?, "
+            "delivered_revision=?, apply_status=?, last_error_code=?, last_seen_at=? "
+            "WHERE connector_id=?",
+            (
+                body.protocol_version,
+                body.connector_version,
+                body.server_version,
+                json.dumps(capabilities),
+                json.dumps(health) if health else None,
+                applied,
+                delivered,
+                apply_status,
+                body.last_error_code,
+                now,
+                principal.connector_id,
+            ),
+        )
+        # « Livre » est un fait du plan de controle : c'est lui qui vient de
+        # tendre la revision. Un Connector qui rapporte encore `pending` n'a pas
+        # a effacer cette information — sinon la console montrerait une revision
+        # souhaitee qui semble n'etre jamais partie.
+        chain_status = apply_status
+        if apply_status == APPLY_STATUS_PENDING and delivered > applied:
+            chain_status = APPLY_STATUS_DELIVERED
+        sync_connector_state_into_config(
+            conn, organization_id, delivered, applied, chain_status,
+            body.last_error_code, now,
+        )
+        if apply_status in {APPLY_STATUS_APPLIED, APPLY_STATUS_FAILED} and applied != int(
+            current["applied_revision"]
+        ):
+            record_connector_action(
+                organization_id,
+                principal.connector_id,
+                f"connector.apply.{apply_status}",
+                {"revision": applied},
+                conn=conn,
+            )
+
+    return {
+        "protocol_version": CONNECTOR_PROTOCOL_VERSION,
+        "connector_id": principal.connector_id,
+        "heartbeat_seconds": CONNECTOR_HEARTBEAT_SECONDS,
+        # Le serveur date la reponse : le Connector n'a pas a etre cru sur
+        # l'heure qu'il est.
+        "server_time": now,
+        "desired": {"ai_runtime": desired} if desired else {},
+        # Les seules operations que ce protocole connait. Il n'y a pas de
+        # commande generique, et il ne doit pas y en avoir.
+        "supported_operations": ["apply_ai_runtime_config", "report_health"],
+    }
+
+
+def sync_connector_state_into_config(
+    conn, organization_id: str, delivered: int, applied: int,
+    apply_status: str, last_error_code: str | None, now: float,
+) -> None:
+    """Reporte l'etat du Connector dans la configuration de l'organisation.
+
+    C'est ce qui rend la chaine visible dans Nova Admin : souhaite, livre,
+    applique. `applied_revision` n'avance jamais toute seule — seul un Connector
+    qui declare avoir applique la fait bouger.
+    """
+    row = conn.execute(
+        "SELECT * FROM organization_ai_runtime_config WHERE organization_id=?",
+        (organization_id,),
+    ).fetchone()
+    if row is None:
+        return
+    conn.execute(
+        "UPDATE organization_ai_runtime_config SET delivered_revision=?, "
+        "delivered_at=?, applied_revision=?, applied_at=?, apply_status=?, "
+        "last_error_code=? WHERE organization_id=?",
+        (
+            max(int(row["delivered_revision"] or 0), delivered),
+            now if delivered else row["delivered_at"],
+            max(int(row["applied_revision"] or 0), applied),
+            now if apply_status == APPLY_STATUS_APPLIED else row["applied_at"],
+            apply_status,
+            last_error_code,
+            organization_id,
+        ),
+    )
+
+
+# ── Plan de donnees : appliquer localement ───────────────────────────────
+#
+# Le Connector est un processus separe ; le runtime vit dans nova-server. Cette
+# route est le seul point par lequel le premier configure le second. Elle est
+# locale, protegee par un secret partage de deploiement, et n'existe pas si ce
+# secret n'est pas declare.
+
+NOVA_DEPLOYMENT_APPLY_TOKEN = os.getenv("NOVA_DEPLOYMENT_APPLY_TOKEN", "")
+
+
+class DeploymentApplyBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    revision: int = Field(ge=1)
+    profile: str = Field(max_length=32)
+    reasoning_allowed: bool = False
+    max_concurrent_text: int = Field(ge=1, le=64)
+    max_concurrent_speech: int = Field(ge=1, le=32)
+    max_queue: int = Field(ge=0, le=256)
+
+
+@app.post("/api/deployment/ai-runtime/apply")
+async def deployment_apply_ai_runtime(
+    body: DeploymentApplyBody,
+    authorization: str | None = Header(default=None),
+):
+    """Applique une configuration au runtime de CE serveur.
+
+    Valider, appliquer, verifier, puis seulement repondre « applique ». Repondre
+    avant la verification ferait remonter un succes que rien ne confirme, et la
+    console afficherait un etat que le runtime ne porte pas.
+    """
+    if not NOVA_DEPLOYMENT_APPLY_TOKEN:
+        raise auth_error(404, "DEPLOYMENT_APPLY_DISABLED")
+    scheme, _, presented = (authorization or "").partition(" ")
+    if scheme.lower() != "bearer" or not secrets.compare_digest(
+        hash_token(presented.strip()), hash_token(NOVA_DEPLOYMENT_APPLY_TOKEN)
+    ):
+        raise auth_error(401, "DEPLOYMENT_APPLY_UNAUTHORIZED")
+
+    try:
+        profile = ModelProfile(body.profile.strip().lower())
+    except ValueError:
+        return {"revision": body.revision, "status": APPLY_STATUS_FAILED,
+                "error_code": "AI_RUNTIME_CONFIG_REJECTED"}
+    if profile == ModelProfile.CUSTOM and not ORGANIZATION_AI_ROUTER.custom_available:
+        return {"revision": body.revision, "status": APPLY_STATUS_FAILED,
+                "error_code": "AI_RUNTIME_PROFILE_UNAVAILABLE"}
+    hardware = detect_hardware()
+    if (
+        profile == ModelProfile.ADVANCED
+        and hardware.vram_gb is not None
+        and hardware.vram_gb < 16
+    ):
+        return {"revision": body.revision, "status": APPLY_STATUS_FAILED,
+                "error_code": "AI_RUNTIME_HARDWARE_INCOMPATIBLE"}
+
+    previous = {
+        "profile": ORGANIZATION_AI_ROUTER.profile,
+        "reasoning_allowed": ORGANIZATION_AI_ROUTER.reasoning_allowed,
+        "max_concurrent_text": ORGANIZATION_AI_ROUTER.text_capacity.limit,
+        "max_concurrent_speech": ORGANIZATION_AI_ROUTER.speech_capacity.limit,
+        "max_queue": ORGANIZATION_AI_ROUTER.text_capacity.max_queue,
+        "revision": ORGANIZATION_AI_ROUTER.applied_revision,
+    }
+    try:
+        ORGANIZATION_AI_ROUTER.apply_local_config(
+            profile=profile,
+            reasoning_allowed=body.reasoning_allowed,
+            max_concurrent_text=body.max_concurrent_text,
+            max_concurrent_speech=body.max_concurrent_speech,
+            max_queue=body.max_queue,
+            revision=body.revision,
+        )
+    except AIRuntimeError as error:
+        # L'ancienne configuration reste active : une configuration refusee ne
+        # doit pas laisser le parc sans reglage du tout.
+        ORGANIZATION_AI_ROUTER.apply_local_config(**previous)
+        return {"revision": body.revision, "status": APPLY_STATUS_FAILED,
+                "error_code": error.code}
+
+    health = await ORGANIZATION_AI_ROUTER.health()
+    return {
+        "revision": body.revision,
+        "status": APPLY_STATUS_APPLIED,
+        "runtime_status": health["status"],
+        "text_engine": health["text_engine"]["status"],
+        "speech_engine": health["speech_engine"]["status"],
+    }
 
 
 # ────────────────── Policies produit : cote membre ────────────────────────

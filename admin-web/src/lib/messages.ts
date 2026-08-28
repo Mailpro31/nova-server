@@ -221,6 +221,56 @@ export const t = {
       "Nova does not yet report on deployed workstations. This page will show them when it does.",
   },
 
+  connector: {
+    title: "Private Connector",
+    lead: "How this organization's deployment receives configuration from Nova.",
+    privacy:
+      "The connector synchronizes control metadata only — revisions, status, versions and health. Dictated audio, prompts, transcripts and model output never leave the organization's own infrastructure.",
+    outbound:
+      "The connector calls Nova; Nova never calls your network. No inbound port has to be opened, and no private address is known to Nova.",
+
+    none: "No connector is enrolled yet. Until one is, configuration saved here waits instead of being applied.",
+    pending: "enrollment code(s) waiting to be used",
+
+    status: "Status",
+    statusOnline: "Online",
+    statusDegraded: "Degraded",
+    statusOffline: "Offline",
+    statusRevoked: "Revoked",
+    lastSeen: "Last seen",
+    never: "Never",
+    deployment: "Deployment",
+    connectorVersion: "Connector version",
+    serverVersion: "Nova server version",
+    protocol: "Protocol",
+    protocolUnsupported: "Unsupported protocol — this connector needs updating before it can apply configuration.",
+    updateRecommended: "A newer connector protocol is available. Updating is recommended; nothing breaks until then.",
+    capabilities: "Capabilities",
+    runtimeStatus: "AI runtime",
+    deliveredRevision: "Delivered revision",
+    appliedRevision: "Applied revision",
+    applyStatus: "Configuration",
+    lastError: "Last error",
+
+    enrollTitle: "Enroll a connector",
+    enrollBody:
+      "Creates a single-use code. Run the command below on the organization's server; the code stops working once used, and after it expires.",
+    enrollName: "Name",
+    enrollDeployment: "Deployment identifier",
+    enrollAction: "Create enrollment code",
+    enrollCreating: "Creating…",
+    enrollOnce: "This code is shown once. Nova keeps only its fingerprint and cannot show it again.",
+    enrollExpires: "Expires in",
+    enrollCommand: "Run on the organization's server",
+    enrollDone: "Done",
+
+    revoke: "Revoke",
+    revoking: "Revoking…",
+    revokeBody:
+      "Revoking stops synchronization. It does not stop dictation: the deployment keeps running on the configuration it already applied.",
+    readOnly: "Your role can read this page but not enroll or revoke a connector.",
+  },
+
   aiRuntime: {
     title: "AI Runtime",
     lead: "Where this organization's AI processing actually runs.",

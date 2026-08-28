@@ -18,6 +18,7 @@ import { useResource } from "../lib/useResource";
 import { useSession } from "../lib/useAdminSession";
 import { AsyncSection, Facts, Notice, Panel, Tag } from "../components/primitives";
 import { AIRuntime } from "./AIRuntime";
+import { PrivateConnector } from "./Connector";
 
 function formatDuration(seconds: number): string {
   if (seconds <= 0) return "—";
@@ -77,6 +78,10 @@ export function Deployment() {
           </>
         )}
       </AsyncSection>
+      {/* Comment ce deploiement recoit sa configuration, puis ce qu'il en
+          fait. Le Connector vient avant le runtime : sans lui, la
+          configuration du runtime attend. */}
+      <PrivateConnector />
       {/* Ou tourne reellement l'IA de cette organisation. Sa place est ici :
           c'est une propriete du deploiement, pas un reglage produit. */}
       <AIRuntime />

@@ -53,9 +53,34 @@ services:
       NOVA_AI_CUSTOM_MAX_OUTPUT_TOKENS: "${NOVA_AI_CUSTOM_MAX_OUTPUT_TOKENS:-}"
       NOVA_AI_CUSTOM_TEMPERATURE: "${NOVA_AI_CUSTOM_TEMPERATURE:-}"
       NOVA_AI_CUSTOM_REASONING: "${NOVA_AI_CUSTOM_REASONING:-auto}"
+      # Secret partage local : le seul chemin par lequel le Connector
+      # configure ce serveur. Sans lui declare, la route n'existe pas.
+      NOVA_DEPLOYMENT_APPLY_TOKEN: "${NOVA_DEPLOYMENT_APPLY_TOKEN:-}"
     volumes:
       - nova-data:/data
     depends_on: [whisper, llm]
+
+  # Le pont vers le plan de controle Nova. Processus separe : une boucle
+  # reseau qui tourne indefiniment n'a pas sa place dans un serveur d'API.
+  #
+  # Sortant uniquement. Aucun port publie, aucune adresse privee connue de
+  # Nova. S'il ne peut pas joindre le plan de controle, `api` continue de
+  # servir la dictee avec sa derniere configuration.
+  connector:
+    build: .
+    command: ["python", "connector.py", "run"]
+    environment:
+      NOVA_CONNECTOR_STATE: "/data/connector-state.json"
+      NOVA_DATA_PLANE_URL: "http://api:8000"
+      NOVA_DEPLOYMENT_APPLY_TOKEN: "${NOVA_DEPLOYMENT_APPLY_TOKEN:-}"
+      # Injecte par le mecanisme de secrets du deploiement de preference : le
+      # credential n'a alors pas a etre pose sur le disque.
+      NOVA_CONNECTOR_CREDENTIAL: "${NOVA_CONNECTOR_CREDENTIAL:-}"
+    volumes:
+      - nova-data:/data
+    depends_on: [api]
+    restart: unless-stopped
+    profiles: ["connector"]
 
   whisper:
     image: fedirz/faster-whisper-server:latest-cuda
