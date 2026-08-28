@@ -1,0 +1,6 @@
+{
+  "schemas": ["urn:ietf:params:scim:schemas:core:2.0:Group"],
+  "externalId": "entra-group-controlled-001",
+  "displayName": "Controlled Test Group",
+  "members": []
+}

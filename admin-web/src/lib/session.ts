@@ -80,6 +80,7 @@ export const CAPABILITY = {
   identityManage: "identity_manage",
   securityManage: "security_manage",
   diagnosticsRead: "diagnostics_read",
+  provisioningManage: "provisioning_manage",
   // Modifier les policies produit. Distincte des autres a dessein :
   // gouverner ce que l'organisation offre a ses membres n'est ni gerer
   // des personnes, ni administrer la machine.

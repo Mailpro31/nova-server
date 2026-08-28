@@ -1,0 +1,18 @@
+{
+  "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+  "externalId": "entra-object-controlled-001",
+  "userName": "controlled.user@example.com",
+  "active": true,
+  "name": {
+    "givenName": "Controlled",
+    "familyName": "User"
+  },
+  "displayName": "Controlled User",
+  "emails": [
+    {
+      "value": "controlled.user@example.com",
+      "type": "work",
+      "primary": true
+    }
+  ]
+}

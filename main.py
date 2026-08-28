@@ -31,6 +31,7 @@ from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 import connector_release
+import scim
 from ai_runtime import (
     AI_MODEL_NOT_READY,
     AI_RUNTIME_BUSY,
@@ -203,6 +204,13 @@ def db():
     conn.row_factory = sqlite3.Row
     try:
         yield conn
+    except Exception:
+        # A failed SCIM PATCH must restore the original resource (RFC 7644),
+        # and the same transactional rule is the safe default for every other
+        # Control Plane mutation too.
+        conn.rollback()
+        raise
+    else:
         conn.commit()
     finally:
         conn.close()
@@ -373,6 +381,7 @@ def init_db():
         -- Identités fédérées. Une identité n'est pas une permission : cette
         -- table dit QUI se connecte, jamais ce qu'il a le droit de faire.
         CREATE TABLE IF NOT EXISTS federated_identities(
+            user_id TEXT,
             provider TEXT NOT NULL,            -- microsoft_entra | google_workspace | oidc
             external_subject TEXT NOT NULL,    -- oid/sub : immuable, jamais l'e-mail
             external_tenant_id TEXT,           -- tid Microsoft, customer Google, issuer OIDC
@@ -392,7 +401,7 @@ def init_db():
             -- L'émetteur fait partie de la clé : deux IdP OIDC distincts
             -- peuvent parfaitement attribuer le même `sub` à deux personnes
             -- différentes. Sans lui, la seconde écraserait la première.
-            PRIMARY KEY (provider, external_issuer, external_subject)
+            PRIMARY KEY (organization_id, provider, external_issuer, external_subject)
         );
 
         -- Sessions d'administration. Séparées des sessions utilisateur, et
@@ -597,6 +606,9 @@ def init_db():
             ON connectors(credential_hash);
         """)
         migrate_schema(conn)
+        # SCIM foreign keys and tenant indexes require the tenant-scoped users
+        # shape produced by migrate_schema on historical databases.
+        scim.install_schema(conn)
 
 def normalize_email(value: str) -> str:
     """Forme canonique d'une adresse, pour la recherche et l'unicité.
@@ -975,7 +987,7 @@ def migrate_schema(conn):
                 external_issuer TEXT NOT NULL DEFAULT '',
                 created_at REAL,
                 last_seen REAL,
-                PRIMARY KEY (provider, external_issuer, external_subject)
+                PRIMARY KEY (organization_id, provider, external_issuer, external_subject)
             )
         """)
         conn.execute("""
@@ -989,6 +1001,61 @@ def migrate_schema(conn):
         conn.execute("DROP TABLE federated_identities")
         conn.execute(
             "ALTER TABLE federated_identities_next RENAME TO federated_identities"
+        )
+
+    # A provider subject is scoped by the Nova organization. Entra `oid`, for
+    # example, is stable inside one tenant, not globally across a Control Plane.
+    # Rebuild the historical key once, preserving every row and stable user_id.
+    identity_info = conn.execute(
+        "PRAGMA table_info(federated_identities)"
+    ).fetchall()
+    identity_pk = [
+        row["name"]
+        for row in sorted(identity_info, key=lambda item: item["pk"])
+        if row["pk"]
+    ]
+    expected_identity_pk = [
+        "organization_id", "provider", "external_issuer", "external_subject"
+    ]
+    if identity_pk != expected_identity_pk:
+        identity_columns = {row["name"] for row in identity_info}
+        conn.execute("DROP TABLE IF EXISTS federated_identities_tenant_scoped")
+        conn.execute("""
+            CREATE TABLE federated_identities_tenant_scoped(
+                user_id TEXT,
+                provider TEXT NOT NULL,
+                external_subject TEXT NOT NULL,
+                external_tenant_id TEXT,
+                organization_id TEXT NOT NULL,
+                email TEXT NOT NULL,
+                verification TEXT NOT NULL DEFAULT 'transport_only',
+                external_issuer TEXT NOT NULL DEFAULT '',
+                created_at REAL,
+                last_seen REAL,
+                PRIMARY KEY (
+                    organization_id, provider, external_issuer, external_subject
+                )
+            )
+        """)
+        user_id_select = "user_id" if "user_id" in identity_columns else "NULL"
+        conn.execute(f"""
+            INSERT INTO federated_identities_tenant_scoped(
+                user_id, provider, external_subject, external_tenant_id,
+                organization_id, email, verification, external_issuer,
+                created_at, last_seen)
+            SELECT {user_id_select}, provider, external_subject,
+                   external_tenant_id, organization_id, email, verification,
+                   external_issuer, created_at, last_seen
+            FROM federated_identities
+        """)
+        conn.execute("DROP TABLE federated_identities")
+        conn.execute(
+            "ALTER TABLE federated_identities_tenant_scoped "
+            "RENAME TO federated_identities"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_federated_identities_user "
+            "ON federated_identities(user_id)"
         )
 
     user_columns = columns("users")
@@ -2083,6 +2150,7 @@ CAPABILITY_DEPLOYMENT_MANAGE = "deployment_manage"
 CAPABILITY_IDENTITY_MANAGE = "identity_manage"
 CAPABILITY_SECURITY_MANAGE = "security_manage"
 CAPABILITY_DIAGNOSTICS_READ = "diagnostics_read"
+CAPABILITY_PROVISIONING_MANAGE = "provisioning_manage"
 # Modifier les policies produit de l'organisation. Une capacite dediee, et
 # non `identity_manage` ou `security_manage` detournee : gouverner ce que le
 # produit offre aux membres n'est ni gerer des personnes, ni surveiller la
@@ -2105,6 +2173,7 @@ CAPABILITIES_BY_ROLE: dict[str, frozenset[str]] = {
         CAPABILITY_IDENTITY_MANAGE,
         CAPABILITY_SECURITY_MANAGE,
         CAPABILITY_DIAGNOSTICS_READ,
+        CAPABILITY_PROVISIONING_MANAGE,
         # Decider ce que l'organisation offre a ses membres est une decision
         # d'organisation, pas d'exploitation : `it_admin` ne la recoit pas.
         # Il gere la machine — fournisseurs, deploiement, diagnostics — et la
@@ -2118,6 +2187,7 @@ CAPABILITIES_BY_ROLE: dict[str, frozenset[str]] = {
         CAPABILITY_DISCOVERY_MANAGE,
         CAPABILITY_DEPLOYMENT_MANAGE,
         CAPABILITY_DIAGNOSTICS_READ,
+        CAPABILITY_PROVISIONING_MANAGE,
     }),
     SECURITY_ROLE_READ_ONLY: frozenset({
         CAPABILITY_ORGANIZATION_READ,
@@ -2851,6 +2921,7 @@ def record_federated_identity(
     external_tenant_id: str | None,
     verification: str = "transport_only",
     external_issuer: str = "",
+    organization_id: str | None = None,
 ):
     """Associe une identité externe **immuable** à un compte.
 
@@ -2870,7 +2941,7 @@ def record_federated_identity(
     if not external_subject:
         return
     now = time.time()
-    organization_id = nova_organization_id()
+    organization_id = organization_id or nova_organization_id()
     with db() as conn:
         # L'identité pointe vers le compte, pas seulement vers son adresse :
         # c'est ce qui permet à une réauthentification de prouver qu'elle
@@ -2897,14 +2968,15 @@ def record_federated_identity(
         conn.execute(
             "UPDATE federated_identities SET last_seen=?, email=?, external_tenant_id=?, "
             "verification=?, user_id=COALESCE(?, user_id) "
-            "WHERE provider=? AND external_issuer=? AND external_subject=?",
-            (now, email, external_tenant_id, verification, user_id, provider,
-             external_issuer, external_subject),
+            "WHERE organization_id=? AND provider=? AND external_issuer=? "
+            "AND external_subject=?",
+            (now, email, external_tenant_id, verification, user_id, organization_id,
+             provider, external_issuer, external_subject),
         )
         conn.execute(
             "UPDATE users SET identity_provider=?, external_subject=?, external_tenant_id=? "
-            "WHERE email=?",
-            (provider, external_subject, external_tenant_id, email),
+            "WHERE organization_id=? AND user_id=?",
+            (provider, external_subject, external_tenant_id, organization_id, user_id),
         )
 
 
@@ -3756,7 +3828,7 @@ app = FastAPI(title="Nova Server", version="0.2.0")
 #
 # Declarees ici plutot qu'en ligne pour qu'un test puisse les confronter aux
 # routes, meme quand aucune origine n'est configuree.
-ADMIN_CORS_METHODS = ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+ADMIN_CORS_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
 ADMIN_CORS_HEADERS = ["Authorization", "Content-Type"]
 
 if NOVA_ADMIN_ORIGINS:
@@ -4564,8 +4636,9 @@ def resolve_member_for_identity(
         # `sub` identique chez deux IdP OIDC ne désigne pas la même personne.
         existing = conn.execute(
             "SELECT email, organization_id FROM federated_identities "
-            "WHERE provider=? AND external_issuer=? AND external_subject=?",
-            (provider, external_issuer, external_subject),
+            "WHERE organization_id=? AND provider=? AND external_issuer=? "
+            "AND external_subject=?",
+            (organization_id, provider, external_issuer, external_subject),
         ).fetchone()
 
         if existing:
@@ -4887,6 +4960,7 @@ async def exchange_sso_code(provider: str, body: SsoExchangeRequest) -> dict:
         tenant_value or None,
         verification="verified",
         external_issuer=external_issuer,
+        organization_id=organization["id"],
     )
     print(
         f"[auth] provider={config['provider_type']} config={config['id'][:8]} "
@@ -8551,6 +8625,17 @@ def control_revoke_member_sessions(
 
 
 AUDIT_ACTION_LABELS = {
+    "scim_credential_created": "Created a SCIM credential",
+    "scim_credential_revoked": "Revoked a SCIM credential",
+    "scim_user_created": "Provisioned a SCIM user",
+    "scim_user_updated": "Updated a SCIM user",
+    "scim_user_suspended": "Suspended a SCIM user",
+    "scim_user_reactivated": "Reactivated a SCIM user",
+    "scim_user_deprovisioned": "Deprovisioned a SCIM user",
+    "scim_group_created": "Created a SCIM group",
+    "scim_group_updated": "Updated a SCIM group",
+    "scim_group_deleted": "Deleted a SCIM group",
+    "scim_group_membership_changed": "Changed SCIM group membership",
     "admin_session.create": "Opened an administration session",
     "admin_step_up.success": "Re-authenticated to administer",
     "admin_role.grant": "Granted administrator role",
@@ -9232,3 +9317,25 @@ async def engineering_notes(body: CommandRequest, user: str = Depends(current_us
     return {"text": await execute_text(TaskType.ENGINEERING_NOTES, prompt, source_text)}
 
 # ================================================================ ADMIN
+
+# SCIM is installed only after every identity/session guard it delegates to is
+# defined.  The protocol module receives an explicit, narrow backend instead of
+# importing this module and creating a circular trust boundary.
+scim.install_routes(
+    app,
+    scim.Backend(
+        database=db,
+        hash_token=hash_token,
+        user_by_id=user_by_id,
+        user_by_email=user_by_email,
+        create_user=create_user,
+        update_user_email=update_user_email,
+        normalize_email=normalize_email,
+        account_status=account_status,
+        security_role_for=security_role_for,
+        guard_last_identity_manager=guard_last_identity_manager,
+        require_organization_access=require_organization_access,
+        admin_read_guard=require_admin_capability(CAPABILITY_ORGANIZATION_READ),
+        admin_manage_guard=require_admin_capability(CAPABILITY_PROVISIONING_MANAGE),
+    ),
+)

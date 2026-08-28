@@ -30,12 +30,14 @@ import { Administrators } from "./pages/Administrators";
 import { Identity } from "./pages/Identity";
 import { Members } from "./pages/Members";
 import { Packages } from "./pages/Packages";
+import { Provisioning } from "./pages/Provisioning";
 import { Overview } from "./pages/Overview";
 import { Configuration, Deployment, Diagnostics, Security } from "./pages/Rest";
 
 const PAGES = [
   { path: "overview", label: t.nav.overview, element: <Overview /> },
   { path: "identity", label: t.nav.identity, element: <Identity /> },
+  { path: "provisioning", label: t.nav.provisioning, element: <Provisioning /> },
   {
     path: "administrators",
     label: t.nav.administrators,

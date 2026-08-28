@@ -40,6 +40,39 @@ export interface ProviderConfigView {
   validation_error: string | null;
 }
 
+export interface ScimCredentialView {
+  credential_id: string;
+  name: string;
+  provider_context: string;
+  created_at: number;
+  last_used_at: number | null;
+  revoked_at: number | null;
+  expires_at: number | null;
+}
+
+export interface ProvisioningView {
+  endpoint: string;
+  status: "active" | "not_configured";
+  credentials: ScimCredentialView[];
+  users_managed: number;
+  groups_managed: number;
+  managed_groups: {
+    group_id: string;
+    external_id: string | null;
+    display_name: string;
+    updated_at: number;
+    member_count: number;
+  }[];
+  last_request: {
+    created_at: number;
+    action: string;
+    success: number;
+    error_code: string | null;
+  } | null;
+  last_success: { created_at: number; action: string } | null;
+  last_error: { created_at: number; error_code: string } | null;
+}
+
 export interface DiscoveryConfigView {
   discovery_slug: string | null;
   discovery_enabled: boolean;
@@ -396,6 +429,33 @@ export class ControlPlane {
   providerConfigs() {
     return this.client.request<{ configs: ProviderConfigView[] }>(
       "/api/admin/provider-configs",
+    );
+  }
+
+  provisioning(organizationId: string) {
+    return this.client.request<ProvisioningView>(
+      `/api/control/organizations/${organizationId}/provisioning`,
+    );
+  }
+
+  createScimCredential(
+    organizationId: string,
+    body: { name: string; provider_context: string },
+  ) {
+    return this.client.request<{
+      credential: ScimCredentialView;
+      /** Plaintext is present on this response only and stays in component memory. */
+      token: string;
+    }>(`/api/control/organizations/${organizationId}/provisioning/credentials`, {
+      method: "POST",
+      body,
+    });
+  }
+
+  revokeScimCredential(organizationId: string, credentialId: string) {
+    return this.client.request<{ revoked: boolean }>(
+      `/api/control/organizations/${organizationId}/provisioning/credentials/${credentialId}/revoke`,
+      { method: "POST", body: {} },
     );
   }
 
