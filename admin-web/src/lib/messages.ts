@@ -264,6 +264,25 @@ export const t = {
     enrollCommand: "Run on the organization's server",
     enrollDone: "Done",
 
+    credentialTitle: "Credential",
+    credentialAge: "Age",
+    credentialGeneration: "Generation",
+    lastRotated: "Last rotated",
+    neverRotated: "Never rotated",
+    rotationState: "Rotation",
+    rotationStable: "Healthy",
+    rotationRequested: "Requested — waiting for the connector",
+    rotationPending: "Rotating — waiting for the connector to confirm",
+    rotationFailed: "Last rotation did not complete. The current credential still works; you can request another.",
+    rotationUnsupported:
+      "This connector is too old to rotate its credential. Update it, or revoke and enroll it again.",
+    rotationBody:
+      "Rotation replaces the connector’s credential without re-enrolling it. Nova never shows the new secret — the connector receives it directly and proves it can use it before the old one stops working.",
+    requestRotation: "Request rotation",
+    requestingRotation: "Requesting…",
+    rotationCompromised:
+      "If you believe the credential is compromised, revoke the connector instead. Rotation assumes the old credential still works.",
+
     revoke: "Revoke",
     revoking: "Revoking…",
     revokeBody:

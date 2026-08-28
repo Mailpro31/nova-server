@@ -117,13 +117,81 @@ describe("Privacy boundary", () => {
     }
   });
 
-  test("the connector view type exposes no secret", () => {
+  test("the connector view carries credential metadata but no secret", () => {
+    // La distinction est le sujet : l'age, la generation et l'etat de bascule
+    // servent a administrer ; une empreinte ou un fragment de secret ne
+    // serviraient qu'a exploiter une fuite.
     const view = code(CONTROL).slice(
       code(CONTROL).indexOf("export interface ConnectorView {"),
       code(CONTROL).indexOf("export interface ConnectorListView"),
     );
-    expect(view).not.toContain("credential");
-    expect(view).not.toContain("token");
+    expect(view).toContain("rotation_state");
+    for (const secret of [
+      "credential_hash",
+      "connector_credential",
+      "pending_credential",
+      "token",
+      "fingerprint",
+    ]) {
+      expect(view).not.toContain(secret);
+    }
+  });
+});
+
+describe("Credential rotation", () => {
+  test("requesting rotation is gated on deployment_manage", () => {
+    const source = code(PAGE);
+    expect(source).toContain("mayManage &&");
+    expect(source).toContain("requestConnectorRotation");
+  });
+
+  test("the console never receives or displays the new secret", () => {
+    // Faire transiter un credential durable par un navigateur d'administration
+    // en ferait la piece la plus exposee de la chaine. La console pose un
+    // drapeau ; le Connector recoit le secret directement.
+    const rotate = code(CONTROL).slice(
+      code(CONTROL).indexOf("requestConnectorRotation"),
+      code(CONTROL).indexOf("revokeConnector"),
+    );
+    expect(rotate).toContain("body: {}");
+    expect(rotate).not.toContain("credential:");
+    expect(code(PAGE)).not.toContain("connector_credential");
+  });
+
+  test("the screen shows state and age, never a secret or a fingerprint", () => {
+    const source = code(PAGE);
+    expect(source).toContain("connector.credential.age_days");
+    expect(source).toContain("connector.credential.rotation_state");
+    expect(source).not.toContain("credential_hash");
+    expect(source).not.toContain("fingerprint");
+  });
+
+  test("requested is not shown as done", () => {
+    // « Demande » et « fait » sont deux faits differents, comme livre et
+    // applique. L'ecran re-lit le serveur plutot que de refleter le clic.
+    const rotation = code(PAGE).slice(code(PAGE).indexOf("async function requestRotation"));
+    expect(rotation).toContain("retry()");
+    const source = code(PAGE);
+    expect(source).toContain("rotationLabel");
+    expect(source).toContain('state === "pending"');
+  });
+
+  test("an in-flight rotation cannot be requested again from the screen", () => {
+    const source = code(PAGE);
+    expect(source).toContain('connector.credential.rotation_state === "requested"');
+    expect(source).toContain('connector.credential.rotation_state === "pending"');
+  });
+
+  test("a connector that cannot rotate is told so instead of offered a button", () => {
+    const source = code(PAGE);
+    expect(source).toContain("connector.credential.rotation_supported");
+    expect(source).toContain("rotationUnsupported");
+  });
+
+  test("rotation and revocation are presented as different answers", () => {
+    // Un credential compromis se revoque ; la rotation suppose que l'ancien
+    // fonctionne encore assez longtemps pour poser le nouveau.
+    expect(code(PAGE)).toContain("rotationCompromised");
   });
 });
 

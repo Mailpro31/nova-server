@@ -20,7 +20,13 @@ from pathlib import Path
 from unittest.mock import patch
 
 import connector as connector_service
+import local_channel
 import main
+from ai_runtime import (
+    FakeSpeechInferenceBackend,
+    FakeTextInferenceBackend,
+    OrganizationAIRouter,
+)
 
 
 def clear_connectors():
@@ -594,8 +600,15 @@ class AuditTests(ConnectorTestCase):
         self.assertIn("connector.apply.applied", actions)
 
 
-class DeploymentApplyTests(ConnectorTestCase):
-    """Le point par lequel le Connector configure le nova-server local."""
+class LegacyDeploymentApplyTests(ConnectorTestCase):
+    """Le chemin herite de la Phase 33 : secret statique partage.
+
+    Il n'est plus le chemin nominal. Il n'est meme plus allume par defaut : un
+    secret sans rotation ni revocation, en clair dans l'environnement et dans le
+    fichier compose, donnait acces a la reconfiguration de tout le plan de
+    donnees. Un deploiement existant peut le rallumer explicitement, le temps de
+    migrer — jamais sans le savoir.
+    """
 
     TOKEN = "jeton-de-deploiement-local-0123456789"
 
@@ -615,62 +628,48 @@ class DeploymentApplyTests(ConnectorTestCase):
             json=payload,
         )
 
-    def test_the_route_does_not_exist_without_a_deployment_secret(self):
-        with patch.object(main, "NOVA_DEPLOYMENT_APPLY_TOKEN", ""):
+    def test_the_legacy_route_is_off_even_when_the_old_secret_is_present(self):
+        """Le coeur de la migration.
+
+        Un deploiement Phase 33 qui met a jour son image garde sa variable
+        d'environnement. La route ne doit pas rester ouverte pour autant : le
+        secret existant ne vaut pas consentement a le conserver.
+        """
+        with patch.object(main, "NOVA_DEPLOYMENT_APPLY_TOKEN", self.TOKEN), patch.object(
+            main, "NOVA_ALLOW_LEGACY_DEPLOYMENT_TOKEN", False
+        ):
             response = self.apply()
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.json()["detail"], "DEPLOYMENT_APPLY_DISABLED")
 
-    def test_a_wrong_secret_is_refused(self):
-        with patch.object(main, "NOVA_DEPLOYMENT_APPLY_TOKEN", self.TOKEN):
+    def test_the_legacy_route_needs_an_explicit_opt_in(self):
+        with patch.object(main, "NOVA_DEPLOYMENT_APPLY_TOKEN", self.TOKEN), patch.object(
+            main, "NOVA_ALLOW_LEGACY_DEPLOYMENT_TOKEN", True
+        ):
             response = self.apply(token="pas-le-bon-jeton")
         self.assertEqual(response.status_code, 401)
 
-    def test_a_valid_configuration_is_applied_and_confirmed(self):
-        from ai_runtime import (
-            FakeSpeechInferenceBackend,
-            FakeTextInferenceBackend,
-            OrganizationAIRouter,
-        )
+    def test_the_opt_in_alone_is_not_enough_without_a_secret(self):
+        with patch.object(main, "NOVA_DEPLOYMENT_APPLY_TOKEN", ""), patch.object(
+            main, "NOVA_ALLOW_LEGACY_DEPLOYMENT_TOKEN", True
+        ):
+            self.assertEqual(self.apply().status_code, 404)
 
+    def test_the_legacy_route_still_works_once_explicitly_enabled(self):
+        # Ne pas casser brutalement un deploiement existant : il doit pouvoir
+        # migrer, pas decouvrir sa panne en production.
         router = OrganizationAIRouter(
             FakeTextInferenceBackend(), FakeSpeechInferenceBackend()
         )
         with patch.object(main, "NOVA_DEPLOYMENT_APPLY_TOKEN", self.TOKEN), patch.object(
-            main, "ORGANIZATION_AI_ROUTER", router
-        ):
+            main, "NOVA_ALLOW_LEGACY_DEPLOYMENT_TOKEN", True
+        ), patch.object(main, "ORGANIZATION_AI_ROUTER", router):
             response = self.apply()
         self.assertEqual(response.status_code, 200)
-        body = response.json()
-        self.assertEqual(body["status"], "applied")
-        self.assertEqual(body["revision"], 4)
+        self.assertEqual(response.json()["status"], "applied")
         self.assertEqual(router.applied_revision, 4)
 
-    def test_an_impossible_configuration_is_reported_not_forced(self):
-        from ai_runtime import (
-            FakeSpeechInferenceBackend,
-            FakeTextInferenceBackend,
-            OrganizationAIRouter,
-        )
-
-        router = OrganizationAIRouter(
-            FakeTextInferenceBackend(), FakeSpeechInferenceBackend()
-        )
-        with patch.object(main, "NOVA_DEPLOYMENT_APPLY_TOKEN", self.TOKEN), patch.object(
-            main, "ORGANIZATION_AI_ROUTER", router
-        ):
-            response = self.apply(profile="custom")
-        self.assertEqual(response.status_code, 200)
-        body = response.json()
-        self.assertEqual(body["status"], "failed")
-        self.assertEqual(body["error_code"], "AI_RUNTIME_PROFILE_UNAVAILABLE")
-        # L'ancienne configuration reste active : un refus ne laisse pas le
-        # parc sans reglage.
-        self.assertEqual(router.profile, main.ModelProfile.STANDARD)
-
     def test_the_route_carries_no_runtime_url_or_model(self):
-        # L'infrastructure appartient au deploiement. Le plan de controle envoie
-        # un comportement, jamais une destination.
         fields = set(main.DeploymentApplyBody.model_fields)
         self.assertEqual(
             fields,
@@ -789,7 +788,12 @@ class ConnectorServiceTests(unittest.TestCase):
         # shell distant, et sa liste de capacites doit le montrer.
         self.assertEqual(
             connector_service.CAPABILITIES,
-            ["ai_runtime_config_v1", "health_reporting_v1", "diagnostics_v1"],
+            [
+                "ai_runtime_config_v1",
+                "health_reporting_v1",
+                "diagnostics_v1",
+                "credential_rotation_v1",
+            ],
         )
         for forbidden in ("exec", "shell", "command", "tunnel", "proxy", "file"):
             for capability in connector_service.CAPABILITIES:

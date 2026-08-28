@@ -176,6 +176,20 @@ export interface ConnectorView {
   created_at: number;
   last_seen_at: number | null;
   revoked_at: number | null;
+  /**
+   * L'age et l'etat de bascule du credential. Ni empreinte, ni fragment de
+   * secret : rien de tout cela n'aiderait a administrer, et tout cela
+   * aiderait a exploiter une fuite.
+   */
+  credential: {
+    generation: number;
+    created_at: number;
+    age_days: number;
+    rotation_state: "stable" | "requested" | "pending" | "failed";
+    rotation_requested_at: number | null;
+    last_rotated_at: number | null;
+    rotation_supported: boolean;
+  };
 }
 
 export interface ConnectorListView {
@@ -436,6 +450,20 @@ export class ControlPlane {
     return this.client.request<ConnectorEnrollmentView>(
       "/api/control/connectors/enrollments",
       { method: "POST", body },
+    );
+  }
+
+  /**
+   * Demande une rotation. La reponse ne porte aucun secret.
+   *
+   * L'administrateur pose un drapeau ; c'est le Connector qui conduit la
+   * bascule et qui recevra le nouveau credential. Faire transiter un secret
+   * durable par un navigateur en ferait la piece la plus exposee de la chaine.
+   */
+  requestConnectorRotation(connectorId: string) {
+    return this.client.request<ConnectorView>(
+      `/api/control/connectors/${connectorId}/rotate`,
+      { method: "POST", body: {} },
     );
   }
 

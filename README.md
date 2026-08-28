@@ -159,6 +159,21 @@ python connector.py enroll --control-plane https://nova.exemple.fr --token <code
 python connector.py run
 ```
 
+Le serveur se lance avec `python serve.py` : il sert l'API publique **et** le
+canal de contrôle local, sur deux points d'écoute distincts. La surface interne
+du Connector n'est jamais montée sur le listener public.
+
+En production, ce canal est un socket Unix dont les permissions font
+l'authentification — il n'y a aucun secret local à gérer, faire tourner ou
+oublier dans un fichier de déploiement. En développement,
+`NOVA_CONNECTOR_LOCAL_TRANSPORT=loopback` utilise 127.0.0.1 avec un jeton
+régénéré à chaque démarrage.
+
+Le credential du Connector se fait tourner depuis Nova Admin, **sans
+ré-enrôlement** : la console demande, le Connector conduit la bascule et prouve
+qu'il sait utiliser le nouveau secret avant que l'ancien cesse de valoir. Nova
+n'affiche jamais ce secret.
+
 Le canal transporte des métadonnées de contrôle uniquement — révisions,
 statuts, versions, santé. Les prompts, l'audio dicté, les transcriptions et les
 sorties de modèle restent dans le plan de données de l'organisation.

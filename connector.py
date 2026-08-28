@@ -56,7 +56,12 @@ PROTOCOL_VERSION = 1
 
 # Ce que ce Connector sait faire. Le plan de controle ne lui enverra rien
 # d'autre : une capacite absente d'ici n'est jamais poussee.
-CAPABILITIES = ["ai_runtime_config_v1", "health_reporting_v1", "diagnostics_v1"]
+CAPABILITIES = [
+    "ai_runtime_config_v1",
+    "health_reporting_v1",
+    "diagnostics_v1",
+    "credential_rotation_v1",
+]
 
 DEFAULT_HEARTBEAT_SECONDS = 45
 BACKOFF_INITIAL_SECONDS = 5.0
@@ -78,12 +83,62 @@ def state_path() -> Path:
     ).expanduser()
 
 
-def data_plane_url() -> str:
-    return os.getenv("NOVA_DATA_PLANE_URL", "http://127.0.0.1:8000").rstrip("/")
+LOCAL_TRANSPORT_UNIX = "unix"
+LOCAL_TRANSPORT_LOOPBACK = "loopback"
 
 
-def deployment_apply_token() -> str:
-    return os.getenv("NOVA_DEPLOYMENT_APPLY_TOKEN", "")
+def local_transport() -> str:
+    return os.getenv("NOVA_CONNECTOR_LOCAL_TRANSPORT", LOCAL_TRANSPORT_UNIX)
+
+
+def local_socket_path() -> str:
+    return os.getenv("NOVA_CONNECTOR_LOCAL_SOCKET", "/run/nova/control.sock")
+
+
+def local_auth_file() -> Path:
+    return Path(os.getenv("NOVA_CONNECTOR_LOCAL_AUTH_FILE", "/run/nova/local-auth"))
+
+
+def local_loopback_url() -> str:
+    port = os.getenv("NOVA_CONNECTOR_LOCAL_PORT", "8129")
+    return f"http://127.0.0.1:{port}"
+
+
+def local_client() -> tuple[httpx.Client, dict[str, str]] | None:
+    """Un client vers le plan de donnees local, ou rien.
+
+    En `unix`, l'authentification est le socket lui-meme : pouvoir l'ouvrir,
+    c'est etre autorise. Aucun jeton n'est envoye, parce qu'aucun jeton
+    n'ajouterait de garantie — qui peut ouvrir le socket pourrait aussi lire le
+    fichier qui le porterait.
+
+    En `loopback`, le jeton est ephemere : nova-server le regenere a chaque
+    demarrage et le depose avec des permissions restreintes. Ce n'est plus un
+    secret partage figes dans un fichier de deploiement.
+    """
+    transport = local_transport()
+    if transport == LOCAL_TRANSPORT_UNIX:
+        path = local_socket_path()
+        if not Path(path).exists():
+            return None
+        return (
+            httpx.Client(
+                transport=httpx.HTTPTransport(uds=path),
+                base_url="http://local",
+                timeout=APPLY_TIMEOUT_SECONDS,
+            ),
+            {},
+        )
+    if transport == LOCAL_TRANSPORT_LOOPBACK:
+        auth_file = local_auth_file()
+        if not auth_file.exists():
+            return None
+        token = auth_file.read_text(encoding="utf-8").strip()
+        return (
+            httpx.Client(base_url=local_loopback_url(), timeout=APPLY_TIMEOUT_SECONDS),
+            {"Authorization": f"Bearer {token}"},
+        )
+    return None
 
 
 def validate_control_plane_url(value: str) -> str:
@@ -127,9 +182,19 @@ def write_state(state: dict) -> None:
     """
     path = state_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-        json.dump(state, handle, indent=2)
+    temporary = path.parent / f".{path.name}.{os.getpid()}.tmp"
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump(state, handle, indent=2)
+            handle.flush()
+            os.fsync(handle.fileno())
+        # Remplacement atomique : un redemarrage lit l'ancien etat ou le
+        # nouveau, jamais un fichier a moitie ecrit. C'est ce qui permet de
+        # perdre le processus au milieu d'une rotation sans perdre l'identite.
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
     try:
         os.chmod(path, 0o600)
     except OSError:
@@ -148,6 +213,86 @@ def connector_credential(state: dict) -> str:
     return os.getenv("NOVA_CONNECTOR_CREDENTIAL") or state.get("connector_credential", "")
 
 
+def pending_credential(state: dict) -> str:
+    """Le credential recu mais pas encore confirme, s'il y en a un."""
+    return state.get("pending_credential", "")
+
+
+def rotate_credential(state: dict) -> dict:
+    """Fait tourner le credential de ce Connector, sans re-enrolement.
+
+    L'ordre est celui-ci et pas l'inverse :
+
+        demander -> persister -> prouver -> l'ancien meurt
+
+    Persister avant de prouver est le point critique. Si le processus meurt
+    entre les deux, le redemarrage retrouve le secret en attente et finit la
+    bascule ; l'inverse perdrait une identite pour une ecriture disque ratee.
+    """
+    credential = connector_credential(state)
+    body = {"protocol_version": PROTOCOL_VERSION, "connector_version": CONNECTOR_VERSION}
+    response = httpx.post(
+        f"{state['control_plane_url']}/api/connector/credential/rotate",
+        headers={"Authorization": f"Bearer {credential}"},
+        json=body,
+        timeout=REQUEST_TIMEOUT_SECONDS,
+    )
+    if response.status_code == 409:
+        # Une bascule est deja en cours. Ce n'est pas une erreur : la reprise
+        # s'en chargera avec le secret en attente.
+        print("[connector] rotation deja en cours", flush=True)
+        return state
+    if response.status_code != 200:
+        print(f"[connector] rotation refusee ({response.status_code})", flush=True)
+        return state
+
+    state = {**state, "pending_credential": response.json()["connector_credential"]}
+    write_state(state)
+    return confirm_rotation(state)
+
+
+def confirm_rotation(state: dict) -> dict:
+    """Prouve la possession du nouveau secret, puis promeut l'etat local.
+
+    L'appel est authentifie avec le **nouveau** credential : le serveur ne
+    croit pas sur parole, il constate. Tant que cette preuve n'a pas abouti,
+    l'ancien secret reste celui qui compte localement.
+    """
+    pending = pending_credential(state)
+    if not pending:
+        return state
+    body = {"protocol_version": PROTOCOL_VERSION, "connector_version": CONNECTOR_VERSION}
+    try:
+        response = httpx.post(
+            f"{state['control_plane_url']}/api/connector/credential/confirm",
+            headers={"Authorization": f"Bearer {pending}"},
+            json=body,
+            timeout=REQUEST_TIMEOUT_SECONDS,
+        )
+    except httpx.HTTPError:
+        # Le plan de controle est injoignable. Le secret en attente reste sur
+        # disque et la reprise reessaiera : rien n'est perdu, rien n'est force.
+        return state
+    if response.status_code == 200:
+        promoted = {**state, "connector_credential": pending}
+        promoted.pop("pending_credential", None)
+        write_state(promoted)
+        print(
+            f"[connector] credential renouvele (generation {response.json().get('generation')})",
+            flush=True,
+        )
+        return promoted
+    if response.status_code == 401:
+        # Le secret en attente a expire ou a ete invalide. L'ancien vaut
+        # toujours : on abandonne cette bascule plutot que de s'enfermer dehors.
+        abandoned = {**state}
+        abandoned.pop("pending_credential", None)
+        write_state(abandoned)
+        print("[connector] secret en attente expire — rotation abandonnee", flush=True)
+        return abandoned
+    return state
+
+
 # ── Plan de donnees local ────────────────────────────────────────────────
 
 
@@ -156,27 +301,36 @@ def local_health() -> dict:
 
     Aucune requete, aucune transcription, aucune sortie de modele : le plan de
     controle n'en a pas besoin pour dire si un deploiement va bien.
+
+    Un canal local indisponible se rapporte comme tel. Le taire ferait croire
+    que le plan de donnees est en panne alors que seul le tuyau manque.
     """
     empty = {
         "runtime_status": "unavailable",
         "text_engine": "unavailable",
         "speech_engine": "unavailable",
         "queue_length": 0,
+        "last_error_code": "LOCAL_TRANSPORT_UNAVAILABLE",
     }
-    token = deployment_apply_token()
-    if not token:
+    client = local_client()
+    if client is None:
         return empty
+    session, headers = client
     try:
-        response = httpx.get(
-            f"{data_plane_url()}/api/health", timeout=REQUEST_TIMEOUT_SECONDS
-        )
+        with session:
+            response = session.get("/internal/connector/health", headers=headers)
         if response.status_code != 200:
-            return empty
-    except httpx.HTTPError:
-        return empty
-    # `/api/health` reste une sonde de vivacite volontairement pauvre. L'etat
-    # detaille du runtime vient de l'application elle-meme, rapportee ensuite.
-    return {**empty, "runtime_status": "healthy"}
+            return {**empty, "last_error_code": "LOCAL_CONNECTOR_AUTH_FAILED"}
+        body = response.json()
+    except (httpx.HTTPError, ValueError):
+        return {**empty, "last_error_code": "LOCAL_DATA_PLANE_UNAVAILABLE"}
+    return {
+        "runtime_status": body.get("runtime_status", "unavailable"),
+        "text_engine": body.get("text_engine", "unavailable"),
+        "speech_engine": body.get("speech_engine", "unavailable"),
+        "queue_length": int(body.get("queue_length", 0)),
+        "last_error_code": None,
+    }
 
 
 def apply_locally(desired: dict) -> tuple[str, str | None, dict | None]:
@@ -186,9 +340,12 @@ def apply_locally(desired: dict) -> tuple[str, str | None, dict | None]:
     si le plan de donnees l'a confirme : deviner reviendrait a rapporter au plan
     de controle un succes que personne n'a observe.
     """
-    token = deployment_apply_token()
-    if not token:
-        return APPLY_STATUS_FAILED, "DEPLOYMENT_APPLY_DISABLED", None
+    client = local_client()
+    if client is None:
+        # Ni socket, ni jeton ephemere : il n'y a pas de chemin nominal, et il
+        # n'y a surtout pas de secret par defaut sur lequel retomber.
+        return APPLY_STATUS_FAILED, "LOCAL_TRANSPORT_UNAVAILABLE", None
+    session, headers = client
     payload = {
         "revision": desired["revision"],
         "profile": desired["profile"],
@@ -198,16 +355,16 @@ def apply_locally(desired: dict) -> tuple[str, str | None, dict | None]:
         "max_queue": desired["max_queue"],
     }
     try:
-        response = httpx.post(
-            f"{data_plane_url()}/api/deployment/ai-runtime/apply",
-            headers={"Authorization": f"Bearer {token}"},
-            json=payload,
-            timeout=APPLY_TIMEOUT_SECONDS,
-        )
+        with session:
+            response = session.post(
+                "/internal/connector/runtime/apply", headers=headers, json=payload
+            )
     except httpx.HTTPError:
-        return APPLY_STATUS_FAILED, "DATA_PLANE_UNREACHABLE", None
+        return APPLY_STATUS_FAILED, "LOCAL_DATA_PLANE_UNAVAILABLE", None
+    if response.status_code == 401:
+        return APPLY_STATUS_FAILED, "LOCAL_CONNECTOR_AUTH_FAILED", None
     if response.status_code != 200:
-        return APPLY_STATUS_FAILED, "DATA_PLANE_REFUSED", None
+        return APPLY_STATUS_FAILED, "LOCAL_DATA_PLANE_UNAVAILABLE", None
     body = response.json()
     if body.get("status") != APPLY_STATUS_APPLIED:
         return APPLY_STATUS_FAILED, body.get("error_code"), None
@@ -302,6 +459,8 @@ def sync_once(state: dict) -> tuple[dict, float]:
     desired = (answer.get("desired") or {}).get("ai_runtime")
     if desired:
         state = reconcile(state, desired)
+    if answer.get("rotation_requested"):
+        state = rotate_credential(state)
     return state, heartbeat
 
 
@@ -348,6 +507,13 @@ def run() -> int:
     state = read_state()
     if not state.get("control_plane_url") or not connector_credential(state):
         raise SystemExit("Connector non enrole — lancer `connector.py enroll` d'abord")
+
+    if pending_credential(state):
+        # Une rotation etait en cours quand ce processus s'est arrete. On la
+        # termine avant toute autre chose : reprendre la synchronisation avec
+        # un etat ambigu ferait osciller les deux secrets.
+        print("[connector] reprise d'une rotation interrompue", flush=True)
+        state = confirm_rotation(state)
 
     stopping = {"now": False}
 

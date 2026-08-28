@@ -53,11 +53,16 @@ services:
       NOVA_AI_CUSTOM_MAX_OUTPUT_TOKENS: "${NOVA_AI_CUSTOM_MAX_OUTPUT_TOKENS:-}"
       NOVA_AI_CUSTOM_TEMPERATURE: "${NOVA_AI_CUSTOM_TEMPERATURE:-}"
       NOVA_AI_CUSTOM_REASONING: "${NOVA_AI_CUSTOM_REASONING:-auto}"
-      # Secret partage local : le seul chemin par lequel le Connector
-      # configure ce serveur. Sans lui declare, la route n'existe pas.
-      NOVA_DEPLOYMENT_APPLY_TOKEN: "${NOVA_DEPLOYMENT_APPLY_TOKEN:-}"
+      # Canal de controle local. `unix` en production : les permissions du
+      # socket font l'authentification, et il n'y a aucun secret partage a
+      # gerer, faire tourner ou oublier dans un fichier de deploiement.
+      NOVA_CONNECTOR_LOCAL_TRANSPORT: "unix"
+      NOVA_CONNECTOR_LOCAL_SOCKET: "/run/nova/control.sock"
+    command: ["python", "serve.py"]
     volumes:
       - nova-data:/data
+      # Le seul chemin partage entre les deux services, et rien d'autre.
+      - nova-run:/run/nova
     depends_on: [whisper, llm]
 
   # Le pont vers le plan de controle Nova. Processus separe : une boucle
@@ -71,13 +76,15 @@ services:
     command: ["python", "connector.py", "run"]
     environment:
       NOVA_CONNECTOR_STATE: "/data/connector-state.json"
-      NOVA_DATA_PLANE_URL: "http://api:8000"
-      NOVA_DEPLOYMENT_APPLY_TOKEN: "${NOVA_DEPLOYMENT_APPLY_TOKEN:-}"
+      NOVA_CONNECTOR_LOCAL_TRANSPORT: "unix"
+      NOVA_CONNECTOR_LOCAL_SOCKET: "/run/nova/control.sock"
       # Injecte par le mecanisme de secrets du deploiement de preference : le
-      # credential n'a alors pas a etre pose sur le disque.
+      # credential n'a alors pas a etre pose sur le disque. Il se fait tourner
+      # depuis Nova Admin, sans re-enroler ce Connector.
       NOVA_CONNECTOR_CREDENTIAL: "${NOVA_CONNECTOR_CREDENTIAL:-}"
     volumes:
       - nova-data:/data
+      - nova-run:/run/nova
     depends_on: [api]
     restart: unless-stopped
     profiles: ["connector"]
@@ -110,3 +117,6 @@ services:
 volumes:
   nova-data:
   nova-models:
+  # Le socket de controle local. Monte uniquement dans `api` et `connector` :
+  # aucun autre service n'a de raison de l'atteindre.
+  nova-run:

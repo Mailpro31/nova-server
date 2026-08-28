@@ -84,14 +84,86 @@ lequel de ses essais a presque abouti.
 - Ré-enrôlement : nouvelle identité, nouveau credential. L'ancien ne redevient
   jamais valide.
 
-**Rotation** — non implémentée en Phase 33. Le modèle la permet (le credential
-est une ligne, remplaçable) mais l'endpoint et la bascule sans interruption
-appartiennent à une phase ultérieure. En attendant, la rotation se fait par
-révocation puis ré-enrôlement, avec une courte fenêtre pendant laquelle la
-synchronisation est suspendue — le plan de données, lui, continue de servir.
-
 **mTLS** — envisageable plus tard sans changer le modèle : l'identité du
 Connector est déjà une ligne en base, indépendante du moyen de la prouver.
+
+## Rotation du credential
+
+Un credential qui ne tourne jamais finit par être le plus vieux secret du
+déploiement. La rotation le remplace **sans ré-enrôlement** : l'identité du
+Connector, sa configuration et son historique restent les mêmes.
+
+### La machine à états
+
+```
+stable ──(admin demande)──▶ requested ──(le Connector demande)──▶ pending
+   ▲                                                                │
+   └──────────────(le Connector prouve le nouveau)──────────────────┘
+                                    │
+                            (TTL dépassé)
+                                    ▼
+                                 failed
+```
+
+### L'ordre, et pourquoi il est celui-là
+
+```
+demander → persister → prouver → l'ancien meurt
+```
+
+Le plan de contrôle émet le nouveau secret **sans invalider l'ancien**. Le
+Connector le persiste, puis appelle la confirmation **authentifiée avec le
+nouveau** : le serveur ne croit pas sur parole qu'un secret a été reçu, il
+constate que le Connector sait s'en servir. Seulement alors l'ancien cesse de
+valoir.
+
+Révéler le nouveau et tuer l'ancien dans le même geste transformerait la moindre
+écriture disque ratée en ré-enrôlement manuel.
+
+### Fenêtre de chevauchement
+
+Bornée à `NOVA_CONNECTOR_ROTATION_TTL_SECONDS` (600 s par défaut). Pendant cette
+fenêtre, l'ancien **et** le nouveau authentifient. Deux credentials durables
+actifs indéfiniment doubleraient la surface au lieu de la faire tourner.
+
+À l'expiration : le secret en attente est effacé, l'état passe à `failed`, et
+**le credential courant reste valide**. Échouer dans l'autre sens enfermerait
+dehors un Connector qui n'a rien fait de mal.
+
+### Reprise après crash
+
+L'état local est écrit atomiquement — fichier temporaire, `fsync`, remplacement
+— et le secret en attente est persisté *avant* la confirmation. Si le processus
+meurt entre les deux, le redémarrage retrouve le secret en attente et termine la
+bascule. Aucun ré-enrôlement, aucune édition manuelle de fichier.
+
+### L'administrateur ne voit jamais le secret
+
+La console pose un drapeau (`rotation_state = requested`) ; le Connector conduit
+la bascule et reçoit le secret directement. Faire transiter un credential
+durable par un navigateur d'administration en ferait la pièce la plus exposée de
+la chaîne.
+
+### Rotation n'est pas révocation
+
+La rotation suppose que l'ancien credential fonctionne encore assez longtemps
+pour poser le nouveau. Un credential **compromis** se révoque : l'ancien meurt
+immédiatement et le Connector doit être ré-enrôlé. Transformer un cas compromis
+en rotation silencieuse laisserait l'attaquant conduire la bascule.
+
+### Compatibilité
+
+La capacité `credential_rotation_v1` est négociée. Un Connector antérieur ne la
+déclare pas ; le plan de contrôle refuse alors la demande
+(`CONNECTOR_ROTATION_UNSUPPORTED`) et la console propose de le mettre à jour ou
+de le ré-enrôler, plutôt que d'émettre un ordre dans le vide.
+
+### Ce qui n'est pas fait
+
+La rotation **périodique automatique** n'est pas activée. Le modèle la permet —
+l'âge du credential est exposé — mais l'activer demande une politique explicite :
+quelle fréquence, et quel comportement si un Connector est hors ligne le jour
+dit.
 
 ## Protocole
 
@@ -165,16 +237,88 @@ comme un rollback de package.
 le processus meurt entre l'application et l'ACK, le redémarrage retrouve la
 révision posée et l'acquitte sans la réappliquer.
 
-## Application locale
+## Le canal local
 
-Le Connector configure le nova-server local par
-`POST /api/deployment/ai-runtime/apply`, protégé par un secret de déploiement
-partagé (`NOVA_DEPLOYMENT_APPLY_TOKEN`). Sans ce secret déclaré, la route
-n'existe pas.
+### Le défaut corrigé
 
-Séquence : valider → appliquer → vérifier la santé → répondre. Une configuration
-refusée laisse l'ancienne active : un refus ne doit pas laisser le parc sans
-réglage du tout.
+La Phase 33 faisait parler le Connector au plan de données par le **listener
+public**, avec un **secret statique partagé** posé dans l'environnement et dans
+le fichier compose. Ce secret n'avait ni rotation, ni révocation, ni durée de
+vie ; il était le même à chaque redémarrage et donnait accès à la
+reconfiguration de tout le runtime.
+
+Deux choses changent, et elles sont indépendantes :
+
+1. **La surface interne quitte le listener public.** Elle est servie par une
+   application ASGI distincte (`local_channel.internal_app`), sur son propre
+   point d'écoute. Une session Desktop ou d'administration arrivant sur l'API
+   publique ne peut pas l'atteindre — non pas parce qu'un garde la refuse, mais
+   parce qu'elle n'y est pas.
+2. **Le secret statique disparaît du chemin nominal.**
+
+### Transports
+
+| Mode | Cible | Authentification |
+|---|---|---|
+| `unix` | production Linux / Docker | permissions du socket (`0660`) |
+| `loopback` | développement, plateformes sans AF_UNIX | jeton **éphémère** régénéré à chaque démarrage, `127.0.0.1` uniquement |
+
+Le choix est explicite (`NOVA_CONNECTOR_LOCAL_TRANSPORT`), jamais deviné. Une
+détection automatique choisirait un jour le transport le plus faible sans que
+personne ne l'ait décidé.
+
+**Fail-closed** : `unix` sur une plateforme sans AF_UNIX échoue au démarrage avec
+`LOCAL_TRANSPORT_UNAVAILABLE`. Il n'existe aucun repli silencieux vers la boucle
+locale, et aucun secret par défaut sur lequel retomber.
+
+Sur socket Unix, aucun jeton n'est envoyé : qui peut ouvrir le socket pourrait
+aussi lire le fichier qui porterait le jeton. En ajouter un ne protégerait de
+rien de plus et réintroduirait exactement le secret que cette phase retire.
+
+### Opérations
+
+Quatre, nommées : `get_local_capabilities`, `get_local_runtime_state`,
+`apply_ai_runtime_config`, `report_local_health`. Pas de shell, pas d'URL
+arbitraire, pas de SQL, pas d'accès au système de fichiers, pas de proxy.
+
+Séquence d'application : valider, appliquer, vérifier la santé, puis répondre.
+Une configuration refusée laisse l'ancienne active.
+
+### Limites honnêtes
+
+- **Windows** : `chmod` n'y bascule que le bit lecture seule. Les permissions
+  POSIX du fichier de jeton et de l'état local n'y sont **pas** effectives, et
+  AF_UNIX n'y est pas disponible. Le durcissement Windows — ACL, service dédié,
+  named pipe — appartient à une phase ultérieure ; la parité n'est pas
+  revendiquée.
+- **Root local** : rien ici ne protège contre un administrateur de la machine
+  compromis. Ce qui est visé : l'exposition réseau, l'accès accidentel par un
+  autre processus, un secret réutilisable d'un déploiement à l'autre, et le
+  rayon d'impact d'une fuite.
+- **Fenêtre de permission du socket** : fermée, et vérifiée. uvicorn crée le
+  socket avec le masque du processus, puis le passe explicitement à `0o666` —
+  world-writable. Mesuré en conteneur : la séquence réelle est
+  `0o755 → 0o666`. Un `chmod` après coup ne fait que raccourcir cette fenêtre.
+  `serve.py` sécurise donc le **répertoire** (`0o770`) avant que le socket
+  existe : sans permission de traversée, le mode du socket n'est plus une
+  porte. Vérifié en conteneur : un utilisateur non privilégié obtient
+  `Permission denied` en tentant de s'y connecter.
+
+### Migration depuis la Phase 33
+
+La route publique `/api/deployment/ai-runtime/apply` **n'existe plus par
+défaut**, même si `NOVA_DEPLOYMENT_APPLY_TOKEN` est encore présent dans
+l'environnement : un secret existant ne vaut pas consentement à le conserver.
+
+Un déploiement Phase 33 peut la rallumer le temps de migrer, avec
+`NOVA_ALLOW_LEGACY_DEPLOYMENT_TOKEN=true`. Le serveur l'annonce au démarrage. Ce
+chemin est **déprécié** et n'a pas vocation à survivre à une phase de plus.
+
+Migration recommandée :
+
+1. passer le point d'entrée à `python serve.py` ;
+2. déclarer `NOVA_CONNECTOR_LOCAL_TRANSPORT=unix` et le socket partagé ;
+3. retirer `NOVA_DEPLOYMENT_APPLY_TOKEN` de l'environnement et du compose.
 
 Codes de refus : `AI_RUNTIME_CONFIG_REJECTED`, `AI_RUNTIME_PROFILE_UNAVAILABLE`,
 `AI_RUNTIME_HARDWARE_INCOMPATIBLE`.
@@ -218,12 +362,17 @@ ni voir ses diagnostics.
 | Panne du plan de contrôle | Le plan de données reste autonome ; backoff exponentiel avec dispersion |
 | MITM | HTTPS obligatoire ; HTTP refusé sauf demande explicite en développement |
 | Reporting excessif | Limites de charge utile, plafond de capacités, cadence limitée **par Connector** — un bavard ne fait pas taire ses voisins |
+| Credential cloud vieillissant | Rotation en ligne sans ré-enrôlement ; âge exposé à la console |
+| Fuite du secret local statique | Supprimé du chemin nominal : permissions de socket, ou jeton éphémère par démarrage |
+| Confusion entre les deux frontières | Deux credentials distincts, deux principals distincts ; le credential cloud n'est jamais transmis au plan de données, et le secret local n'est jamais rapporté au cloud |
 | Dégradation de protocole | Version explicite, refus propre, aucune retombée silencieuse |
 
 ## Ce que le Connector n'apporte pas
 
 - Pas d'auto-mise à jour du Connector (phase ultérieure).
-- Pas de rotation de credential en ligne (phase ultérieure).
+- Pas de rotation périodique automatique : la rotation existe, elle se déclenche
+  à la demande.
+- Pas de parité Windows sur le canal local.
 - Pas de distribution de poids de modèles.
 - Pas de proxy vers l'infrastructure privée.
 

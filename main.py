@@ -561,7 +561,19 @@ def init_db():
             last_error_code TEXT,
             created_at REAL NOT NULL,
             last_seen_at REAL,
-            revoked_at REAL
+            revoked_at REAL,
+            -- Rotation. `pending_credential_hash` n'existe que pendant la
+            -- fenetre de bascule : une fois le nouveau credential prouve, il
+            -- devient `credential_hash` et la ligne d'attente disparait. On ne
+            -- conserve aucun historique d'empreintes — il n'aurait servi qu'a
+            -- agrandir la surface d'une fuite de base.
+            credential_generation INTEGER NOT NULL DEFAULT 1,
+            credential_created_at REAL,
+            pending_credential_hash TEXT,
+            pending_created_at REAL,
+            rotation_state TEXT NOT NULL DEFAULT 'stable',
+            rotation_requested_at REAL,
+            last_rotated_at REAL
         );
         CREATE INDEX IF NOT EXISTS idx_connectors_org
             ON connectors(organization_id);
@@ -847,6 +859,20 @@ def migrate_schema(conn):
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_tokens_hash ON tokens(token_hash)"
     )
     migrate_tokens_to_hashes(conn)
+
+    connector_columns = columns("connectors")
+    if connector_columns:
+        for column, definition in {
+            "credential_generation": "INTEGER NOT NULL DEFAULT 1",
+            "credential_created_at": "REAL",
+            "pending_credential_hash": "TEXT",
+            "pending_created_at": "REAL",
+            "rotation_state": "TEXT NOT NULL DEFAULT 'stable'",
+            "rotation_requested_at": "REAL",
+            "last_rotated_at": "REAL",
+        }.items():
+            if column not in connector_columns:
+                conn.execute(f"ALTER TABLE connectors ADD COLUMN {column} {definition}")
 
     runtime_columns = columns("organization_ai_runtime_config")
     if runtime_columns:
@@ -6002,8 +6028,35 @@ CONNECTOR_SUPPORTED_PROTOCOLS = frozenset({1})
 # que celui-ci declare comprendre : deduire une capacite d'un numero de version
 # marcherait jusqu'au jour ou une version intermediaire existe.
 CONNECTOR_KNOWN_CAPABILITIES = frozenset(
-    {"ai_runtime_config_v1", "health_reporting_v1", "diagnostics_v1"}
+    {
+        "ai_runtime_config_v1",
+        "health_reporting_v1",
+        "diagnostics_v1",
+        # Un Connector d'avant la Phase 34 ne declare pas celle-ci. Le plan de
+        # controle ne lui demandera donc jamais une rotation qu'il ne sait pas
+        # conduire : la console dira « re-enroler » plutot que d'emettre un
+        # ordre dans le vide.
+        "credential_rotation_v1",
+    }
 )
+CONNECTOR_ROTATION_CAPABILITY = "credential_rotation_v1"
+
+# La fenetre pendant laquelle l'ancien et le nouveau credential sont acceptes.
+# Bornee : deux credentials durables actifs indefiniment doubleraient la surface
+# d'attaque au lieu de la faire tourner.
+CONNECTOR_ROTATION_TTL_SECONDS = int(
+    os.getenv("NOVA_CONNECTOR_ROTATION_TTL_SECONDS", "600")
+)
+# Un Connector ou un administrateur compromis ne doit pas pouvoir fabriquer des
+# milliers de secrets.
+CONNECTOR_ROTATION_COOLDOWN_SECONDS = int(
+    os.getenv("NOVA_CONNECTOR_ROTATION_COOLDOWN_SECONDS", "60")
+)
+
+ROTATION_STABLE = "stable"
+ROTATION_REQUESTED = "requested"
+ROTATION_PENDING = "pending"
+ROTATION_FAILED = "failed"
 
 # Un seul endroit pour les rythmes. Les repeter dans le Connector et dans le
 # serveur les ferait diverger au premier ajustement.
@@ -6055,10 +6108,15 @@ class ConnectorPrincipal:
     credential presente. Aucun champ de la requete ne peut l'influencer.
     """
 
-    def __init__(self, row):
+    def __init__(self, row, presented: str = "current"):
         self.connector_id = row["connector_id"]
         self.organization_id = row["organization_id"]
         self.deployment_id = row["deployment_id"]
+        # `current` ou `pending`. La confirmation de rotation exige que le
+        # Connector se presente avec le **nouveau** credential : c'est la
+        # preuve qu'il l'a recu et su le relire, et non qu'il l'a seulement
+        # demande.
+        self.presented = presented
         self.row = row
 
 
@@ -6087,18 +6145,63 @@ def connector_principal(
     scheme, _, credential = (authorization or "").partition(" ")
     if scheme.lower() != "bearer" or not credential.strip():
         raise auth_error(401, "CONNECTOR_CREDENTIAL_REQUIRED")
+    presented_hash = hash_token(credential.strip())
     with db() as conn:
         row = conn.execute(
-            "SELECT * FROM connectors WHERE credential_hash=?",
-            (hash_token(credential.strip()),),
+            "SELECT * FROM connectors WHERE credential_hash=?", (presented_hash,)
         ).fetchone()
+        presented = "current"
+        if row is None:
+            # Pendant une rotation, le nouveau credential vaut deja. Sans cette
+            # fenetre, un Connector qui a recu son nouveau secret mais pas
+            # encore confirme se retrouverait enferme dehors.
+            row = conn.execute(
+                "SELECT * FROM connectors WHERE pending_credential_hash=?",
+                (presented_hash,),
+            ).fetchone()
+            presented = "pending"
+        if row is not None and row["pending_credential_hash"] and expired_rotation(row):
+            row = clear_expired_rotation(conn, row)
+            if presented == "pending":
+                # Le secret presente vient d'expirer : il n'authentifie plus.
+                row = None
     # Revoque et inconnu donnent la meme reponse : un credential vole ne doit
     # pas permettre de distinguer « ce Connector a existe » de « il n'a jamais
     # existe ».
     if row is None or row["revoked_at"] is not None:
         raise auth_error(401, "CONNECTOR_CREDENTIAL_INVALID")
     connector_rate_limit(f"sync:{row['connector_id']}", limit=120, window_seconds=60)
-    return ConnectorPrincipal(row)
+    return ConnectorPrincipal(row, presented)
+
+
+def expired_rotation(row) -> bool:
+    started = row["pending_created_at"] or 0
+    return time.time() - started > CONNECTOR_ROTATION_TTL_SECONDS
+
+
+def clear_expired_rotation(conn, row):
+    """Abandonne une rotation qui n'a jamais ete confirmee.
+
+    Le credential courant reste valide. Echouer dans l'autre sens — invalider
+    l'ancien parce que le nouveau n'est pas arrive — enfermerait dehors un
+    Connector qui n'a rien fait de mal, et transformerait un incident reseau en
+    intervention manuelle.
+    """
+    conn.execute(
+        "UPDATE connectors SET pending_credential_hash=NULL, pending_created_at=NULL, "
+        "rotation_state=? WHERE connector_id=?",
+        (ROTATION_FAILED, row["connector_id"]),
+    )
+    record_connector_action(
+        row["organization_id"],
+        row["connector_id"],
+        "connector.rotation.failed",
+        {"reason": "CONNECTOR_ROTATION_EXPIRED"},
+        conn=conn,
+    )
+    return conn.execute(
+        "SELECT * FROM connectors WHERE connector_id=?", (row["connector_id"],)
+    ).fetchone()
 
 
 def record_connector_action(
@@ -6191,6 +6294,22 @@ def connector_view(row) -> dict:
         "created_at": row["created_at"],
         "last_seen_at": row["last_seen_at"],
         "revoked_at": row["revoked_at"],
+        # L'age du credential et l'etat de la bascule. Ni empreinte, ni
+        # fragment de secret : rien de tout cela n'aiderait a exploiter la
+        # console, et tout cela aiderait a exploiter une fuite.
+        "credential": {
+            "generation": row["credential_generation"],
+            "created_at": row["credential_created_at"] or row["created_at"],
+            "age_days": round(
+                (time.time() - (row["credential_created_at"] or row["created_at"]))
+                / 86400,
+                1,
+            ),
+            "rotation_state": row["rotation_state"],
+            "rotation_requested_at": row["rotation_requested_at"],
+            "last_rotated_at": row["last_rotated_at"],
+            "rotation_supported": CONNECTOR_ROTATION_CAPABILITY in capabilities,
+        },
     }
 
 
@@ -6342,6 +6461,62 @@ def control_revoke_connector(
     return connector_view(row)
 
 
+@app.post("/api/control/connectors/{connector_id}/rotate")
+def control_request_connector_rotation(
+    connector_id: str,
+    principal: AdminPrincipal = Depends(
+        require_admin_capability(CAPABILITY_DEPLOYMENT_MANAGE)
+    ),
+):
+    """Demande une rotation. L'administrateur ne recoit aucun secret.
+
+    C'est le point du dessin : la console pose un drapeau, le Connector fait la
+    rotation lui-meme lors de sa prochaine synchronisation. Faire transiter un
+    credential durable par un navigateur d'administration en ferait la piece la
+    plus exposee de la chaine.
+
+    Une demande n'est pas une revocation. Un credential compromis se revoque —
+    la rotation, elle, suppose que l'ancien fonctionne encore assez longtemps
+    pour poser le nouveau.
+    """
+    with db() as conn:
+        row = conn.execute(
+            "SELECT * FROM connectors WHERE connector_id=? AND organization_id=?",
+            (connector_id, principal.organization_id),
+        ).fetchone()
+        if row is None:
+            raise auth_error(404, "CONNECTOR_NOT_FOUND")
+        if row["revoked_at"] is not None:
+            raise auth_error(409, "CONNECTOR_REVOKED")
+        try:
+            capabilities = set(json.loads(row["capabilities"] or "[]"))
+        except (ValueError, TypeError):
+            capabilities = set()
+        if CONNECTOR_ROTATION_CAPABILITY not in capabilities:
+            # Emettre un ordre qu'un Connector ne sait pas lire le laisserait
+            # « en rotation » pour toujours. La console dira de le mettre a jour
+            # ou de le re-enroler.
+            raise auth_error(409, "CONNECTOR_ROTATION_UNSUPPORTED")
+        if row["rotation_state"] in {ROTATION_REQUESTED, ROTATION_PENDING}:
+            raise auth_error(409, "CONNECTOR_ROTATION_IN_PROGRESS")
+        conn.execute(
+            "UPDATE connectors SET rotation_state=?, rotation_requested_at=? "
+            "WHERE connector_id=?",
+            (ROTATION_REQUESTED, time.time(), connector_id),
+        )
+        record_admin_action(
+            principal,
+            "connector.rotation.requested",
+            target_type="connector",
+            target_id=connector_id,
+            conn=conn,
+        )
+        row = conn.execute(
+            "SELECT * FROM connectors WHERE connector_id=?", (connector_id,)
+        ).fetchone()
+    return connector_view(row)
+
+
 # ── APIs du Connector ────────────────────────────────────────────────────
 
 
@@ -6483,6 +6658,10 @@ def connector_sync(
     desired = None
     if "ai_runtime_config_v1" in capabilities:
         desired = desired_ai_runtime_for_connector(organization_id)
+    rotation_requested = (
+        CONNECTOR_ROTATION_CAPABILITY in capabilities
+        and principal.row["rotation_state"] in {ROTATION_REQUESTED, ROTATION_PENDING}
+    )
 
     with db() as conn:
         current = conn.execute(
@@ -6548,6 +6727,10 @@ def connector_sync(
         # l'heure qu'il est.
         "server_time": now,
         "desired": {"ai_runtime": desired} if desired else {},
+        # Un drapeau, pas un ordre porteur de secret. Le Connector decide quand
+        # il conduit la rotation, et c'est lui qui recevra le nouveau
+        # credential — jamais la console.
+        "rotation_requested": rotation_requested,
         # Les seules operations que ce protocole connait. Il n'y a pas de
         # commande generique, et il ne doit pas y en avoir.
         "supported_operations": ["apply_ai_runtime_config", "report_health"],
@@ -6586,14 +6769,246 @@ def sync_connector_state_into_config(
     )
 
 
+class ConnectorRotateBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    protocol_version: int
+    connector_version: str = Field(max_length=64)
+
+
+@app.post("/api/connector/credential/rotate")
+def connector_rotate_credential(
+    body: ConnectorRotateBody,
+    principal: ConnectorPrincipal = Depends(connector_principal),
+):
+    """Emet un nouveau credential, sans invalider l'ancien.
+
+    L'ordre est celui-ci et pas l'inverse : tant que le Connector n'a pas
+    prouve qu'il sait relire le nouveau secret, l'ancien reste sa seule facon
+    d'exister. Reveler le nouveau et revoquer l'ancien dans le meme geste
+    transformerait la moindre ecriture disque ratee en re-enrolement manuel.
+
+    Le Connector fait tourner **son** credential, jamais celui d'un autre :
+    l'identite vient du principal authentifie, pas du corps.
+    """
+    require_supported_protocol(body.protocol_version)
+    if principal.presented != "current":
+        # Se presenter avec le credential en attente pour en demander un
+        # troisieme ferait une chaine sans fin de secrets non confirmes.
+        raise auth_error(409, "CONNECTOR_ROTATION_IN_PROGRESS")
+    with db() as conn:
+        row = conn.execute(
+            "SELECT * FROM connectors WHERE connector_id=?",
+            (principal.connector_id,),
+        ).fetchone()
+    # L'etat avant la cadence : « une bascule tourne deja » est une reponse plus
+    # utile que « trop de requetes », et une boucle d'appels s'y heurte de toute
+    # facon des le second essai. La cadence garde ce qu'elle doit garder — les
+    # rotations qui aboutissent.
+    if row["pending_credential_hash"]:
+        raise auth_error(409, "CONNECTOR_ROTATION_IN_PROGRESS")
+    connector_rate_limit(
+        f"rotate:{principal.connector_id}",
+        limit=1,
+        window_seconds=CONNECTOR_ROTATION_COOLDOWN_SECONDS,
+    )
+    now = time.time()
+    credential = secrets.token_urlsafe(40)
+    with db() as conn:
+        conn.execute(
+            "UPDATE connectors SET pending_credential_hash=?, pending_created_at=?, "
+            "rotation_state=? WHERE connector_id=?",
+            (hash_token(credential), now, ROTATION_PENDING, principal.connector_id),
+        )
+        record_connector_action(
+            principal.organization_id,
+            principal.connector_id,
+            "connector.rotation.started",
+            {"generation": row["credential_generation"] + 1},
+            conn=conn,
+        )
+    return {
+        # La seule fois ou ce secret existe en clair hors du Connector.
+        "connector_credential": credential,
+        "generation": row["credential_generation"] + 1,
+        "expires_in": CONNECTOR_ROTATION_TTL_SECONDS,
+        "confirm_required": True,
+    }
+
+
+@app.post("/api/connector/credential/confirm")
+def connector_confirm_credential(
+    body: ConnectorRotateBody,
+    principal: ConnectorPrincipal = Depends(connector_principal),
+):
+    """Promeut le credential en attente. C'est ici que l'ancien meurt.
+
+    L'appel doit etre authentifie avec le **nouveau** secret : le serveur ne
+    croit pas le Connector sur parole, il constate qu'il sait s'en servir.
+
+    Rejouable : un ACK repete sur un credential deja courant repond succes sans
+    rien recreer ni invalider. La livraison etant au-moins-une-fois, un
+    acquittement perdu ne doit pas couter une identite.
+    """
+    require_supported_protocol(body.protocol_version)
+    now = time.time()
+    with db() as conn:
+        row = conn.execute(
+            "SELECT * FROM connectors WHERE connector_id=?",
+            (principal.connector_id,),
+        ).fetchone()
+        if principal.presented == "current" and not row["pending_credential_hash"]:
+            # Rejeu : la rotation est deja finie, et le secret presente est
+            # bien le courant. Rien a faire, et surtout rien a casser.
+            return {
+                "generation": row["credential_generation"],
+                "rotation_state": row["rotation_state"],
+                "already_confirmed": True,
+            }
+        if principal.presented != "pending":
+            raise auth_error(409, "CONNECTOR_ROTATION_FAILED")
+        conn.execute(
+            "UPDATE connectors SET credential_hash=?, credential_created_at=?, "
+            "credential_generation=?, pending_credential_hash=NULL, "
+            "pending_created_at=NULL, rotation_state=?, rotation_requested_at=NULL, "
+            "last_rotated_at=? WHERE connector_id=?",
+            (
+                row["pending_credential_hash"],
+                now,
+                row["credential_generation"] + 1,
+                ROTATION_STABLE,
+                now,
+                principal.connector_id,
+            ),
+        )
+        record_connector_action(
+            principal.organization_id,
+            principal.connector_id,
+            "connector.rotation.completed",
+            {"generation": row["credential_generation"] + 1},
+            conn=conn,
+        )
+    return {
+        "generation": row["credential_generation"] + 1,
+        "rotation_state": ROTATION_STABLE,
+        "already_confirmed": False,
+    }
+
+
 # ── Plan de donnees : appliquer localement ───────────────────────────────
 #
-# Le Connector est un processus separe ; le runtime vit dans nova-server. Cette
-# route est le seul point par lequel le premier configure le second. Elle est
-# locale, protegee par un secret partage de deploiement, et n'existe pas si ce
-# secret n'est pas declare.
+# La logique d'application vit ici ; le canal par lequel on la demande vit dans
+# `local_channel.py`. Les separer est le point de la Phase 34 : la surface
+# interne n'est plus servie par le listener public, et il n'existe plus de
+# secret statique partage pour l'atteindre.
+
+
+async def apply_runtime_configuration(
+    revision: int,
+    profile_name: str,
+    reasoning_allowed: bool,
+    max_concurrent_text: int,
+    max_concurrent_speech: int,
+    max_queue: int,
+) -> dict:
+    """Valider, appliquer, verifier, puis seulement dire « applique ».
+
+    Repondre avant la verification ferait remonter au plan de controle un
+    succes que personne n'a observe. Une configuration refusee laisse l'ancienne
+    active : un refus ne doit pas laisser le parc sans reglage du tout.
+    """
+    try:
+        profile = ModelProfile(profile_name.strip().lower())
+    except ValueError:
+        return {"revision": revision, "status": APPLY_STATUS_FAILED,
+                "error_code": "AI_RUNTIME_CONFIG_REJECTED"}
+    if profile == ModelProfile.CUSTOM and not ORGANIZATION_AI_ROUTER.custom_available:
+        return {"revision": revision, "status": APPLY_STATUS_FAILED,
+                "error_code": "AI_RUNTIME_PROFILE_UNAVAILABLE"}
+    hardware = detect_hardware()
+    if (
+        profile == ModelProfile.ADVANCED
+        and hardware.vram_gb is not None
+        and hardware.vram_gb < 16
+    ):
+        return {"revision": revision, "status": APPLY_STATUS_FAILED,
+                "error_code": "AI_RUNTIME_HARDWARE_INCOMPATIBLE"}
+
+    previous = {
+        "profile": ORGANIZATION_AI_ROUTER.profile,
+        "reasoning_allowed": ORGANIZATION_AI_ROUTER.reasoning_allowed,
+        "max_concurrent_text": ORGANIZATION_AI_ROUTER.text_capacity.limit,
+        "max_concurrent_speech": ORGANIZATION_AI_ROUTER.speech_capacity.limit,
+        "max_queue": ORGANIZATION_AI_ROUTER.text_capacity.max_queue,
+        "revision": ORGANIZATION_AI_ROUTER.applied_revision,
+    }
+    try:
+        ORGANIZATION_AI_ROUTER.apply_local_config(
+            profile=profile,
+            reasoning_allowed=reasoning_allowed,
+            max_concurrent_text=max_concurrent_text,
+            max_concurrent_speech=max_concurrent_speech,
+            max_queue=max_queue,
+            revision=revision,
+        )
+    except AIRuntimeError as error:
+        ORGANIZATION_AI_ROUTER.apply_local_config(**previous)
+        return {"revision": revision, "status": APPLY_STATUS_FAILED,
+                "error_code": error.code}
+
+    health = await ORGANIZATION_AI_ROUTER.health()
+    return {
+        "revision": revision,
+        "status": APPLY_STATUS_APPLIED,
+        "runtime_status": health["status"],
+        "text_engine": health["text_engine"]["status"],
+        "speech_engine": health["speech_engine"]["status"],
+    }
+
+
+async def local_runtime_state() -> dict:
+    """L'etat du runtime de CE serveur, pour le Connector local.
+
+    Aucun contenu utilisateur, et aucune adresse : le Connector n'a pas besoin
+    de savoir ou tourne le moteur pour rapporter qu'il va bien.
+    """
+    health = await ORGANIZATION_AI_ROUTER.health()
+    return {
+        "server_version": app.version,
+        "applied_revision": ORGANIZATION_AI_ROUTER.applied_revision,
+        "profile": ORGANIZATION_AI_ROUTER.profile.value,
+        "runtime_status": health["status"],
+        "text_engine": health["text_engine"]["status"],
+        "speech_engine": health["speech_engine"]["status"],
+        "queue_length": health["capacity"]["text"]["queue_length"],
+    }
+
+
+# ── Chemin herite, deprecie ──────────────────────────────────────────────
+#
+# La Phase 33 exposait cette route sur le listener public, protegee par un
+# secret statique partage. C'etait le plus gros defaut de sa surface : un secret
+# sans rotation ni revocation, en clair dans l'environnement et dans le fichier
+# compose, donnant acces a la reconfiguration de tout le plan de donnees.
+#
+# Elle n'existe plus par defaut. Un deploiement de la Phase 33 peut la rallumer
+# explicitement, le temps de migrer vers le canal local — jamais sans le dire.
 
 NOVA_DEPLOYMENT_APPLY_TOKEN = os.getenv("NOVA_DEPLOYMENT_APPLY_TOKEN", "")
+NOVA_ALLOW_LEGACY_DEPLOYMENT_TOKEN = (
+    os.getenv("NOVA_ALLOW_LEGACY_DEPLOYMENT_TOKEN", "false").strip().lower() == "true"
+)
+if NOVA_DEPLOYMENT_APPLY_TOKEN and not NOVA_ALLOW_LEGACY_DEPLOYMENT_TOKEN:
+    print(
+        "[deployment] NOVA_DEPLOYMENT_APPLY_TOKEN est ignore : le canal local "
+        "authentifie le remplace. NOVA_ALLOW_LEGACY_DEPLOYMENT_TOKEN=true le "
+        "reactive temporairement le temps de migrer."
+    )
+elif NOVA_ALLOW_LEGACY_DEPLOYMENT_TOKEN:
+    print(
+        "[deployment] chemin herite actif : secret statique partage, sans "
+        "rotation ni revocation. A retirer des que le canal local est en place."
+    )
 
 
 class DeploymentApplyBody(BaseModel):
@@ -6612,69 +7027,21 @@ async def deployment_apply_ai_runtime(
     body: DeploymentApplyBody,
     authorization: str | None = Header(default=None),
 ):
-    """Applique une configuration au runtime de CE serveur.
-
-    Valider, appliquer, verifier, puis seulement repondre « applique ». Repondre
-    avant la verification ferait remonter un succes que rien ne confirme, et la
-    console afficherait un etat que le runtime ne porte pas.
-    """
-    if not NOVA_DEPLOYMENT_APPLY_TOKEN:
+    if not (NOVA_ALLOW_LEGACY_DEPLOYMENT_TOKEN and NOVA_DEPLOYMENT_APPLY_TOKEN):
         raise auth_error(404, "DEPLOYMENT_APPLY_DISABLED")
     scheme, _, presented = (authorization or "").partition(" ")
     if scheme.lower() != "bearer" or not secrets.compare_digest(
         hash_token(presented.strip()), hash_token(NOVA_DEPLOYMENT_APPLY_TOKEN)
     ):
         raise auth_error(401, "DEPLOYMENT_APPLY_UNAUTHORIZED")
-
-    try:
-        profile = ModelProfile(body.profile.strip().lower())
-    except ValueError:
-        return {"revision": body.revision, "status": APPLY_STATUS_FAILED,
-                "error_code": "AI_RUNTIME_CONFIG_REJECTED"}
-    if profile == ModelProfile.CUSTOM and not ORGANIZATION_AI_ROUTER.custom_available:
-        return {"revision": body.revision, "status": APPLY_STATUS_FAILED,
-                "error_code": "AI_RUNTIME_PROFILE_UNAVAILABLE"}
-    hardware = detect_hardware()
-    if (
-        profile == ModelProfile.ADVANCED
-        and hardware.vram_gb is not None
-        and hardware.vram_gb < 16
-    ):
-        return {"revision": body.revision, "status": APPLY_STATUS_FAILED,
-                "error_code": "AI_RUNTIME_HARDWARE_INCOMPATIBLE"}
-
-    previous = {
-        "profile": ORGANIZATION_AI_ROUTER.profile,
-        "reasoning_allowed": ORGANIZATION_AI_ROUTER.reasoning_allowed,
-        "max_concurrent_text": ORGANIZATION_AI_ROUTER.text_capacity.limit,
-        "max_concurrent_speech": ORGANIZATION_AI_ROUTER.speech_capacity.limit,
-        "max_queue": ORGANIZATION_AI_ROUTER.text_capacity.max_queue,
-        "revision": ORGANIZATION_AI_ROUTER.applied_revision,
-    }
-    try:
-        ORGANIZATION_AI_ROUTER.apply_local_config(
-            profile=profile,
-            reasoning_allowed=body.reasoning_allowed,
-            max_concurrent_text=body.max_concurrent_text,
-            max_concurrent_speech=body.max_concurrent_speech,
-            max_queue=body.max_queue,
-            revision=body.revision,
-        )
-    except AIRuntimeError as error:
-        # L'ancienne configuration reste active : une configuration refusee ne
-        # doit pas laisser le parc sans reglage du tout.
-        ORGANIZATION_AI_ROUTER.apply_local_config(**previous)
-        return {"revision": body.revision, "status": APPLY_STATUS_FAILED,
-                "error_code": error.code}
-
-    health = await ORGANIZATION_AI_ROUTER.health()
-    return {
-        "revision": body.revision,
-        "status": APPLY_STATUS_APPLIED,
-        "runtime_status": health["status"],
-        "text_engine": health["text_engine"]["status"],
-        "speech_engine": health["speech_engine"]["status"],
-    }
+    return await apply_runtime_configuration(
+        body.revision,
+        body.profile,
+        body.reasoning_allowed,
+        body.max_concurrent_text,
+        body.max_concurrent_speech,
+        body.max_queue,
+    )
 
 
 # ────────────────── Policies produit : cote membre ────────────────────────

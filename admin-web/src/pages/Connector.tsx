@@ -34,6 +34,20 @@ const STATUS_TONE: Record<string, "ok" | "warn" | "danger" | undefined> = {
   revoked: undefined,
 };
 
+const ROTATION_TONE: Record<string, "ok" | "warn" | "danger" | undefined> = {
+  stable: "ok",
+  requested: "warn",
+  pending: "warn",
+  failed: "danger",
+};
+
+function rotationLabel(state: string): string {
+  if (state === "requested") return t.connector.rotationRequested;
+  if (state === "pending") return t.connector.rotationPending;
+  if (state === "failed") return t.connector.rotationFailed;
+  return t.connector.rotationStable;
+}
+
 function statusLabel(status: string): string {
   if (status === "online") return t.connector.statusOnline;
   if (status === "degraded") return t.connector.statusDegraded;
@@ -119,6 +133,7 @@ export function PrivateConnector() {
   const [deploymentId, setDeploymentId] = useState("");
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
+  const [rotating, setRotating] = useState<string | null>(null);
   // Le code vit dans l'état de ce composant, le temps de l'afficher. Il ne va
   // ni dans le stockage du navigateur, ni dans l'URL.
   const [issued, setIssued] = useState<ConnectorEnrollmentView | null>(null);
@@ -143,6 +158,25 @@ export function PrivateConnector() {
       );
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function requestRotation(connectorId: string) {
+    setRotating(connectorId);
+    setFailure(null);
+    try {
+      await control!.requestConnectorRotation(connectorId);
+      // Re-lecture autoritative : l'ecran montre l'etat que le serveur porte,
+      // jamais l'echo de la demande. « Demande » n'est pas « fait ».
+      retry();
+    } catch (raised) {
+      setFailure(
+        raised instanceof ApiError
+          ? errorMessage(raised.kind, raised.code)
+          : errorMessage("server"),
+      );
+    } finally {
+      setRotating(null);
     }
   }
 
@@ -192,6 +226,67 @@ export function PrivateConnector() {
               {connector.protocol_supported &&
                 connector.protocol_version < view.protocol_version && (
                   <Notice>{t.connector.updateRecommended}</Notice>
+                )}
+              {/* Le credential : son age, sa generation, l'etat de sa
+                  bascule. Jamais le secret, jamais son empreinte. */}
+              <h3 className="policy-group">{t.connector.credentialTitle}</h3>
+              <Facts
+                entries={[
+                  [
+                    t.connector.credentialAge,
+                    `${connector.credential.age_days} j`,
+                  ],
+                  [
+                    t.connector.credentialGeneration,
+                    <span className="mono">{connector.credential.generation}</span>,
+                  ],
+                  [
+                    t.connector.lastRotated,
+                    connector.credential.last_rotated_at
+                      ? new Date(
+                          connector.credential.last_rotated_at * 1000,
+                        ).toLocaleString()
+                      : t.connector.neverRotated,
+                  ],
+                  [
+                    t.connector.rotationState,
+                    <Tag tone={ROTATION_TONE[connector.credential.rotation_state]}>
+                      {rotationLabel(connector.credential.rotation_state)}
+                    </Tag>,
+                  ],
+                ]}
+              />
+              {connector.credential.rotation_state === "failed" && (
+                <Notice tone="danger">{t.connector.rotationFailed}</Notice>
+              )}
+              {!connector.credential.rotation_supported && (
+                <Notice>{t.connector.rotationUnsupported}</Notice>
+              )}
+              {mayManage &&
+                connector.status !== "revoked" &&
+                connector.credential.rotation_supported && (
+                  <>
+                    <p className="policy-hint">{t.connector.rotationBody}</p>
+                    {/* Rotation et revocation ne repondent pas a la meme
+                        question. Le dire ici evite de choisir la mauvaise le
+                        jour ou cela compte. */}
+                    <p className="policy-hint">{t.connector.rotationCompromised}</p>
+                    <div className="row">
+                      <button
+                        disabled={
+                          busy ||
+                          rotating === connector.connector_id ||
+                          connector.credential.rotation_state === "requested" ||
+                          connector.credential.rotation_state === "pending"
+                        }
+                        onClick={() => void requestRotation(connector.connector_id)}
+                      >
+                        {rotating === connector.connector_id
+                          ? t.connector.requestingRotation
+                          : t.connector.requestRotation}
+                      </button>
+                    </div>
+                  </>
                 )}
               {mayManage && connector.status !== "revoked" && (
                 <>
