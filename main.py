@@ -27,10 +27,11 @@ import httpx
 import jwt
 from fastapi import Depends, FastAPI, Header, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 import connector_release
+import deployment
 import scim
 from ai_runtime import (
     AI_MODEL_NOT_READY,
@@ -609,6 +610,7 @@ def init_db():
         # SCIM foreign keys and tenant indexes require the tenant-scoped users
         # shape produced by migrate_schema on historical databases.
         scim.install_schema(conn)
+        deployment.install_schema(conn)
 
 def normalize_email(value: str) -> str:
     """Forme canonique d'une adresse, pour la recherche et l'unicité.
@@ -9339,3 +9341,28 @@ scim.install_routes(
         admin_manage_guard=require_admin_capability(CAPABILITY_PROVISIONING_MANAGE),
     ),
 )
+
+
+# Le deploiement d'entreprise s'installe apres les gardes d'administration dont
+# il depend, exactement comme SCIM, et pour la meme raison : le module recoit un
+# backend explicite plutot que d'importer celui-ci.
+deployment.install_routes(
+    app,
+    deployment.Backend(
+        database=db,
+        require_organization_access=require_organization_access,
+        record_admin_action=record_admin_action,
+        admin_read_guard=require_admin_capability(CAPABILITY_DIAGNOSTICS_READ),
+        # Le deploiement est une propriete de la machine, pas des personnes :
+        # `it_admin` le gere, `organization_admin` ne le gere pas. C'est la
+        # frontiere posee en Phase 22, appliquee sans exception ajoutee.
+        admin_manage_guard=require_admin_capability(CAPABILITY_DEPLOYMENT_MANAGE),
+    ),
+)
+
+
+@app.exception_handler(deployment.DeploymentError)
+async def deployment_error_handler(request, error: deployment.DeploymentError):
+    # Un code stable, jamais un chemin de fichier ni un detail d'hote : la
+    # console doit pouvoir afficher l'erreur sans en apprendre davantage.
+    return JSONResponse({"error": error.code}, status_code=error.status)

@@ -73,6 +73,62 @@ export interface ProvisioningView {
   last_error: { created_at: number; error_code: string } | null;
 }
 
+export interface DeploymentProfileView {
+  profile_id: string;
+  name: string;
+  platform: string;
+  edition: string;
+  channel: "stable" | "preview";
+  deployment_ring: string | null;
+  update_policy: "manual" | "notify" | "automatic";
+  autostart: boolean | null;
+  config_revision: number;
+  status: "active" | "retired";
+  created_at: number;
+  updated_at: number;
+}
+
+export interface DesktopReleaseView {
+  version: string;
+  edition: string;
+  platform: string;
+  arch: string;
+  artifact: string;
+  sha256: string;
+  size: number;
+  released_at: number;
+  channel: string;
+  minimum_supported_version: string;
+}
+
+export interface DeploymentView {
+  status:
+    | "not_configured"
+    | "package_ready"
+    | "configuration_error";
+  platform: string;
+  edition: string;
+  installer_filename: string;
+  control_plane_origin: string;
+  profiles: DeploymentProfileView[];
+  install_commands: Record<string, string>;
+  release: {
+    configured: boolean;
+    signed: boolean;
+    error: string | null;
+    channels: Record<string, DesktopReleaseView | null>;
+  };
+  /** Aucun poste ne rapporte son etat : la console ne l'invente pas. */
+  device_reporting: boolean;
+}
+
+export interface ManagedConfigView {
+  filename: string;
+  path: string;
+  config: Record<string, unknown>;
+  install_command: string;
+}
+
 export interface DiscoveryConfigView {
   discovery_slug: string | null;
   discovery_enabled: boolean;
@@ -456,6 +512,47 @@ export class ControlPlane {
     return this.client.request<{ revoked: boolean }>(
       `/api/control/organizations/${organizationId}/provisioning/credentials/${credentialId}/revoke`,
       { method: "POST", body: {} },
+    );
+  }
+
+  deployment(organizationId: string) {
+    return this.client.request<DeploymentView>(
+      `/api/control/organizations/${organizationId}/deployment`,
+    );
+  }
+
+  createDeploymentProfile(
+    organizationId: string,
+    body: {
+      name: string;
+      channel?: string;
+      update_policy?: string;
+      deployment_ring?: string | null;
+    },
+  ) {
+    return this.client.request<{
+      profile: DeploymentProfileView;
+      install_command: string;
+    }>(`/api/control/organizations/${organizationId}/deployment/profiles`, {
+      method: "POST",
+      body,
+    });
+  }
+
+  updateDeploymentProfile(
+    organizationId: string,
+    profileId: string,
+    body: { channel?: string; update_policy?: string; status?: string },
+  ) {
+    return this.client.request<{ profile: DeploymentProfileView }>(
+      `/api/control/organizations/${organizationId}/deployment/profiles/${profileId}`,
+      { method: "PUT", body },
+    );
+  }
+
+  deploymentProfileConfig(organizationId: string, profileId: string) {
+    return this.client.request<ManagedConfigView>(
+      `/api/control/organizations/${organizationId}/deployment/profiles/${profileId}/config`,
     );
   }
 

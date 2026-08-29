@@ -1,0 +1,34 @@
+{
+  "_comment_readme": "Exemple commenté. Les clés « _comment_* » servent à la lecture et doivent être retirées du fichier réellement déployé : le poste refuse tout champ qu'il ne connaît pas.",
+
+  "_comment_schema": "Version du schéma. Une version plus récente que celle que le poste comprend est refusée, jamais devinée.",
+  "schema_version": 1,
+
+  "_comment_deployment": "Identifiant de parc, produit par Nova Admin. Opaque et NON SECRET : le connaître n'accorde ni session, ni administration, ni enrôlement de Connector.",
+  "deployment_id": "dpl-0123456789abcdef0123456789abcdef",
+
+  "_comment_organization": "Organisation à joindre. Opaque également. Le Control Plane vérifie que le couple (deployment_id, organization_id) lui appartient : un poste ne choisit pas son organisation.",
+  "organization_id": "org-exemple",
+
+  "_comment_origin": "Doit appartenir à la liste épinglée dans le package. Une adresse arbitraire est refusée, et le poste se déclare non géré plutôt que de s'y connecter.",
+  "control_plane_origin": "https://api.novaspeak.app",
+
+  "_comment_channel": "stable ou preview. Une DSI choisit un canal, jamais une URL d'artefact.",
+  "release_channel": "stable",
+
+  "managed": true,
+
+  "_comment_revision": "Avance à chaque modification du profil. Permet de savoir qu'un poste applique une configuration périmée.",
+  "config_revision": 1,
+
+  "_comment_policy": "manual, notify ou automatic. Facultatif ; « notify » par défaut.",
+  "update_policy": "notify",
+
+  "_comment_ring": "pilot ou broad. Facultatif. Fondation : Nova n'orchestre aucun ciblage dynamique.",
+  "deployment_ring": "pilot",
+
+  "_comment_autostart": "Facultatif. Absent = le réglage de l'utilisateur décide.",
+  "autostart": true,
+
+  "_comment_secrets": "AUCUN SECRET NE VA ICI : ni mot de passe, ni jeton SSO, ni credential SCIM, ni credential Connector, ni bearer d'administration. Ce fichier est lisible par tout utilisateur du poste. Y ajouter un champ secret ne le rendrait pas seulement dangereux — il rendrait la configuration invalide."
+}

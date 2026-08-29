@@ -273,7 +273,69 @@ export const t = {
     version: "Server version",
     fleetTitle: "Workstation fleet",
     fleetBody:
-      "Nova does not yet report on deployed workstations. This page will show them when it does.",
+      "Deployed workstations do not report to Nova. This panel would need a device report channel that does not exist, so no fleet health is shown rather than guessed.",
+
+    desktopTitle: "Windows deployment",
+    desktopLead:
+      "Prepare a per-machine package your IT department can install silently on every workstation.",
+    packageStatus: "Package status",
+    statusNotConfigured: "Not configured",
+    statusPackageReady: "Package ready",
+    statusConfigurationError: "Configuration error",
+    installer: "Installer",
+    origin: "Control plane origin",
+    originNote:
+      "Pinned in the package. A deployment policy selects a profile; it cannot point Nova at another address.",
+    deviceReporting: "Workstation reporting",
+    deviceReportingNone:
+      "None. Installed workstations do not send Nova any state, so this page describes the package and its configuration, never the health of a machine.",
+    releaseTitle: "Available release",
+    releaseNone:
+      "No release manifest is configured on this service, so no version is recommended. Nova will not name a version it cannot verify.",
+    releaseUnsigned:
+      "No trust root is configured for desktop releases. The manifest is served as-is and is not claimed to be signed.",
+    releaseError: "The release manifest is configured but could not be trusted.",
+    desktopVersion: "Version",
+    minimumVersion: "Minimum supported version",
+    artifact: "Artifact",
+    digest: "SHA-256",
+    signed: "Signature",
+    signedYes: "Verified",
+    signedNo: "Not verified",
+
+    profilesTitle: "Deployment profiles",
+    profileName: "Profile name",
+    channel: "Release channel",
+    channelStable: "Stable",
+    channelPreview: "Preview",
+    updatePolicy: "Update policy",
+    policyManual: "Manual",
+    policyNotify: "Notify",
+    policyAutomatic: "Automatic",
+    revision: "Configuration revision",
+    profileStatus: "Status",
+    profileActive: "Active",
+    profileRetired: "Retired",
+    create: "Create profile",
+    creating: "Creating…",
+    retire: "Retire",
+    retireTitle: "Retire this deployment profile?",
+    retireBody:
+      "New installations using it will no longer be recognized. Workstations already installed keep working on the configuration they applied.",
+    retireConfirm: "Retire profile",
+    noProfiles:
+      "No deployment profile yet. Create one to obtain an install command and a machine configuration file.",
+    readOnly:
+      "Your role can inspect the deployment but cannot change it. Deployment is managed by the IT administrator role.",
+
+    installCommand: "Silent install command",
+    installCommandNote:
+      "Contains no durable secret. The deployment identifier authenticates nobody: every user still signs in through SSO.",
+    managedConfig: "Machine configuration",
+    managedConfigNote:
+      "Write this to C:\ProgramData\Nova\organization.json, or let the installer write it from the command above.",
+    copy: "Copy",
+    copied: "Copied.",
   },
 
   connector: {

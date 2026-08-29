@@ -19,6 +19,7 @@ import { useSession } from "../lib/useAdminSession";
 import { AsyncSection, Facts, Notice, Panel, Tag } from "../components/primitives";
 import { AIRuntime } from "./AIRuntime";
 import { PrivateConnector } from "./Connector";
+import { DesktopDeployment } from "./DesktopDeployment";
 
 function formatDuration(seconds: number): string {
   if (seconds <= 0) return "—";
@@ -70,14 +71,17 @@ export function Deployment() {
               />
             </Panel>
             <Panel title={t.deployment.fleetTitle}>
-              {/* Ni parc de postes, ni canaux de mise à jour : le serveur n'en
-                  sait rien, et une page qui les inventerait serait un mensonge
-                  poli. */}
+              {/* Le parc reste hors de portée : aucun poste ne rapporte son
+                  état à Nova. Ce qui suit décrit donc le *package* et sa
+                  configuration, jamais la santé des machines. */}
               <Notice>{t.deployment.fleetBody}</Notice>
             </Panel>
           </>
         )}
       </AsyncSection>
+      {/* Comment une DSI installe le poste. Avant le Connector : on installe
+          d'abord, on configure ensuite. */}
+      <DesktopDeployment />
       {/* Comment ce deploiement recoit sa configuration, puis ce qu'il en
           fait. Le Connector vient avant le runtime : sans lui, la
           configuration du runtime attend. */}

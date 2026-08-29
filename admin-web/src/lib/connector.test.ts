@@ -275,8 +275,24 @@ describe("Version and updates", () => {
 
   test("no release manifest, signature or artifact url reaches the console", () => {
     // La console administre ; elle n'est pas un maillon de la chaine
-    // d'approvisionnement, et n'a donc rien a porter de tout cela.
-    const source = code(PAGE) + code(CONTROL);
+    // d'approvisionnement du Connector, et n'a donc rien a porter de tout cela.
+    //
+    // La verification porte sur la surface *Connector*, pas sur tout
+    // `controlPlane.ts` : le deploiement Desktop, lui, doit montrer un nom
+    // d'artefact et une empreinte, parce que c'est un humain qui telecharge un
+    // installeur et qui a besoin de pouvoir le verifier. Deux chaines
+    // differentes, deux regles differentes.
+    const connectorTypes = CONTROL.slice(
+      CONTROL.indexOf("export interface ConnectorView"),
+      CONTROL.indexOf("export interface PackageVersionSummary"),
+    );
+    const connectorMethods = CONTROL.slice(
+      CONTROL.indexOf("  connectors() {"),
+      CONTROL.indexOf("  packages(organizationId: string) {"),
+    );
+    expect(connectorTypes.length).toBeGreaterThan(200);
+    expect(connectorMethods.length).toBeGreaterThan(200);
+    const source = code(PAGE) + code(connectorTypes) + code(connectorMethods);
     for (const forbidden of ["signature", "manifest", "digest", "artifact"]) {
       expect(source.toLowerCase()).not.toContain(forbidden);
     }
