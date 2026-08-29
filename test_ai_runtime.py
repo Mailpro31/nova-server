@@ -40,6 +40,13 @@ from ai_runtime import (
     validate_private_runtime_url,
 )
 
+# Le schema s'applique **explicitement**. Importer `main` ne migre plus rien :
+# c'est precisement l'effet de bord qui a migre une base de production en
+# Phase 30 puis en Phase 37. Un appel visible dans le test remplace un import
+# qui decidait tout seul.
+main.init_db()
+
+
 
 class RuntimeDestinationTests(unittest.TestCase):
     def test_loopback_private_ip_and_service_names_are_allowed(self):

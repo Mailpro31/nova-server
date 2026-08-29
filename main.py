@@ -15,7 +15,7 @@ import ipaddress
 import json
 import secrets
 import socket
-import sqlite3
+import threading
 import time
 import uuid
 from contextlib import contextmanager
@@ -31,7 +31,9 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 import connector_release
+import database
 import deployment
+import migrations
 import scim
 from ai_runtime import (
     AI_MODEL_NOT_READY,
@@ -199,418 +201,158 @@ NOVA_ADMIN_ORIGINS = [
 CONTROL_CONTRACT_VERSION = 1
 
 # ---------------------------------------------------------------- db
+#
+# Point d'acces unique a la base. Le Control Plane n'ouvre plus SQLite
+# directement : `database.Database` choisit le moteur selon
+# `NOVA_DATABASE_URL`, traduit le SQL ecrit en dialecte SQLite quand la cible
+# est PostgreSQL, et unifie les erreurs d'integrite.
+#
+# L'objet est cree paresseusement : l'import de ce module ne doit ouvrir
+# aucune connexion, et surtout n'appliquer aucune migration.
+_DATABASE: database.Database | None = None
+_DATABASE_URL: str | None = None
+_DATABASE_LOCK = threading.Lock()
+
+
+def database_url() -> str:
+    """L'URL effective de ce processus.
+
+    `NOVA_DATABASE_URL` fait autorite. A defaut, `DB_PATH` designe un fichier
+    SQLite : c'est la variable historique, et les tests la remplacent pour
+    passer d'une base a l'autre. La garder vivante evite de reecrire des
+    dizaines de tests pour un changement qui ne les concerne pas.
+    """
+    explicit = os.getenv("NOVA_DATABASE_URL", "").strip()
+    if explicit:
+        return explicit
+    return "sqlite:///" + str(DB_PATH).replace("\\", "/")
+
+
+class ProductionConfigurationError(RuntimeError):
+    """Configuration refusee au demarrage. Code stable, aucun detail d'hote."""
+
+    def __init__(self, code: str, detail: str = "") -> None:
+        super().__init__(detail or code)
+        self.code = code
+
+
+def check_production_database() -> None:
+    """Refuse un plan de controle de production adosse a SQLite.
+
+    SQLite n'a qu'un ecrivain. Un plan de controle centralise finit toujours
+    par avoir plusieurs workers, souvent sur plusieurs machines : la limite ne
+    se manifeste alors pas par une lenteur, mais par des ecritures refusees au
+    moment de la charge. Mieux vaut le dire au demarrage.
+
+    `NOVA_DATABASE_URL` devient obligatoire en production : se rabattre sur
+    `NOVA_DB` y ferait passer un oubli de configuration pour un choix.
+
+    Appelee au demarrage du service, jamais a l'import — comme tout le reste
+    depuis cette phase.
+    """
+    if NOVA_ENV != "production":
+        return
+    if not os.getenv("NOVA_DATABASE_URL", "").strip():
+        raise ProductionConfigurationError(
+            "DATABASE_URL_REQUIRED_IN_PRODUCTION",
+            "NOVA_DATABASE_URL must be set explicitly in production.",
+        )
+    if database.parse_url(database_url()).dialect != database.POSTGRESQL:
+        raise ProductionConfigurationError(
+            "SQLITE_REFUSED_IN_PRODUCTION",
+            "A production control plane requires PostgreSQL.",
+        )
+
+
+def database_handle() -> database.Database:
+    """La base du processus. Ouverte au premier usage, jamais a l'import.
+
+    Le handle est indexe sur l'URL resolue : changer `DB_PATH` en ouvre un
+    autre, ce qui est exactement ce qu'attend un test qui bascule d'instance.
+    """
+    global _DATABASE, _DATABASE_URL
+    url = database_url()
+    if _DATABASE is None or _DATABASE_URL != url:
+        with _DATABASE_LOCK:
+            if _DATABASE is None or _DATABASE_URL != url:
+                if _DATABASE is not None:
+                    _DATABASE.close()
+                _DATABASE = database.Database(url)
+                _DATABASE_URL = url
+    return _DATABASE
+
+
+def reset_database_handle() -> None:
+    """Referme la base du processus. Destine aux tests et aux recettes."""
+    global _DATABASE, _DATABASE_URL
+    with _DATABASE_LOCK:
+        if _DATABASE is not None:
+            _DATABASE.close()
+        _DATABASE = None
+        _DATABASE_URL = None
+
+
 @contextmanager
 def db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    try:
+    # Contrat inchange : succes -> commit, exception -> rollback. Une frontiere
+    # transactionnelle qui change silencieusement ferait echouer des routes
+    # entieres de facon invisible.
+    with database_handle().connect() as conn:
         yield conn
-    except Exception:
-        # A failed SCIM PATCH must restore the original resource (RFC 7644),
-        # and the same transactional rule is the safe default for every other
-        # Control Plane mutation too.
-        conn.rollback()
-        raise
-    else:
-        conn.commit()
-    finally:
-        conn.close()
 
 def init_db():
+    """Prepare le schema. **Explicite** : plus jamais appelee a l'import.
+
+    Deux chemins, et un seul point de verite. Sur une base SQLite historique,
+    `migrate_schema` apporte d'abord les colonnes que l'adoption exige — sans
+    elles la base serait refusee comme non reconnue. Ensuite, et dans tous les
+    cas, c'est `migrations` qui fait autorite sur le schema.
+
+    Conservee parce que les tests et les recettes l'appellent ; ce n'est plus
+    une seconde definition du schema.
+    """
+    handle = database_handle()
+    sqlite = handle.dialect == database.SQLITE
+    legacy = False
+    if sqlite:
+        with db() as conn:
+            # Une base SQLite historique doit recevoir ses colonnes manquantes
+            # AVANT l'adoption : sans elles, `migrations` la refuserait comme
+            # non reconnue, ce qui serait exact mais inutile.
+            legacy = conn.table_exists("users")
+            if legacy:
+                # Combler d'abord les tables absentes : `migrate_schema` ecrit
+                # dans `organizations`, qu'une base d'avant cette table n'a pas.
+                # Les index viennent ensuite : une base historique porte une
+                # table `organizations` d'avant `discovery_slug`, et indexer
+                # une colonne que `migrate_schema` n'a pas encore ajoutee
+                # echouerait.
+                migrations.create_missing_tables(conn)
+                migrate_schema(conn)
+                migrations.create_missing_indexes(conn)
+
+    migrations.migrate(handle)
+
+    if sqlite and not legacy:
+        # Base neuve : les tables viennent d'etre creees, `migrate_schema` n'a
+        # donc pas encore pu s'executer. Il reste a lui faire poser ce qui
+        # n'est pas du schema — le rattrapage des comptes historiques.
+        with db() as conn:
+            migrate_schema(conn)
+
+    # L'amorcage de l'organisation n'est pas du schema : c'est la premiere
+    # ligne de donnees d'une instance, et elle vaut pour les deux moteurs.
+    # Elle vivait au milieu de `migrate_schema`, donc une base PostgreSQL
+    # neuve n'aurait eu aucune organisation.
     with db() as conn:
-        conn.executescript("""
-        -- État d'authentification antérieur à l'identité : à ce stade, seule
-        -- l'adresse est connue. Elle est donc cadrée par l'organisation.
-        CREATE TABLE IF NOT EXISTS auth_codes(
-            email TEXT, code TEXT, expires_at REAL, attempts INTEGER DEFAULT 0,
-            organization_id TEXT
-        );
-        -- Sessions Nova. Rattachées à `user_id` : l'e-mail n'est qu'un repère
-        -- lisible, et changer d'adresse ne doit déconnecter personne.
-        CREATE TABLE IF NOT EXISTS tokens(
-            token TEXT PRIMARY KEY, email TEXT, machine TEXT,
-            user_id TEXT, organization_id TEXT,
-            active INTEGER DEFAULT 1, created_at REAL, expires_at REAL
-        );
-        -- Comptes. `user_id` est l'identité stable ; l'adresse e-mail n'est
-        -- qu'un attribut, unique **dans une organisation** et non globalement.
-        -- Voir `docs/architecture/multi-tenant-user-identity.md`.
-        CREATE TABLE IF NOT EXISTS users(
-            user_id TEXT PRIMARY KEY,          -- UUID Nova, attribué une fois
-            organization_id TEXT NOT NULL,
-            email TEXT NOT NULL,               -- tel que saisi : casse d'affichage
-            normalized_email TEXT NOT NULL,    -- forme de recherche et d'unicité
-            role TEXT DEFAULT 'student',       -- student | teacher | staff | partner
-            security_role TEXT NOT NULL DEFAULT 'member',
-            cohort TEXT DEFAULT '',            -- ex. "Promo 2028"
-            note TEXT DEFAULT '',              -- note libre de l'admin
-            disabled INTEGER DEFAULT 0,        -- compte suspendu
-            status TEXT DEFAULT 'active',
-            identity_provider TEXT,
-            external_subject TEXT,
-            external_tenant_id TEXT,
-            created_at REAL,
-            updated_at REAL,
-            last_seen REAL
-        );
-        -- L'index unique (organization_id, normalized_email) est créé par
-        -- `migrate_schema` : sur une base antérieure, les deux colonnes
-        -- n'existent pas encore à cet instant.
-        -- compteurs d'usage UNIQUEMENT (jamais de contenu audio/texte)
-        CREATE TABLE IF NOT EXISTS usage(
-            email TEXT, day TEXT,
-            transcriptions INTEGER DEFAULT 0,
-            reformulations INTEGER DEFAULT 0,
-            audio_seconds REAL DEFAULT 0,
-            PRIMARY KEY (email, day)
-        );
-        CREATE TABLE IF NOT EXISTS shared_dictionary(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            term TEXT NOT NULL UNIQUE,
-            replacement TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS personal_dictionary(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            email TEXT NOT NULL,
-            term TEXT NOT NULL,
-            replacement TEXT NOT NULL,
-            source TEXT NOT NULL DEFAULT 'personal',
-            UNIQUE(email, term)
-        );
-        CREATE TABLE IF NOT EXISTS snippets(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            email TEXT NOT NULL,
-            trigger TEXT NOT NULL,
-            content TEXT NOT NULL,
-            UNIQUE(email, trigger)
-        );
-        CREATE TABLE IF NOT EXISTS formatting_rules(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            email TEXT,
-            rule TEXT NOT NULL,
-            shared INTEGER NOT NULL DEFAULT 0
-        );
-        -- Organisations connues du serveur. Mono-organisation aujourd'hui,
-        -- mais la table porte déjà une clé propre : le jour où un Control
-        -- Plane en gérera plusieurs, rien n'est à réinventer.
-        -- État propre à cette instance de serveur. Sert notamment à retenir
-        -- l'organisation qu'elle sert, indépendamment du slug configuré.
-        CREATE TABLE IF NOT EXISTS server_state(
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS organizations(
-            id TEXT PRIMARY KEY,               -- UUID Nova, immuable
-            slug TEXT,                         -- NOVA_ORGANIZATION_ID, lisible
-            display_name TEXT NOT NULL,        -- « IPSA Paris » : un libellé
-            org_type TEXT NOT NULL DEFAULT 'education',
-            entra_tenant_id TEXT,              -- mapping explicite, jamais déduit
-            google_customer_id TEXT,           -- Admin SDK uniquement, non lu aujourd'hui
-            google_hosted_domain TEXT,         -- revendication `hd`, mapping explicite
-            oidc_issuer TEXT,
-            -- Découverte : comment un poste trouve cette organisation.
-            discovery_slug TEXT,               -- code public, pas un secret
-            discovery_enabled INTEGER NOT NULL DEFAULT 0,
-            deployment_mode TEXT NOT NULL DEFAULT 'dedicated',
-            service_endpoint TEXT,             -- adresse annoncée au poste
-            status TEXT NOT NULL DEFAULT 'active',
-            created_at REAL
-        );
-        -- Tentatives de connexion SSO. En base plutôt qu'en mémoire de
-        -- processus : `start` et `exchange` sont deux appels séparés par un
-        -- aller-retour dans le navigateur, et rien ne garantit qu'ils
-        -- atterrissent sur le même worker.
-        CREATE TABLE IF NOT EXISTS sso_flows(
-            flow_id_hash TEXT PRIMARY KEY,     -- empreinte, jamais l'identifiant
-            provider_type TEXT NOT NULL,
-            provider_config_id TEXT NOT NULL,
-            organization_id TEXT NOT NULL,
-            nonce_hash TEXT NOT NULL,          -- empreinte : jamais relu en clair
-            redirect_uri TEXT NOT NULL,
-            machine TEXT,
-            -- À quoi sert cette tentative. Un retour de connexion ordinaire ne
-            -- doit jamais pouvoir servir de preuve d'administration, et
-            -- réciproquement : le but fait partie de la tentative, il n'est pas
-            -- déduit de l'appelant.
-            purpose TEXT NOT NULL DEFAULT 'login',
-            -- Pour un step-up : l'identité que la réauthentification doit
-            -- prouver. Renseignée à l'ouverture, comparée à l'arrivée.
-            expected_user_id TEXT,
-            status TEXT NOT NULL DEFAULT 'pending',
-            created_at REAL NOT NULL,
-            expires_at REAL NOT NULL,
-            exchanging_at REAL,
-            consumed_at REAL
-        );
-        CREATE INDEX IF NOT EXISTS idx_sso_flows_expiry ON sso_flows(expires_at);
+        bootstrap_organization(conn)
 
-        -- Configurations de fournisseur, rattachées à une organisation. Ce qui
-        -- était global à l'instance devient une ligne par organisation, avec
-        -- son propre identifiant immuable — condition pour que plusieurs IdP
-        -- OIDC coexistent, et pour le futur Control Plane.
-        CREATE TABLE IF NOT EXISTS organization_provider_configs(
-            id TEXT PRIMARY KEY,               -- UUID Nova, immuable
-            organization_id TEXT NOT NULL,
-            provider_type TEXT NOT NULL,       -- microsoft_entra | google_workspace | oidc
-            display_name TEXT,                 -- libellé du bouton, affichage seul
-            enabled INTEGER NOT NULL DEFAULT 1,
-            -- Rattachement, par type. Structuré plutôt qu'un JSON opaque :
-            -- une colonne se valide, s'indexe et se lit.
-            entra_tenant_id TEXT,
-            google_hosted_domain TEXT,
-            oidc_issuer TEXT,
-            oidc_client_id TEXT,
-            -- Secret côté serveur uniquement : jamais renvoyé par une API.
-            oidc_client_secret TEXT,
-            oidc_client_auth_method TEXT DEFAULT 'none',
-            oidc_allow_private_issuer INTEGER NOT NULL DEFAULT 0,
-            oidc_required_claim TEXT,
-            oidc_required_claim_value TEXT,
-            created_at REAL,
-            updated_at REAL,
-            -- Nullables : Nova Admin les remplira, il n'existe pas encore.
-            created_by TEXT,
-            updated_by TEXT
-        );
-        CREATE INDEX IF NOT EXISTS idx_provider_configs_org
-            ON organization_provider_configs(organization_id, provider_type);
-        -- Un même émetteur ne peut pas être déclaré deux fois pour une
-        -- organisation : ce serait deux chemins vers la même identité.
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_provider_configs_issuer
-            ON organization_provider_configs(organization_id, provider_type, oidc_issuer);
 
-        -- Identités fédérées. Une identité n'est pas une permission : cette
-        -- table dit QUI se connecte, jamais ce qu'il a le droit de faire.
-        CREATE TABLE IF NOT EXISTS federated_identities(
-            user_id TEXT,
-            provider TEXT NOT NULL,            -- microsoft_entra | google_workspace | oidc
-            external_subject TEXT NOT NULL,    -- oid/sub : immuable, jamais l'e-mail
-            external_tenant_id TEXT,           -- tid Microsoft, customer Google, issuer OIDC
-            organization_id TEXT NOT NULL,
-            email TEXT NOT NULL,               -- lien vers users, la clé actuelle
-            -- Niveau de garantie de l'identité :
-            --   transport_only : revendications lues d'un jeton reçu en TLS
-            --                    serveur-à-serveur, signature NON vérifiée
-            --   verified       : signature, émetteur, audience et expiration
-            --                    vérifiés (aucun flux ne produit ce niveau)
-            verification TEXT NOT NULL DEFAULT 'transport_only',
-            -- Émetteur, pour l'OIDC générique. Vide chez Microsoft et Google,
-            -- dont le fournisseur suffit à cadrer le sujet.
-            external_issuer TEXT NOT NULL DEFAULT '',
-            created_at REAL,
-            last_seen REAL,
-            -- L'émetteur fait partie de la clé : deux IdP OIDC distincts
-            -- peuvent parfaitement attribuer le même `sub` à deux personnes
-            -- différentes. Sans lui, la seconde écraserait la première.
-            PRIMARY KEY (organization_id, provider, external_issuer, external_subject)
-        );
+# L'ancien `init_db` construisait ici tout le schema, en parallele de
+# `migrate_schema`. Il a ete supprime : `migrations/0001_baseline.sql` est
+# desormais la seule definition du schema, et deux definitions qui divergent
+# valent moins qu'une seule qui fait autorite.
 
-        -- Sessions d'administration. Séparées des sessions utilisateur, et
-        -- c'est le point du design : être administrateur ne doit pas rendre
-        -- chaque session de dictée quotidienne capable de reconfigurer
-        -- l'organisation. Le privilège s'ouvre explicitement, pour une durée
-        -- courte, et se referme.
-        CREATE TABLE IF NOT EXISTS admin_sessions(
-            id TEXT PRIMARY KEY,               -- UUID, sert d'identifiant d'audit
-            user_id TEXT NOT NULL,
-            email TEXT NOT NULL,
-            organization_id TEXT NOT NULL,
-            -- Rôle au moment de l'ouverture. **Indicatif** : il est revérifié
-            -- en base à chaque appel. Une session ne fige pas un privilège.
-            security_role TEXT NOT NULL,
-            auth_provider TEXT,
-            token_hash TEXT NOT NULL,          -- empreinte seule, comme les sessions Nova
-            created_at REAL NOT NULL,
-            expires_at REAL NOT NULL,          -- expiration absolue
-            last_seen_at REAL,                 -- sert l'expiration d'inactivité
-            revoked_at REAL
-        );
-        CREATE INDEX IF NOT EXISTS idx_admin_sessions_user
-            ON admin_sessions(user_id, revoked_at);
-
-        -- Journal d'audit des actions d'administration. Ajout seul : aucune
-        -- route ne le modifie ni ne le supprime, et les horodatages viennent du
-        -- serveur. SQLite n'offre aucune immuabilité au niveau du stockage —
-        -- quiconque tient le fichier tient le journal.
-        CREATE TABLE IF NOT EXISTS admin_audit_log(
-            id TEXT PRIMARY KEY,
-            organization_id TEXT NOT NULL,
-            actor_user_id TEXT,                -- absent pour le jeton hérité
-            actor_role TEXT NOT NULL,
-            action TEXT NOT NULL,
-            target_type TEXT,
-            target_id TEXT,
-            request_id TEXT,
-            -- Métadonnées non sensibles uniquement : jamais un secret, jamais
-            -- un jeton, jamais de contenu dicté.
-            metadata TEXT,
-            created_at REAL NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS idx_admin_audit_org
-            ON admin_audit_log(organization_id, created_at);
-
-        -- Policies produit de l'organisation. **Une ligne par organisation** —
-        -- la cle primaire l'impose plutot qu'un index a maintenir : deux
-        -- policies actives, ce serait deux reponses a la meme question.
-        --
-        -- L'absence de ligne n'est pas une erreur : c'est le cas normal d'une
-        -- organisation qui n'a jamais rien restreint. Elle obtient alors
-        -- DEFAULT_ORGANIZATION_POLICY, et rien ne change pour elle.
-        -- Packages distribues par l'organisation : Styles, AI Skills,
-        -- vocabulaire. Un package a un nom et une identite ; ce sont ses
-        -- **versions** qui portent du contenu.
-        CREATE TABLE IF NOT EXISTS organization_packages(
-            package_id         TEXT PRIMARY KEY,
-            organization_id    TEXT NOT NULL,
-            package_type       TEXT NOT NULL,
-            name               TEXT NOT NULL,
-            description        TEXT NOT NULL DEFAULT '',
-            status             TEXT NOT NULL DEFAULT 'draft',
-            -- La version que les membres recoivent. `NULL` tant que rien n'est
-            -- publie : un package existe avant d'avoir quoi que ce soit a dire.
-            active_version_id  TEXT,
-            -- Concurrence optimiste sur la fiche, comme pour les policies.
-            revision           INTEGER NOT NULL DEFAULT 0,
-            created_at         REAL NOT NULL,
-            created_by_user_id TEXT,
-            updated_at         REAL NOT NULL,
-            updated_by_user_id TEXT
-        );
-        CREATE INDEX IF NOT EXISTS idx_packages_org
-            ON organization_packages(organization_id, package_type);
-
-        -- Une version publiee n'est **jamais** modifiee. Changer de contenu
-        -- demande un nouveau brouillon ; revenir en arriere ne fait que
-        -- redesigner une version anterieure, restee intacte. C'est ce qui rend
-        -- le retour arriere sur : on republie ce qui avait ete publie, pas une
-        -- reconstruction de memoire.
-        CREATE TABLE IF NOT EXISTS organization_package_versions(
-            version_id         TEXT PRIMARY KEY,
-            package_id         TEXT NOT NULL,
-            -- Denormalise : toute lecture peut ainsi etre cadree par
-            -- l'organisation sans jointure, et une jointure oubliee est
-            -- exactement la faute qui produit une fuite entre tenants.
-            organization_id    TEXT NOT NULL,
-            version_number     INTEGER NOT NULL,
-            schema_version     INTEGER NOT NULL,
-            content            TEXT NOT NULL,
-            content_hash       TEXT NOT NULL,
-            status             TEXT NOT NULL DEFAULT 'draft',
-            validation_status  TEXT NOT NULL DEFAULT 'unknown',
-            validation_error   TEXT,
-            revision           INTEGER NOT NULL DEFAULT 0,
-            created_at         REAL NOT NULL,
-            created_by_user_id TEXT,
-            updated_at         REAL NOT NULL,
-            updated_by_user_id TEXT,
-            published_at       REAL,
-            UNIQUE(package_id, version_number)
-        );
-        CREATE INDEX IF NOT EXISTS idx_package_versions_package
-            ON organization_package_versions(package_id, version_number);
-
-        CREATE TABLE IF NOT EXISTS organization_policies(
-            organization_id    TEXT PRIMARY KEY,
-            schema_version     INTEGER NOT NULL,
-            -- Monotone, jamais reutilisee. Elle sert a deux choses : detecter
-            -- qu'une policy a change sans comparer le document, et refuser
-            -- l'ecriture d'un administrateur qui editait une version perimee.
-            revision           INTEGER NOT NULL,
-            -- Document JSON, mais **jamais arbitraire** : chaque cle est
-            -- declaree dans POLICY_SETTINGS et validee a l'ecriture.
-            settings           TEXT NOT NULL,
-            updated_at         REAL NOT NULL,
-            updated_by_user_id TEXT
-        );
-        CREATE TABLE IF NOT EXISTS organization_ai_runtime_config(
-            organization_id TEXT PRIMARY KEY,
-            schema_version INTEGER NOT NULL,
-            desired_revision INTEGER NOT NULL,
-            desired_profile TEXT NOT NULL,
-            reasoning_allowed INTEGER NOT NULL,
-            max_concurrent_text INTEGER NOT NULL,
-            max_concurrent_speech INTEGER NOT NULL,
-            max_queue INTEGER NOT NULL,
-            applied_revision INTEGER NOT NULL DEFAULT 0,
-            apply_status TEXT NOT NULL DEFAULT 'pending',
-            updated_at REAL NOT NULL,
-            updated_by_user_id TEXT
-        );
-        -- Un code d'enrolement, a usage unique et de duree de vie courte.
-        -- Empreinte seule : une copie de la base ne permet d'enroler personne.
-        CREATE TABLE IF NOT EXISTS connector_enrollments(
-            enrollment_id TEXT PRIMARY KEY,
-            -- L'organisation est fixee ICI, par un administrateur authentifie.
-            -- Elle ne viendra jamais du corps d'une requete de Connector.
-            organization_id TEXT NOT NULL,
-            deployment_id TEXT NOT NULL,
-            display_name TEXT NOT NULL,
-            token_hash TEXT NOT NULL,
-            created_at REAL NOT NULL,
-            expires_at REAL NOT NULL,
-            created_by_user_id TEXT,
-            consumed_at REAL,
-            consumed_by_connector_id TEXT
-        );
-        -- Un Connector enrole. Identite machine, distincte des utilisateurs,
-        -- des administrateurs et des operateurs Nova.
-        CREATE TABLE IF NOT EXISTS connectors(
-            connector_id TEXT PRIMARY KEY,
-            organization_id TEXT NOT NULL,
-            deployment_id TEXT NOT NULL,
-            display_name TEXT NOT NULL,
-            credential_hash TEXT NOT NULL,
-            protocol_version INTEGER NOT NULL DEFAULT 0,
-            connector_version TEXT,
-            server_version TEXT,
-            capabilities TEXT NOT NULL DEFAULT '[]',
-            -- Resume de sante, sans aucun contenu utilisateur.
-            runtime_state TEXT,
-            delivered_revision INTEGER NOT NULL DEFAULT 0,
-            applied_revision INTEGER NOT NULL DEFAULT 0,
-            apply_status TEXT NOT NULL DEFAULT 'pending',
-            last_error_code TEXT,
-            created_at REAL NOT NULL,
-            last_seen_at REAL,
-            revoked_at REAL,
-            -- Rotation. `pending_credential_hash` n'existe que pendant la
-            -- fenetre de bascule : une fois le nouveau credential prouve, il
-            -- devient `credential_hash` et la ligne d'attente disparait. On ne
-            -- conserve aucun historique d'empreintes — il n'aurait servi qu'a
-            -- agrandir la surface d'une fuite de base.
-            credential_generation INTEGER NOT NULL DEFAULT 1,
-            credential_created_at REAL,
-            pending_credential_hash TEXT,
-            pending_created_at REAL,
-            rotation_state TEXT NOT NULL DEFAULT 'stable',
-            rotation_requested_at REAL,
-            last_rotated_at REAL
-        );
-        -- Les releases publiees du Connector. Le manifeste et sa signature
-        -- sont conserves tels quels : une release publiee est immuable, et
-        -- reecrire son contenu sous la meme version rendrait toute
-        -- verification d'empreinte caduque.
-        CREATE TABLE IF NOT EXISTS connector_releases(
-            release_id TEXT PRIMARY KEY,
-            connector_version TEXT NOT NULL UNIQUE,
-            protocol_version INTEGER NOT NULL,
-            status TEXT NOT NULL DEFAULT 'draft',
-            manifest TEXT NOT NULL,
-            signature TEXT NOT NULL,
-            released_at REAL NOT NULL,
-            created_by_user_id TEXT,
-            revoked_at REAL
-        );
-        CREATE INDEX IF NOT EXISTS idx_connectors_org
-            ON connectors(organization_id);
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_connectors_credential
-            ON connectors(credential_hash);
-        """)
-        migrate_schema(conn)
-        # SCIM foreign keys and tenant indexes require the tenant-scoped users
-        # shape produced by migrate_schema on historical databases.
-        scim.install_schema(conn)
-        deployment.install_schema(conn)
 
 def normalize_email(value: str) -> str:
     """Forme canonique d'une adresse, pour la recherche et l'unicité.
@@ -666,7 +408,7 @@ def migrate_users_to_tenant_scoped_identity(conn, organization_id: str):
     - **sans perte** : chaque ligne est recopiée, aucun `user_id` existant n'est
       régénéré, aucune session n'est invalidée.
     """
-    columns = {row["name"] for row in conn.execute("PRAGMA table_info(users)")}
+    columns = set(conn.columns("users"))
     if not columns:
         return
     if "normalized_email" in columns:
@@ -797,7 +539,7 @@ def backfill_user_references(conn, organization_id: str):
     tables = ("auth_codes", "tokens", "usage", "personal_dictionary",
               "snippets", "formatting_rules", "federated_identities")
     for table in tables:
-        existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        existing = set(conn.columns(table))
         if "email" not in existing:
             continue
         # Les colonnes sont garanties ici, et pas seulement lors de la
@@ -849,7 +591,7 @@ def link_user_references(conn, mapping: dict[str, str], organization_id: str):
         "federated_identities": "email",
     }
     for table, email_column in linked.items():
-        existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        existing = set(conn.columns(table))
         if not existing:
             continue
         if "user_id" not in existing:
@@ -877,8 +619,19 @@ def migrate_schema(conn):
     """Migrations additives uniquement : aucune colonne n'est supprimée, aucun
     compte existant n'est perdu, et une base d'avant cette phase reste lisible
     par l'ancien code (les nouvelles colonnes sont simplement ignorées)."""
+    # Mise a niveau d'une base **SQLite historique** : reconstruction de tables
+    # et introspection `PRAGMA`, deux choses qui n'existent que la. Une base
+    # PostgreSQL n'a pas d'historique a rattraper — elle nait au dernier schema
+    # par `migrations` — et laisser ce code s'y executer donnerait une erreur
+    # obscure au lieu d'un refus clair.
+    if getattr(conn, "dialect", database.SQLITE) != database.SQLITE:
+        raise database.DatabaseError(
+            "LEGACY_MIGRATION_SQLITE_ONLY",
+            "migrate_schema upgrades historical SQLite databases only.",
+        )
+
     def columns(table: str) -> set[str]:
-        return {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        return set(conn.columns(table))
 
     token_columns = columns("tokens")
     if "expires_at" not in token_columns:
@@ -1185,8 +938,12 @@ def bootstrap_organization(conn) -> str:
                 time.time(),
             ),
         )
+        # `INSERT OR REPLACE` n'existe pas sous PostgreSQL, et son equivalent
+        # exact est l'upsert sur la cle : `ON CONFLICT ... DO UPDATE`, que les
+        # deux moteurs comprennent de la meme facon.
         conn.execute(
-            "INSERT OR REPLACE INTO server_state(key, value) VALUES (?,?)",
+            "INSERT INTO server_state(key, value) VALUES (?,?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
             (ORGANIZATION_ID_STATE_KEY, organization_id),
         )
 
@@ -1245,7 +1002,7 @@ def migrate_tokens_to_hashes(conn):
     # Un jeton hérité ne porte pas encore de `user_id` : le lui donner fait
     # partie de sa migration. Le contrôle d'authentification joint désormais par
     # identité, et une session valide ne doit pas se perdre en chemin.
-    user_columns = {row["name"] for row in conn.execute("PRAGMA table_info(users)")}
+    user_columns = set(conn.columns("users"))
     if {"user_id", "normalized_email"} <= user_columns:
         backfill_user_references(conn, nova_organization_id())
 
@@ -1974,9 +1731,9 @@ def discovery_bootstrap_for(organization: dict) -> dict | None:
 
 
 
-
-init_db()
-
+# Aucune migration a l'import. Le schema s'applique par `python -m migrations
+# migrate`, jamais parce qu'un module a ete importe : c'est exactement ce qui a
+# migre une base de production en Phase 30 puis en Phase 37.
 print(f"[admin] server_mode={NOVA_SERVER_MODE}")
 
 AI_RUNTIME_CONFIG_SCHEMA_VERSION = 1
@@ -2021,20 +1778,30 @@ def apply_ai_runtime_config_locally(config: dict) -> None:
     )
 
 
-_startup_runtime_config = read_ai_runtime_config(nova_organization_id())
-if NOVA_SERVER_MODE == SERVER_MODE_DEDICATED and _startup_runtime_config["desired_revision"]:
-    try:
-        apply_ai_runtime_config_locally(_startup_runtime_config)
-    except AIRuntimeError as error:
-        # Une configuration enregistree que ce deploiement ne sait plus servir
-        # — un profil `custom` dont les parametres ont disparu de
-        # l'environnement, par exemple. Refuser de demarrer priverait
-        # l'etablissement de sa dictee pour un reglage de confort ; appliquer
-        # autre chose en silence lui mentirait. Le serveur demarre sur la
-        # configuration de son environnement, et la console montre un
-        # `desired` non applique — ce que la separation desired/applied existe
-        # precisement pour dire.
-        print(f"[ai_runtime] configuration enregistree non applicable: {error.code}")
+def apply_startup_runtime_config() -> dict:
+    """Applique la configuration IA enregistree, si le deploiement en a une.
+
+    **Appelee au demarrage du service, pas a l'import.** Ce code lisait la base
+    au moment ou le module etait charge : importer `main` pour une inspection
+    ouvrait donc la base configuree, et echouait des que le schema n'etait pas
+    a jour. Un import ne doit ni migrer, ni lire, ni decider.
+    """
+    _startup_runtime_config = read_ai_runtime_config(nova_organization_id())
+    if NOVA_SERVER_MODE == SERVER_MODE_DEDICATED and _startup_runtime_config["desired_revision"]:
+        try:
+            apply_ai_runtime_config_locally(_startup_runtime_config)
+        except AIRuntimeError as error:
+            # Une configuration enregistree que ce deploiement ne sait plus
+            # servir — un profil `custom` dont les parametres ont disparu de
+            # l'environnement, par exemple. Refuser de demarrer priverait
+            # l'etablissement de sa dictee pour un reglage de confort ;
+            # appliquer autre chose en silence lui mentirait. Le serveur
+            # demarre sur la configuration de son environnement, et la console
+            # montre un `desired` non applique — ce que la separation
+            # desired/applied existe precisement pour dire.
+            print(f"[ai_runtime] configuration enregistree non applicable: {error.code}")
+    return _startup_runtime_config
+
 
 
 # ────────────────────── Accès aux comptes ─────────────────────────────────
@@ -4247,7 +4014,7 @@ def require_provider(provider: str) -> dict:
     return config
 
 
-def organization_for_provider(provider: str) -> sqlite3.Row | None:
+def organization_for_provider(provider: str) -> database.Row | None:
     """Organisation de cette instance, si elle est rattachée à ce fournisseur.
 
     Le rattachement est **déclaré**, jamais déduit : sans valeur dans la colonne
@@ -4582,7 +4349,7 @@ async def validate_entra_id_token(id_token: str, expected_nonce: str) -> dict:
     return await validate_id_token(config, id_token, hash_token(expected_nonce))
 
 
-def organization_for_tenant_legacy(provider: str, tenant_value: str) -> sqlite3.Row | None:
+def organization_for_tenant_legacy(provider: str, tenant_value: str) -> database.Row | None:
     """Organisation Nova rattachée à un tenant externe.
 
     Mapping **explicite** uniquement. Il n'existe pas de variante prenant un
@@ -5095,7 +4862,7 @@ def admin_create_provider_config(
                 f"VALUES ({placeholders})",
                 tuple(fields.values()),
             )
-        except sqlite3.IntegrityError:
+        except database.IntegrityError:
             raise auth_error(409, "PROVIDER_CONFIG_DUPLICATE")
     created = provider_config_by_id(config_id, nova_organization_id())
     # Le type et l'existence d'un secret — jamais le secret lui-même.
@@ -8569,7 +8336,7 @@ def control_delete_member(
         normalized = row["normalized_email"]
         for table in ("tokens", "usage", "personal_dictionary", "snippets",
                       "formatting_rules"):
-            columns = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+            columns = set(conn.columns(table))
             if "user_id" in columns:
                 conn.execute(f"DELETE FROM {table} WHERE user_id=?", (user_id,))
         conn.execute(
@@ -8838,7 +8605,7 @@ def legacy_shared_vocabulary(conn) -> list:
 
 
 def writing_context(user: str, organization_id: str | None = None
-                    ) -> tuple[str, list[sqlite3.Row]]:
+                    ) -> tuple[str, list[database.Row]]:
     """Return a compact prompt addition and snippets without storing content.
 
     ## Ordre de composition du vocabulaire
@@ -8890,7 +8657,7 @@ def writing_context(user: str, organization_id: str | None = None
         )
     return "\n\n".join(additions), snippets
 
-def apply_snippets(text: str, snippets: list[sqlite3.Row]) -> str:
+def apply_snippets(text: str, snippets: list[database.Row]) -> str:
     result = text
     for row in snippets:
         result = re.sub(
@@ -9097,10 +8864,13 @@ def formatting_rules(user: str = Depends(current_user)):
 def formatting_rule_add(body: FormattingRuleRequest, user: str = Depends(current_user)):
     rule = clean_required(body.rule, "rule", 1000)
     with db() as conn:
-        cursor = conn.execute(
-            "INSERT INTO formatting_rules(email,rule,shared) VALUES (?,?,0)", (user, rule)
-        )
-    return {"id": cursor.lastrowid}
+        # `RETURNING` plutot que `lastrowid` : SQLite le supporte depuis 3.35 et
+        # PostgreSQL depuis toujours, la ou `lastrowid` n'a pas d'equivalent.
+        created = conn.execute(
+            "INSERT INTO formatting_rules(email,rule,shared) VALUES (?,?,0) RETURNING id",
+            (user, rule),
+        ).fetchone()
+    return {"id": created[0]}
 
 @app.delete("/api/formatting-rules/{rule_id}")
 def formatting_rule_delete(rule_id: int, user: str = Depends(current_user)):

@@ -28,6 +28,12 @@ from fastapi.testclient import TestClient  # noqa: E402
 import admin_cli  # noqa: E402
 import main  # noqa: E402
 
+# Le schema s'applique **explicitement**. Importer `main` ne migre plus rien :
+# c'est precisement l'effet de bord qui a migre une base de production en
+# Phase 30 puis en Phase 37. Un appel visible dans le test remplace un import
+# qui decidait tout seul.
+main.init_db()
+
 
 LEGACY_SCHEMA = """
     CREATE TABLE users(

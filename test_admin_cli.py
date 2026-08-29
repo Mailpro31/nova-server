@@ -33,6 +33,12 @@ os.environ.setdefault("NOVA_ENTRA_CLIENT_ID", "")
 import admin_cli  # noqa: E402
 import main  # noqa: E402
 
+# Le schema s'applique **explicitement**. Importer `main` ne migre plus rien :
+# c'est precisement l'effet de bord qui a migre une base de production en
+# Phase 30 puis en Phase 37. Un appel visible dans le test remplace un import
+# qui decidait tout seul.
+main.init_db()
+
 
 def run(*argv) -> tuple[int, str]:
     """Lance la CLI et capture ce qu'elle affiche.

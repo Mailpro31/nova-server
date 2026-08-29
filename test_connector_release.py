@@ -32,6 +32,12 @@ import connector_release as release
 import main
 from test_connector import ConnectorTestCase
 
+# Le schema s'applique **explicitement**. Importer `main` ne migre plus rien :
+# c'est precisement l'effet de bord qui a migre une base de production en
+# Phase 30 puis en Phase 37. Un appel visible dans le test remplace un import
+# qui decidait tout seul.
+main.init_db()
+
 
 def make_keypair():
     """Une paire de clés de TEST, jamais persistée."""

@@ -28,7 +28,7 @@ from __future__ import annotations
 import json
 import os
 import re
-import sqlite3
+import database
 import time
 import uuid
 from dataclasses import dataclass
@@ -73,7 +73,7 @@ class DeploymentError(Exception):
         self.code = code
 
 
-def install_schema(conn: sqlite3.Connection) -> None:
+def install_schema(conn: database.Connection) -> None:
     """Schéma additif. Aucune table existante n'est reconstruite."""
     conn.executescript(
         """
@@ -343,7 +343,7 @@ def deployment_status(profiles: list[dict[str, Any]], manifest: dict[str, Any]) 
 def install_routes(app: Any, backend: Backend) -> None:
     """Surface d'administration du déploiement."""
 
-    def _profile(conn: sqlite3.Connection, organization_id: str, profile_id: str):
+    def _profile(conn: database.Connection, organization_id: str, profile_id: str):
         row = conn.execute(
             "SELECT * FROM deployment_profiles WHERE organization_id=? AND profile_id=?",
             (organization_id, profile_id),
@@ -429,7 +429,7 @@ def install_routes(app: Any, backend: Backend) -> None:
                         getattr(principal, "user_id", None),
                     ),
                 )
-            except sqlite3.IntegrityError as error:
+            except database.IntegrityError as error:
                 raise DeploymentError(409, "DEPLOYMENT_PROFILE_NAME_TAKEN") from error
             backend.record_admin_action(
                 principal,

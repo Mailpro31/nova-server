@@ -4,3 +4,9 @@ httpx
 pydantic[email]
 python-multipart
 pyjwt[crypto]
+
+# Production. Importes paresseusement : le service tourne sans eux tant qu'il
+# reste sur SQLite sans limitation partagee, ce qui est le cas en dev et en
+# test. En production, les deux sont requis.
+psycopg[binary]>=3.1
+redis>=5.0

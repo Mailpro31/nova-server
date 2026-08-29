@@ -32,6 +32,12 @@ from pathlib import Path
 import admin_cli
 import main
 
+# Le schema s'applique **explicitement**. Importer `main` ne migre plus rien :
+# c'est precisement l'effet de bord qui a migre une base de production en
+# Phase 30 puis en Phase 37. Un appel visible dans le test remplace un import
+# qui decidait tout seul.
+main.init_db()
+
 
 def ensure_provider_config(provider_type, **fields):
     """Déclare (ou remplace) la configuration d'un fournisseur pour

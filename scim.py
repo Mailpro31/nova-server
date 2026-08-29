@@ -11,7 +11,7 @@ import hashlib
 import json
 import re
 import secrets
-import sqlite3
+import database
 import threading
 import time
 import uuid
@@ -46,7 +46,7 @@ RATE_PER_CREDENTIAL = 300
 RATE_PER_TENANT = 900
 
 
-def install_schema(conn: sqlite3.Connection) -> None:
+def install_schema(conn: database.Connection) -> None:
     """Install the additive SCIM schema.  No existing identity row is rebuilt."""
     conn.executescript(
         """
@@ -177,14 +177,14 @@ class SCIMPrincipal:
 class Backend:
     database: Callable[[], Any]
     hash_token: Callable[[str], str]
-    user_by_id: Callable[[sqlite3.Connection, str], Any]
-    user_by_email: Callable[[sqlite3.Connection, str, str], Any]
+    user_by_id: Callable[[database.Connection, str], Any]
+    user_by_email: Callable[[database.Connection, str, str], Any]
     create_user: Callable[..., str]
-    update_user_email: Callable[[sqlite3.Connection, str, str], None]
+    update_user_email: Callable[[database.Connection, str, str], None]
     normalize_email: Callable[[str], str]
     account_status: Callable[[Any], str]
     security_role_for: Callable[[Any], str]
-    guard_last_identity_manager: Callable[[sqlite3.Connection, str, str], None]
+    guard_last_identity_manager: Callable[[database.Connection, str, str], None]
     require_organization_access: Callable[[Any, str], None]
     admin_read_guard: Callable[..., Any]
     admin_manage_guard: Callable[..., Any]
@@ -429,7 +429,7 @@ def _pagination(start_index: int, count: int) -> tuple[int, int]:
 
 
 def _activity(
-    conn: sqlite3.Connection,
+    conn: database.Connection,
     principal: SCIMPrincipal,
     action: str,
     success: bool,
@@ -450,7 +450,7 @@ def _activity(
 
 
 def _audit(
-    conn: sqlite3.Connection,
+    conn: database.Connection,
     organization_id: str,
     action: str,
     target_type: str,
@@ -477,7 +477,7 @@ def _audit(
     )
 
 
-def _managed_user(conn: sqlite3.Connection, organization_id: str, user_id: str, *, include_deleted: bool = False):
+def _managed_user(conn: database.Connection, organization_id: str, user_id: str, *, include_deleted: bool = False):
     deleted = "" if include_deleted else "AND m.deprovisioned_at IS NULL"
     return conn.execute(
         "SELECT m.organization_id AS scim_organization_id, m.user_id AS scim_user_id, "
@@ -536,7 +536,7 @@ def _user_view(row: Any, request: Request, backend: Backend) -> dict[str, Any]:
     return result
 
 
-def _group_row(conn: sqlite3.Connection, organization_id: str, group_id: str, *, include_deleted: bool = False):
+def _group_row(conn: database.Connection, organization_id: str, group_id: str, *, include_deleted: bool = False):
     deleted = "" if include_deleted else "AND deleted_at IS NULL"
     return conn.execute(
         f"SELECT * FROM organization_groups WHERE organization_id=? AND group_id=? {deleted}",
@@ -544,7 +544,7 @@ def _group_row(conn: sqlite3.Connection, organization_id: str, group_id: str, *,
     ).fetchone()
 
 
-def _group_view(conn: sqlite3.Connection, row: Any, request: Request) -> dict[str, Any]:
+def _group_view(conn: database.Connection, row: Any, request: Request) -> dict[str, Any]:
     members = conn.execute(
         "SELECT gm.user_id, u.email FROM organization_group_memberships gm "
         "JOIN users u ON u.user_id=gm.user_id AND u.organization_id=gm.organization_id "
@@ -577,7 +577,7 @@ def _group_view(conn: sqlite3.Connection, row: Any, request: Request) -> dict[st
 
 
 def _ensure_group_members(
-    conn: sqlite3.Connection,
+    conn: database.Connection,
     organization_id: str,
     member_ids: list[str],
 ) -> None:
@@ -590,7 +590,7 @@ def _ensure_group_members(
             raise ScimError(400, "A group member is not a User in this tenant.", "invalidValue", "MEMBER_INVALID")
 
 
-def _set_active(conn: sqlite3.Connection, backend: Backend, organization_id: str, user_id: str, active: bool) -> tuple[str, str]:
+def _set_active(conn: database.Connection, backend: Backend, organization_id: str, user_id: str, active: bool) -> tuple[str, str]:
     user = backend.user_by_id(conn, user_id)
     if user is None or user["organization_id"] != organization_id:
         raise ScimError(404, "Resource not found.", code="USER_NOT_FOUND")
@@ -622,7 +622,7 @@ def _set_active(conn: sqlite3.Connection, backend: Backend, organization_id: str
 
 
 def _find_reconciliation_user(
-    conn: sqlite3.Connection,
+    conn: database.Connection,
     backend: Backend,
     principal: SCIMPrincipal,
     external_id: str | None,
@@ -646,7 +646,7 @@ def _find_reconciliation_user(
 
 
 def _apply_user_fields(
-    conn: sqlite3.Connection,
+    conn: database.Connection,
     backend: Backend,
     principal: SCIMPrincipal,
     row: Any,
@@ -701,7 +701,7 @@ def _apply_user_fields(
                 "last_provisioned_at=? WHERE organization_id=? AND user_id=?",
                 (*updates.values(), time.time(), time.time(), principal.organization_id, user_id),
             )
-        except sqlite3.IntegrityError:
+        except database.IntegrityError:
             raise ScimError(409, "externalId or userName already exists.", "uniqueness", "IDENTITY_CONFLICT")
     else:
         conn.execute(
@@ -916,7 +916,7 @@ def install_routes(app: Any, backend: Backend) -> None:
             # Serialize the lookup/create window.  UNIQUE constraints remain the
             # final guard, while BEGIN IMMEDIATE prevents two workers from both
             # deciding that the same externalId/userName is absent.
-            conn.execute("BEGIN IMMEDIATE")
+            conn.begin_immediate()
             existing_management = None
             if fields["external_id"]:
                 existing_management = conn.execute(
@@ -969,7 +969,7 @@ def install_routes(app: Any, backend: Backend) -> None:
                         fields["manager_value"], fields["employee_number"], now, now, now,
                     ),
                 )
-            except sqlite3.IntegrityError:
+            except database.IntegrityError:
                 raise ScimError(409, "externalId or userName already exists.", "uniqueness", "IDENTITY_CONFLICT")
             row = _managed_user(conn, principal.organization_id, user_id)
             # Invariant asserted at the trust boundary, including reconciliation.
@@ -1178,7 +1178,7 @@ def install_routes(app: Any, backend: Backend) -> None:
         fields = _parse_group(await _body(request), require_display_name=True)
         now = time.time()
         with backend.database() as conn:
-            conn.execute("BEGIN IMMEDIATE")
+            conn.begin_immediate()
             if fields["external_id"]:
                 existing = conn.execute(
                     "SELECT * FROM organization_groups WHERE organization_id=? AND external_id=?",
@@ -1200,7 +1200,7 @@ def install_routes(app: Any, backend: Backend) -> None:
                     "display_name, created_at, updated_at) VALUES (?,?,?,?,?,?)",
                     (principal.organization_id, group_id, fields["external_id"], fields["display_name"], now, now),
                 )
-            except sqlite3.IntegrityError:
+            except database.IntegrityError:
                 raise ScimError(409, "externalId already exists.", "uniqueness", "GROUP_CONFLICT")
             members = fields["members"] or []
             _ensure_group_members(conn, principal.organization_id, members)
@@ -1287,7 +1287,7 @@ def install_routes(app: Any, backend: Backend) -> None:
                             f"UPDATE organization_groups SET {column}=?, updated_at=? WHERE organization_id=? AND group_id=?",
                             (wanted, time.time(), principal.organization_id, group_id),
                         )
-                    except sqlite3.IntegrityError:
+                    except database.IntegrityError:
                         raise ScimError(409, "externalId already exists.", "uniqueness", "GROUP_CONFLICT")
                     changed.add("displayName" if normalized == "displayname" else "externalId")
                     continue
