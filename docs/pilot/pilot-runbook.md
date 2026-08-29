@@ -166,8 +166,8 @@ L'installeur n'accepte **ni** `SERVER_URL`, **ni** `COMMAND`, **ni** `SCRIPT`,
 
 ## 10. Déployer les postes
 
-> **Avant le premier déploiement réel**, exécutez le workflow
-> `organization-windows-pilot-test.yml` (déclenchement manuel). Il installe le
+> **Après toute modification du paquet**, exécutez le workflow
+> `organization-windows-pilot-test.yml`. Il installe le
 > paquet sur un runner Windows jetable, vérifie les ACL de `ProgramData`, la
 > clé de détection et l'absence de trace dans le profil utilisateur, puis
 > désinstalle, réinstalle et purge. C'est la seule validation qui prouve que

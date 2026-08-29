@@ -132,15 +132,21 @@ Ce qui a été exécuté contre de la vraie infrastructure, et ce qui ne l'a pas
 | Reconnexion sans nouvel enrôlement | **exécutée** | idem |
 | Rotation de credential sans interruption | **exécutée** | C1 valide jusqu'à la preuve de C2, puis révoqué |
 | Rotation interrompue | **exécutée** | le Connector reste authentifié |
-| **Installation Windows réelle** | **préparée, non exécutée** | workflow `organization-windows-pilot-test.yml` |
+| **Installation Windows réelle** | **exécutée** | `organization-windows-pilot-test.yml`, run 33247650112, Windows Server 2025 jetable |
 | Mise à jour Connector, signature invalide | non rejouée sur processus réel | suite Phase 35 verte |
 | SSO Entra réel | non revalidé | suites existantes vertes |
 
 L'installation Windows réelle ne peut pas se valider sur une machine de
 développement : elle porte de vraies installations Nova, et Windows Famille
 n'offre ni Sandbox ni Hyper-V. Le workflow installe, désinstalle, réinstalle et
-purge sur un runner jetable, et vérifie les ACL réelles. Il doit être exécuté
-avant tout pilote externe.
+purge sur un runner jetable, et vérifie les ACL réelles — par SID, car les noms
+de groupes sont localisés. **Rejouez-le après toute modification du paquet ou de
+son contrat d'installation** : il se déclenche d'ailleurs seul sur les pull
+requests qui y touchent.
+
+Il a déjà trouvé ce qu'aucune lecture n'avait vu : le chemin de la
+configuration Organization était résolu depuis la racine du dépôt et non depuis
+`src-tauri`, si bien qu'aucun paquet Organization n'aurait pu se construire.
 
 ---
 
