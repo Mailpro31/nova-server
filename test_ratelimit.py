@@ -35,15 +35,68 @@ class QuotaDeclarationTests(unittest.TestCase):
                 f"{name} must fail closed",
             )
 
-    def test_the_only_fail_open_quota_is_a_deliberate_one(self):
-        open_quotas = [
+    def test_every_fail_open_quota_is_a_deliberate_one(self):
+        """La liste est close, et chaque entrée s'explique en une phrase.
+
+        L'intérêt de ce test n'est pas de compter : c'est qu'aucun quota ne
+        devienne fail-open par commodité. Ajouter un nom ici doit demander
+        d'écrire pourquoi refuser coûterait plus cher que compter faux.
+        """
+        open_quotas = {
             name for name, quota in ratelimit.ALL_QUOTAS.items()
             if quota.on_unavailable == ratelimit.FAIL_OPEN
-        ]
-        # Une seule, et c'est la synchronisation : refuser tout le monde
-        # pendant une panne Redis couperait la configuration de chaque
-        # organisation.
-        self.assertEqual(open_quotas, ["connector_sync"])
+        }
+        self.assertEqual(
+            open_quotas,
+            {
+                # Refuser tout le monde pendant une panne Redis couperait la
+                # configuration de chaque organisation.
+                "connector_sync",
+                # La dictée est la seule fonction que le produit refuse de
+                # fermer par configuration : une panne du compteur ne doit pas
+                # rendre les postes muets. La porte de capacité du routeur,
+                # elle, reste active sans Redis.
+                "inference_transcribe_principal_burst",
+                "inference_transcribe_principal_sustained",
+                "inference_transcribe_tenant_burst",
+                "inference_transcribe_tenant_sustained",
+            },
+        )
+
+    def test_inference_text_and_import_refuse_without_a_counter(self):
+        # L'inverse de la dictée, et pour la raison symétrique : autoriser une
+        # boucle pendant une panne Redis priverait toute l'organisation.
+        for name, quota in ratelimit.ALL_QUOTAS.items():
+            if not name.startswith("inference_"):
+                continue
+            if "transcribe" in name:
+                continue
+            with self.subTest(quota=name):
+                self.assertEqual(quota.on_unavailable, ratelimit.FAIL_CLOSED)
+
+    def test_inference_quotas_pair_a_burst_with_a_sustained_window(self):
+        # Une fenêtre longue seule laisse envoyer tout son quota dans la même
+        # seconde, donc remplir la porte de capacité d'un coup.
+        for kind in ("text", "transcribe", "import"):
+            for scope in ("principal", "tenant"):
+                burst = ratelimit.ALL_QUOTAS[f"inference_{kind}_{scope}_burst"]
+                sustained = ratelimit.ALL_QUOTAS[f"inference_{kind}_{scope}_sustained"]
+                with self.subTest(kind=kind, scope=scope):
+                    self.assertLess(burst.window_seconds, sustained.window_seconds)
+                    self.assertLess(burst.limit, sustained.limit)
+                    # Le tenant doit laisser passer plusieurs membres actifs.
+                    self.assertEqual(burst.route_class, ratelimit.CLASS_INFERENCE)
+
+    def test_a_tenant_quota_is_wider_than_the_principal_one(self):
+        # Sans quoi le second rideau deviendrait la limite réelle, et un seul
+        # membre actif fermerait son organisation.
+        for kind in ("text", "transcribe", "import"):
+            for window in ("burst", "sustained"):
+                principal = ratelimit.ALL_QUOTAS[f"inference_{kind}_principal_{window}"]
+                tenant = ratelimit.ALL_QUOTAS[f"inference_{kind}_tenant_{window}"]
+                with self.subTest(kind=kind, window=window):
+                    self.assertGreater(tenant.limit, principal.limit)
+                    self.assertEqual(tenant.window_seconds, principal.window_seconds)
 
     def test_the_scim_policy_is_unchanged_by_the_move_to_redis(self):
         # Un seul changement à la fois : la mécanique, pas la politique.

@@ -57,6 +57,12 @@ CLASS_SCIM = "scim"
 CLASS_CONNECTOR = "connector"
 CLASS_DEPLOYMENT = "deployment"
 CLASS_LEARNING = "learning"
+# L'inférence générale : dictée, reformulation, Styles, AI Skills, notes
+# d'ingénierie. Une classe distincte de `learning`, qui a déjà la sienne — les
+# deux appellent le même moteur, mais un exercice pédagogique et une matinée de
+# dictée n'ont ni la même cadence ni le même coût, et partager un compteur
+# ferait que l'un fermerait l'autre.
+CLASS_INFERENCE = "inference"
 
 
 class RateLimitExceeded(Exception):
@@ -255,6 +261,90 @@ DEPLOYMENT_VERIFY = Quota(60, 60.0, CLASS_DEPLOYMENT, FAIL_CLOSED)
 # un exercice que laisser une boucle saturer le runtime de tout le monde.
 LEARNING_EXERCISE = Quota(20, 60.0, CLASS_LEARNING, FAIL_CLOSED)
 
+
+# ────────────────────────────── Inférence ──────────────────────────────
+#
+# ## Le défaut que ces quotas corrigent
+#
+# Le routeur d'inférence borne déjà ce que le **moteur** exécute : deux
+# générations de texte à la fois, quatre places d'attente, puis
+# `AI_RUNTIME_BUSY`. Cette porte protège la machine, et elle le fait bien.
+#
+# Elle ne dit rien de l'**équité**. Rien n'empêchait un seul membre d'occuper
+# les deux emplacements et les quatre places, en boucle : ses voisins
+# recevaient alors `AI_RUNTIME_BUSY` sans avoir rien demandé. Un audit l'a
+# reproduit — douze requêtes simultanées d'un compte suffisaient à refuser
+# quatre tentatives sur quatre à un autre membre, indéfiniment. La porte de
+# capacité devenait l'arme, puisqu'elle traduisait la charge d'un seul en refus
+# pour tous.
+#
+# Ces quotas répondent à une question que la porte ne pose pas : *combien un
+# même compte a-t-il le droit de présenter ?*
+#
+# ## Pourquoi deux fenêtres et non une
+#
+# Trente requêtes par minute, seules, laissent envoyer les trente dans la même
+# seconde — donc remplir la porte d'un coup. La fenêtre courte empêche la
+# rafale ; la longue empêche la boucle continue. Aucune des deux ne suffit
+# seule, et c'est pourquoi les deux sont posées.
+#
+# ## Pourquoi un second rideau par organisation
+#
+# Le quota par principal est la protection principale. Celui par tenant existe
+# pour le cas qu'il ne couvre pas : un parc de comptes compromis, ou un client
+# défectueux déployé sur mille postes, où chaque compte reste sous sa limite et
+# où la somme sature quand même le moteur.
+#
+# ## Ce qui n'est pas compté par IP
+#
+# Un établissement présente cent postes derrière une seule adresse publique.
+# Compter par IP y ferait payer une classe entière pour un seul abus.
+#
+# ## Les valeurs
+#
+# Ce sont des points de départ prudents, choisis pour être hors de portée d'un
+# usage humain honnête et bien en deçà d'une boucle. Elles sont nommées pour
+# pouvoir être ajustées sur des métriques réelles, pas gravées.
+
+# Texte : reformulation, Styles, AI Skills, commandes vocales, notes
+# d'ingénierie. `FAIL_CLOSED` — sans compteur, refuser un appel coûte moins
+# cher qu'une boucle qui sature le runtime de toute l'organisation.
+INFERENCE_TEXT_PRINCIPAL_BURST = Quota(4, 10.0, CLASS_INFERENCE, FAIL_CLOSED)
+INFERENCE_TEXT_PRINCIPAL_SUSTAINED = Quota(30, 60.0, CLASS_INFERENCE, FAIL_CLOSED)
+INFERENCE_TEXT_TENANT_BURST = Quota(40, 10.0, CLASS_INFERENCE, FAIL_CLOSED)
+INFERENCE_TEXT_TENANT_SUSTAINED = Quota(300, 60.0, CLASS_INFERENCE, FAIL_CLOSED)
+
+# Dictée au micro. Plus fréquente qu'une action texte : quelqu'un qui dicte
+# enchaîne les passages courts.
+#
+# **`FAIL_OPEN`, et c'est une décision.** `/api/transcribe` est la seule route
+# que le produit refuse de fermer par configuration — son propre commentaire
+# l'énonce : une organisation qui couperait la dictée par erreur laisserait ses
+# membres sans recours, et le support ne saurait pas distinguer une panne d'une
+# décision. Une panne Redis est exactement cette erreur-là, subie. On compte
+# donc faux pendant l'incident plutôt que de rendre les postes muets.
+#
+# Ce que ce choix ne laisse pas ouvert : la porte de capacité du routeur reste
+# active sans Redis. Une panne du compteur retire l'équité entre membres, elle
+# ne retire pas la protection du moteur.
+INFERENCE_TRANSCRIBE_PRINCIPAL_BURST = Quota(12, 10.0, CLASS_INFERENCE, FAIL_OPEN)
+INFERENCE_TRANSCRIBE_PRINCIPAL_SUSTAINED = Quota(60, 60.0, CLASS_INFERENCE, FAIL_OPEN)
+INFERENCE_TRANSCRIBE_TENANT_BURST = Quota(120, 10.0, CLASS_INFERENCE, FAIL_OPEN)
+INFERENCE_TRANSCRIBE_TENANT_SUSTAINED = Quota(600, 60.0, CLASS_INFERENCE, FAIL_OPEN)
+
+# Import d'un fichier déjà enregistré. Rare, et bien plus lourd : un fichier
+# peut occuper le moteur cinq minutes là où une dictée l'occupe quelques
+# secondes. `FAIL_CLOSED` — l'inverse de la dictée, et pour la raison
+# symétrique : empêcher un import pendant une panne Redis fait attendre
+# quelqu'un, tandis qu'autoriser une boucle d'imports volumineux pendant cette
+# même panne prive tout le monde. L'import n'est d'ailleurs pas le cœur du
+# produit : il est déjà gouverné par une policy qui peut le fermer entièrement.
+INFERENCE_IMPORT_PRINCIPAL_BURST = Quota(3, 10.0, CLASS_INFERENCE, FAIL_CLOSED)
+INFERENCE_IMPORT_PRINCIPAL_SUSTAINED = Quota(10, 60.0, CLASS_INFERENCE, FAIL_CLOSED)
+INFERENCE_IMPORT_TENANT_BURST = Quota(30, 10.0, CLASS_INFERENCE, FAIL_CLOSED)
+INFERENCE_IMPORT_TENANT_SUSTAINED = Quota(100, 60.0, CLASS_INFERENCE, FAIL_CLOSED)
+
+
 ALL_QUOTAS = {
     "scim_per_credential": SCIM_PER_CREDENTIAL,
     "scim_per_tenant": SCIM_PER_TENANT,
@@ -267,4 +357,16 @@ ALL_QUOTAS = {
     "admin_credential_create": ADMIN_CREDENTIAL_CREATE,
     "deployment_verify": DEPLOYMENT_VERIFY,
     "learning_exercise": LEARNING_EXERCISE,
+    "inference_text_principal_burst": INFERENCE_TEXT_PRINCIPAL_BURST,
+    "inference_text_principal_sustained": INFERENCE_TEXT_PRINCIPAL_SUSTAINED,
+    "inference_text_tenant_burst": INFERENCE_TEXT_TENANT_BURST,
+    "inference_text_tenant_sustained": INFERENCE_TEXT_TENANT_SUSTAINED,
+    "inference_transcribe_principal_burst": INFERENCE_TRANSCRIBE_PRINCIPAL_BURST,
+    "inference_transcribe_principal_sustained": INFERENCE_TRANSCRIBE_PRINCIPAL_SUSTAINED,
+    "inference_transcribe_tenant_burst": INFERENCE_TRANSCRIBE_TENANT_BURST,
+    "inference_transcribe_tenant_sustained": INFERENCE_TRANSCRIBE_TENANT_SUSTAINED,
+    "inference_import_principal_burst": INFERENCE_IMPORT_PRINCIPAL_BURST,
+    "inference_import_principal_sustained": INFERENCE_IMPORT_PRINCIPAL_SUSTAINED,
+    "inference_import_tenant_burst": INFERENCE_IMPORT_TENANT_BURST,
+    "inference_import_tenant_sustained": INFERENCE_IMPORT_TENANT_SUSTAINED,
 }

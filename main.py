@@ -3489,13 +3489,40 @@ class VerifyCode(BaseModel):
     code: str
     machine: str = "poste inconnu"
 
+# ─────────────────── Bornes des entrées d'inférence ───────────────────
+#
+# Ce qu'un poste a le droit d'envoyer au moteur. Ces champs n'étaient bornés
+# par rien : un audit y a fait passer un texte d'un million de caractères et
+# une instruction de cinq cent mille, tous deux acceptés. Une requête de cette
+# taille n'est pas une dictée — c'est une façon d'occuper le moteur longtemps
+# avec un seul appel, et de faire payer le tenant pour des jetons que personne
+# n'a demandés.
+#
+# Les valeurs ne cherchent pas à imiter `MAX_EXERCISE_INPUT` (2 000), qui borne
+# un exercice tenant en quelques phrases. Nova doit pouvoir reformuler un
+# document : cinquante mille caractères, c'est une vingtaine de pages, très
+# au-delà de l'usage interactif et très en deçà de l'abus.
+MAX_INFERENCE_TEXT_CHARS = 50_000
+# Une instruction de Style est une consigne, pas un corpus. Elle est fournie
+# par le poste pour les Styles personnels ; celles de l'organisation sont
+# résolues côté serveur et n'empruntent pas ce champ.
+MAX_STYLE_PROMPT_CHARS = 20_000
+# `/api/command` et `/api/engineering-notes` partagent `CommandRequest` : la
+# même borne les gouverne aujourd'hui. La constante existe pour que les deux
+# puissent diverger sans qu'il faille rouvrir le modèle pour s'en apercevoir.
+MAX_ENGINEERING_NOTES_CHARS = MAX_INFERENCE_TEXT_CHARS
+# Un identifiant désigne un package publié. Il n'a aucune raison d'être long,
+# et le borner évite qu'il serve de charge utile déguisée.
+MAX_INFERENCE_ID_CHARS = 200
+
+
 class ReformulateRequest(BaseModel):
-    text: str
+    text: str = Field(max_length=MAX_INFERENCE_TEXT_CHARS)
     # Organization Styles are designated by id and resolved server-side. The
     # legacy prompt remains accepted for builtin/personal Styles so existing
     # Desktop versions keep working during migration.
-    style_id: str | None = None
-    style_prompt: str | None = None
+    style_id: str | None = Field(default=None, max_length=MAX_INFERENCE_ID_CHARS)
+    style_prompt: str | None = Field(default=None, max_length=MAX_STYLE_PROMPT_CHARS)
 
 class UserUpdate(BaseModel):
     role: str | None = None
@@ -3519,8 +3546,18 @@ class FormattingRuleRequest(BaseModel):
     rule: str
 
 class CommandRequest(BaseModel):
-    instruction: str
-    text: str
+    """Le corps de `/api/command` et de `/api/engineering-notes`.
+
+    `instruction` est bornée ici à la taille générale d'une entrée d'inférence,
+    et non à 2 000 : `/api/command` lui applique déjà `clean_required(…, 2000)`,
+    plus strict, et resserrer le modèle referait 422 là où le produit répond
+    400 depuis toujours. `/api/engineering-notes` reçoit le champ sans s'en
+    servir — son instruction est écrite dans la route. La borne du modèle
+    n'existe donc que pour empêcher le champ de servir de charge utile.
+    """
+
+    instruction: str = Field(max_length=MAX_INFERENCE_TEXT_CHARS)
+    text: str = Field(max_length=MAX_ENGINEERING_NOTES_CHARS)
 
 class EntraStartRequest(BaseModel):
     machine: str = "poste inconnu"
@@ -9136,6 +9173,177 @@ def ai_skills():
 #     /api/import/transcribe   import fichier — gouvernee par `file_import_enabled`
 
 
+# ──────────────── Ce qu'un membre a le droit de demander ────────────────
+#
+# ## Le défaut que cette section corrige
+#
+# Le routeur d'inférence borne ce que le moteur exécute : deux générations de
+# texte à la fois, quatre places d'attente, puis `AI_RUNTIME_BUSY`. Cette porte
+# protège la machine — elle ne dit rien de l'équité entre les personnes.
+#
+# Rien n'empêchait donc un seul membre d'occuper les deux emplacements et les
+# quatre places, en boucle. Ses voisins recevaient `AI_RUNTIME_BUSY` sans avoir
+# rien demandé, indéfiniment et pour un coût nul de son côté. La porte de
+# capacité devenait l'arme, puisqu'elle traduisait la charge d'un seul en refus
+# pour tous.
+#
+# ## L'ordre, qui est tout le sujet
+#
+#     authentification
+#       → organisation résolue depuis le compte
+#       → taille de la requête validée
+#       → quota du principal
+#       → quota du tenant
+#       → porte de capacité du routeur
+#       → inférence
+#
+# Le quota se consomme **avant** la porte. Compter après reviendrait à compter
+# une requête qui a déjà pris la place de quelqu'un d'autre.
+#
+# C'est pourquoi la garde est appelée dans le corps de chaque route et non
+# posée en dépendance : FastAPI résout les dépendances **avant** de valider le
+# corps, et une requête d'un million de caractères aurait alors consommé un
+# jeton avant d'être rejetée pour sa taille.
+
+
+def inference_principal_scope(user: str, organization_id: str) -> str:
+    """Identité de quota d'un membre. Opaque, et cadrée par l'organisation.
+
+    Ce qui n'entre jamais dans une clé Redis : une adresse e-mail. Les clés
+    survivent à la requête, se lisent avec `SCAN`, et se retrouvent dans les
+    exports de supervision — une empreinte y dit la même chose sans nommer
+    personne.
+
+    L'organisation entre dans l'empreinte : deux homonymes de tenants
+    différents ne doivent pas partager un compteur, et le jour où une instance
+    en servira plusieurs, cette ligne n'aura pas à être retrouvée.
+    """
+    return hashlib.sha256(
+        f"{organization_id}\x00{user}".encode("utf-8")
+    ).hexdigest()
+
+
+# Les trois natures d'inférence, et leurs quatre fenêtres chacune. Un seul
+# quota partagé aurait fait qu'une matinée de dictée ferme les AI Skills : les
+# coûts et les cadences n'ont rien de comparable.
+INFERENCE_QUOTAS: dict[str, tuple] = {
+    "text": (
+        ratelimit.INFERENCE_TEXT_PRINCIPAL_BURST,
+        ratelimit.INFERENCE_TEXT_PRINCIPAL_SUSTAINED,
+        ratelimit.INFERENCE_TEXT_TENANT_BURST,
+        ratelimit.INFERENCE_TEXT_TENANT_SUSTAINED,
+    ),
+    "transcribe": (
+        ratelimit.INFERENCE_TRANSCRIBE_PRINCIPAL_BURST,
+        ratelimit.INFERENCE_TRANSCRIBE_PRINCIPAL_SUSTAINED,
+        ratelimit.INFERENCE_TRANSCRIBE_TENANT_BURST,
+        ratelimit.INFERENCE_TRANSCRIBE_TENANT_SUSTAINED,
+    ),
+    "import": (
+        ratelimit.INFERENCE_IMPORT_PRINCIPAL_BURST,
+        ratelimit.INFERENCE_IMPORT_PRINCIPAL_SUSTAINED,
+        ratelimit.INFERENCE_IMPORT_TENANT_BURST,
+        ratelimit.INFERENCE_IMPORT_TENANT_SUSTAINED,
+    ),
+}
+
+
+def enforce_inference_quota(kind: str, user: str, organization_id: str) -> None:
+    """Le membre a-t-il encore le droit de solliciter le moteur ?
+
+    Quatre fenêtres : rafale et durée, pour la personne puis pour
+    l'organisation. La rafale empêche de remplir la porte de capacité d'un
+    coup ; la durée empêche la boucle continue. Une seule des deux laisserait
+    passer exactement ce que l'autre attrape.
+
+    Le principal est vérifié avant le tenant : c'est la protection principale,
+    et l'attribution du refus doit désigner la personne avant l'organisation.
+
+    Le refus porte `RATE_LIMITED`, distinct de `AI_RUNTIME_BUSY` : le premier
+    dit « vous en avez trop demandé », le second « le moteur est plein ». Un
+    poste qui confond les deux réessaie au mauvais moment.
+    """
+    principal_burst, principal_sustained, tenant_burst, tenant_sustained = (
+        INFERENCE_QUOTAS[kind]
+    )
+    principal = inference_principal_scope(user, organization_id)
+    checks = (
+        ("principal", f"{kind}-principal-burst", principal, principal_burst),
+        ("principal", f"{kind}-principal-sustained", principal, principal_sustained),
+        ("tenant", f"{kind}-tenant-burst", organization_id, tenant_burst),
+        ("tenant", f"{kind}-tenant-sustained", organization_id, tenant_sustained),
+    )
+    for scope_name, scope_key, identity, quota in checks:
+        try:
+            enforce_rate_limit(scope_key, identity, quota, "RATE_LIMITED")
+        except HTTPException as error:
+            # Une étiquette par nature et par portée, jamais par personne ni
+            # par organisation : une métrique ne doit pas devenir un annuaire.
+            outcome = (
+                "backend_unavailable" if error.status_code == 503
+                else f"limited_{scope_name}"
+            )
+            observability.METRICS.count(f"inference_{kind}", outcome)
+            raise
+    observability.METRICS.count(f"inference_{kind}", "allowed")
+
+
+# Ce qu'un téléversement audio a le droit de peser. `transcribe_audio` lisait
+# le fichier entier en mémoire sans regarder sa taille : un membre pouvait donc
+# faire allouer au serveur autant que son réseau le permettait, avant même que
+# le moteur ne soit sollicité.
+#
+# La dictée envoie des passages de quelques secondes à quelques minutes ; 25 Mo
+# couvrent très largement du PCM 16 kHz mono. L'import accepte un fichier déjà
+# enregistré, dont le timeout moteur est de cinq minutes : 100 Mo y laissent de
+# la marge sans ouvrir la porte à un téléversement sans fin.
+MAX_TRANSCRIBE_AUDIO_BYTES = 25 * 1024 * 1024
+MAX_IMPORT_AUDIO_BYTES = 100 * 1024 * 1024
+_UPLOAD_CHUNK_BYTES = 1024 * 1024
+
+
+async def read_bounded_upload(file: UploadFile, limit: int) -> bytes:
+    """Lit un téléversement, en s'arrêtant dès qu'il dépasse.
+
+    Par morceaux, avec un compteur : lire d'abord et mesurer ensuite aurait
+    déjà fait l'allocation que la borne cherche à empêcher.
+    """
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await file.read(_UPLOAD_CHUNK_BYTES)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > limit:
+            raise auth_error(413, "PAYLOAD_TOO_LARGE")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+# `Content-Length` mesure le **corps HTTP entier**, pas le fichier : en
+# multipart s'y ajoutent les frontières, les en-têtes de partie et le nom du
+# fichier. Comparer l'un à l'autre sans marge refuserait un enregistrement
+# parfaitement valide qui frôle la borne — un bug de disponibilité introduit au
+# nom de la sécurité. La marge absorbe l'enveloppe ; elle reste dérisoire face
+# aux tailles que ce contrôle sert à écarter.
+MULTIPART_ENVELOPE_ALLOWANCE_BYTES = 64 * 1024
+
+
+def reject_oversized_declaration(content_length: int | None, limit: int) -> None:
+    """Refus anticipé, quand le client annonce une taille sans rapport.
+
+    Économise un téléversement, et rien de plus : l'en-tête est écrit par le
+    client, qui peut l'omettre ou mentir. La vraie borne reste celle appliquée
+    pendant la lecture — celle-ci n'écarte que l'invraisemblable, pour éviter
+    d'attendre cent mégaoctets avant de les refuser.
+    """
+    if content_length is None:
+        return
+    if content_length > limit + MULTIPART_ENVELOPE_ALLOWANCE_BYTES:
+        raise auth_error(413, "PAYLOAD_TOO_LARGE")
+
+
 def runtime_http_error(error: AIRuntimeError, task_type: TaskType) -> HTTPException:
     status_by_code = {
         AI_RUNTIME_BUSY: 429,
@@ -9152,9 +9360,16 @@ def runtime_http_error(error: AIRuntimeError, task_type: TaskType) -> HTTPExcept
     return HTTPException(status_by_code.get(error.code, 502), detail)
 
 
-async def transcribe_audio(file: UploadFile, user: str, task_type: TaskType) -> dict:
-    """Shared speech service; authorization remains route-specific."""
-    audio = await file.read()
+async def transcribe_audio(
+    file: UploadFile, user: str, task_type: TaskType, max_bytes: int
+) -> dict:
+    """Shared speech service; authorization remains route-specific.
+
+    La borne est passée par la route : la dictée et l'import n'ont ni la même
+    taille attendue, ni le même budget moteur, et une borne unique aurait dû
+    choisir entre gêner l'une et laisser l'autre sans protection.
+    """
+    audio = await read_bounded_upload(file, max_bytes)
     try:
         result = await ORGANIZATION_AI_ROUTER.transcribe(
             task_type,
@@ -9168,7 +9383,12 @@ async def transcribe_audio(file: UploadFile, user: str, task_type: TaskType) -> 
 
 
 @app.post("/api/transcribe")
-async def transcribe(file: UploadFile, user: str = Depends(current_user)):
+async def transcribe(
+    file: UploadFile,
+    user: str = Depends(current_user),
+    account=Depends(current_account),
+    content_length: int | None = Header(default=None),
+):
     """Dictee au micro.
 
     **Aucune policy produit ne ferme cette route.** La dictee est le coeur de
@@ -9177,20 +9397,43 @@ async def transcribe(file: UploadFile, user: str = Depends(current_user)):
     distinguer une panne d'une decision. Si ce besoin apparait un jour, il
     demandera son propre examen — connexion, recuperation, hors ligne — pas
     une case cochee par inadvertance dans un panneau d'import.
+
+    Le quota, lui, n'est pas une policy : il ne ferme rien, il empeche un
+    membre d'occuper le moteur au detriment des autres. Il est `FAIL_OPEN` —
+    voir `ratelimit` — pour que la panne du compteur ne rende pas les postes
+    muets.
     """
-    return await transcribe_audio(file, user, TaskType.TRANSCRIPTION_REALTIME)
+    reject_oversized_declaration(content_length, MAX_TRANSCRIBE_AUDIO_BYTES)
+    enforce_inference_quota("transcribe", user, account_organization(account))
+    return await transcribe_audio(
+        file, user, TaskType.TRANSCRIPTION_REALTIME, MAX_TRANSCRIBE_AUDIO_BYTES
+    )
 
 
 @app.post(
     "/api/import/transcribe",
     dependencies=[Depends(product_capability("fileTranscription", "file_import"))],
 )
-async def transcribe_import(file: UploadFile, user: str = Depends(current_user)):
+async def transcribe_import(
+    file: UploadFile,
+    user: str = Depends(current_user),
+    account=Depends(current_account),
+    content_length: int | None = Header(default=None),
+):
     """Import d'un fichier audio deja enregistre.
 
     Meme moteur que la dictee, meme comptage — seule l'autorisation differe.
+
+    Le quota, lui, differe : un import est rare et lourd, et il est
+    `FAIL_CLOSED`. Empecher un import pendant une panne Redis fait attendre
+    quelqu'un ; laisser tourner une boucle d'imports volumineux pendant cette
+    meme panne prive tout le monde.
     """
-    return await transcribe_audio(file, user, TaskType.TRANSCRIPTION_FILE)
+    reject_oversized_declaration(content_length, MAX_IMPORT_AUDIO_BYTES)
+    enforce_inference_quota("import", user, account_organization(account))
+    return await transcribe_audio(
+        file, user, TaskType.TRANSCRIPTION_FILE, MAX_IMPORT_AUDIO_BYTES
+    )
 
 async def execute_text(task_type: TaskType, instruction: str, text: str) -> str:
     try:
@@ -9213,7 +9456,11 @@ async def reformulate(body: ReformulateRequest, user: str = Depends(current_user
                       account=Depends(current_account)):
     # L'organisation vient du compte : en multi-tenant, l'organisation active de
     # l'instance ne serait pas forcement la sienne.
-    context, snippets = writing_context(user, account_organization(account))
+    organization_id = account_organization(account)
+    # Avant toute chose, et surtout avant la porte de capacite du routeur : une
+    # requete comptee apres coup a deja pris la place de quelqu'un d'autre.
+    enforce_inference_quota("text", user, organization_id)
+    context, snippets = writing_context(user, organization_id)
     source_text = apply_snippets(body.text, snippets)
     style_id = (body.style_id or "").strip()
     if style_id.startswith(ORGANIZATION_STYLE_PREFIX):
@@ -9238,14 +9485,16 @@ async def reformulate(body: ReformulateRequest, user: str = Depends(current_user
     return {"text": result}
 
 @app.post("/api/command", dependencies=[Depends(product_capability("commands", "voice_commands"))])
-async def command(body: CommandRequest, user: str = Depends(current_user)):
+async def command(body: CommandRequest, user: str = Depends(current_user),
+                  account=Depends(current_account)):
     instruction = clean_required(body.instruction, "instruction", 2000)
+    enforce_inference_quota("text", user, account_organization(account))
     system_prompt = command_prompt(instruction, vocabulary_context(user))
     return {"text": await execute_text(TaskType.VOICE_COMMAND, system_prompt, body.text)}
 
 class SkillRunRequest(BaseModel):
-    skill_id: str
-    text: str
+    skill_id: str = Field(max_length=MAX_INFERENCE_ID_CHARS)
+    text: str = Field(max_length=MAX_INFERENCE_TEXT_CHARS)
 
 
 @app.post("/api/skills/run",
@@ -9273,6 +9522,7 @@ async def run_skill(body: SkillRunRequest, user: str = Depends(current_user),
     qu'une suggestion.
     """
     organization_id = account_organization(account)
+    enforce_inference_quota("text", user, organization_id)
     instruction = None
     for package in effective_packages(organization_id)["packages"]:
         if package["type"] == PACKAGE_TYPE_AI_SKILL and package["id"] == body.skill_id:
@@ -9291,7 +9541,9 @@ async def run_skill(body: SkillRunRequest, user: str = Depends(current_user),
 @app.post("/api/engineering-notes", dependencies=[Depends(product_capability("engineeringNotes", "engineering_notes"))])
 async def engineering_notes(body: CommandRequest, user: str = Depends(current_user),
                             account=Depends(current_account)):
-    context, snippets = writing_context(user, account_organization(account))
+    organization_id = account_organization(account)
+    enforce_inference_quota("text", user, organization_id)
+    context, snippets = writing_context(user, organization_id)
     source_text = apply_snippets(body.text, snippets)
     prompt = (
         "Transform the raw engineering dictation into concise sections: Observation, "

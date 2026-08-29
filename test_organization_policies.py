@@ -806,7 +806,10 @@ class DictationInvariantTests(AdminTestCase):
         self.assertEqual(response.status_code, 200, response.text)
 
     def transcribe(self, path: str, token: str):
-        async def engine(file, user, task_type):
+        # `max_bytes` est passe par la route : la dictee et l'import n'ont ni la
+        # meme taille attendue ni le meme budget moteur, et le service partage
+        # ne la devine pas.
+        async def engine(file, user, task_type, max_bytes):
             return {"text": "bonjour"}
 
         with patch.object(main, "transcribe_audio", engine):
