@@ -229,6 +229,26 @@ REQUIRED_COLUMNS = {
 }
 
 
+# Identifiant du verrou consultatif PostgreSQL. Une constante arbitraire mais
+# stable : deux processus qui migrent la meme base doivent choisir le meme
+# nombre, et aucun autre usage de `pg_advisory_lock` ne doit tomber dessus.
+MIGRATION_LOCK_ID = 8_251_039
+
+
+def lock_for_migration(conn: database.Connection) -> None:
+    """Serialise les migrations concurrentes sur une meme base.
+
+    Sous SQLite, prendre le verrou d'ecriture suffit : il n'y a qu'un ecrivain.
+    Sous PostgreSQL, un verrou consultatif de transaction fait le meme travail —
+    il est relache par le commit ou le rollback, donc un processus qui meurt en
+    cours de migration ne laisse pas la base verrouillee.
+    """
+    if conn.dialect == database.SQLITE:
+        conn.begin_immediate()
+        return
+    conn.execute("SELECT pg_advisory_xact_lock(?)", (MIGRATION_LOCK_ID,))
+
+
 def _ensure_version_table(conn: database.Connection) -> None:
     conn.executescript(
         f"""
@@ -344,15 +364,21 @@ def migrate(db: database.Database, *, allow_adoption: bool = True) -> dict:
     for migration in migrations:
         with db.connect() as conn:
             _ensure_version_table(conn)
+            # Le verrou vient **avant** la vérification, pas après.
+            #
+            # Vérifier puis verrouiller laisse deux processus conclure tous
+            # deux que la migration reste à faire, puis l'appliquer tous deux :
+            # le second échoue sur un `CREATE TABLE` d'une table que le premier
+            # vient de créer. C'est exactement ce qui arrive quand deux workers
+            # démarrent en même temps sur une base neuve.
+            #
+            # Ce `BEGIN` sert aussi à l'atomicité : le module `sqlite3` n'ouvre
+            # pas de transaction avant du DDL, seulement avant un INSERT, un
+            # UPDATE ou un DELETE. Sans lui, une migration qui échoue à sa
+            # troisième instruction laisserait les deux premières en place.
+            lock_for_migration(conn)
             if migration.version in applied_versions(conn):
                 continue
-            # Transaction ouverte explicitement. Le module `sqlite3` n'en ouvre
-            # pas avant du DDL — seulement avant un INSERT, un UPDATE ou un
-            # DELETE. Sans ce `BEGIN`, un `CREATE TABLE` s'auto-validerait, et
-            # une migration qui echoue a sa troisieme instruction laisserait
-            # les deux premieres en place : exactement l'etat qu'un systeme de
-            # migrations existe pour rendre impossible.
-            conn.begin_immediate()
             migration.apply(conn)
             conn.execute(
                 f"INSERT INTO {SCHEMA_MIGRATIONS}(version, name, applied_at) VALUES (?,?,?)",

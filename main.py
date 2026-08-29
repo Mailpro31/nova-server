@@ -2782,10 +2782,16 @@ def count_usage(email: str, kind: str, audio_seconds: float = 0.0):
     day = time.strftime("%Y-%m-%d")
     col = "transcriptions" if kind == "transcription" else "reformulations"
     with db() as conn:
+        # Les colonnes sont qualifiees par leur table dans la clause `DO UPDATE`.
+        # Sans cela, PostgreSQL refuse la requete : `transcriptions` y designe
+        # aussi bien la colonne existante que celle de la ligne proposee, et il
+        # ne devine pas. SQLite l'acceptait, ce qui a masque le defaut jusqu'a
+        # la premiere dictee reelle sur PostgreSQL.
         conn.execute(
             f"""INSERT INTO usage(email, day, {col}, audio_seconds) VALUES (?,?,?,?)
                 ON CONFLICT(email, day) DO UPDATE SET
-                {col} = {col} + 1, audio_seconds = audio_seconds + ?""",
+                {col} = usage.{col} + 1,
+                audio_seconds = usage.audio_seconds + ?""",
             (email, day, 1, audio_seconds, audio_seconds),
         )
 

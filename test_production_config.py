@@ -12,6 +12,10 @@ BASE = {
     "NOVA_ENV": "production",
     "NOVA_DATABASE_URL": "postgresql://nova@db.internal:5432/nova",
     "NOVA_REDIS_URL": "redis://cache.internal:6379/0",
+    # Une organisation doit se declarer : voir OrganizationIdentityTests.
+    "NOVA_ORGANIZATION_ID": "pilot-organization",
+    "NOVA_ORGANIZATION_NAME": "Pilot Organization",
+    "NOVA_DOMAINS": "pilot.example",
 }
 
 
@@ -166,6 +170,34 @@ class SecretTests(unittest.TestCase):
                 any(p.startswith("NOVA_GOOGLE_CLIENT_SECRET_UNRESOLVABLE") for p in problems),
                 problems,
             )
+
+
+class OrganizationIdentityTests(unittest.TestCase):
+    """Une organisation doit se declarer, jamais heriter d'un defaut."""
+
+    def test_production_requires_the_organization_to_name_itself(self):
+        # Les defauts historiques portent le nom et les domaines du tout
+        # premier deploiement. Les laisser en production ferait servir une
+        # organisation sous l'identite d'une autre, avec les apparences d'une
+        # configuration correcte.
+        for missing in (
+            "NOVA_ORGANIZATION_ID", "NOVA_ORGANIZATION_NAME", "NOVA_DOMAINS"
+        ):
+            reduced = {key: value for key, value in BASE.items() if key != missing}
+            with environment(**reduced):
+                self.assertIn(
+                    f"{missing}_REQUIRED_IN_PRODUCTION",
+                    production_config.check().problems,
+                    missing,
+                )
+
+    def test_a_declared_organization_passes(self):
+        with environment(**BASE):
+            self.assertTrue(production_config.check().ok)
+
+    def test_development_still_runs_on_the_historical_defaults(self):
+        with environment(NOVA_ENV="development"):
+            self.assertTrue(production_config.check().ok)
 
 
 class DevelopmentFlagTests(unittest.TestCase):

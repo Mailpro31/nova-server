@@ -189,6 +189,18 @@ def check(*, require_redis: bool = True) -> Report:
         if problem:
             report.refuse(problem)
 
+    # -- identité de l'organisation
+    #
+    # `NOVA_ORGANIZATION_ID`, `NOVA_ORGANIZATION_NAME` et `NOVA_DOMAINS` ont des
+    # valeurs par défaut héritées du tout premier déploiement. Elles rendent le
+    # développement praticable, et elles n'ont rien à faire en production : une
+    # organisation qui oublie de se déclarer servirait sous le nom et les
+    # domaines de quelqu'un d'autre — silencieusement, et avec les mêmes
+    # apparences qu'une configuration correcte.
+    for variable in ("NOVA_ORGANIZATION_ID", "NOVA_ORGANIZATION_NAME", "NOVA_DOMAINS"):
+        if not os.getenv(variable, "").strip():
+            report.refuse(f"{variable}_REQUIRED_IN_PRODUCTION")
+
     # -- racines de confiance, quand la vérification est obligatoire
     if os.getenv("NOVA_CONNECTOR_RELEASE_MANIFEST", "").strip() and not os.getenv(
         "NOVA_CONNECTOR_RELEASE_PUBLIC_KEY", ""
