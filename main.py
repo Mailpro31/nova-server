@@ -73,10 +73,19 @@ ORGANIZATION_ID = os.getenv("NOVA_ORGANIZATION_ID", "ipsa")
 ORGANIZATION_NAME = os.getenv("NOVA_ORGANIZATION_NAME", "IPSA")
 ORGANIZATION_SHORT_NAME = os.getenv("NOVA_ORGANIZATION_SHORT_NAME", "IPSA")
 ORGANIZATION_CAMPUS = os.getenv("NOVA_ORGANIZATION_CAMPUS", "Paris")
-# Nature de l'organisation. `business` est accepté par le modèle mais aucun
-# client ne l'expose encore.
+# Nature de l'organisation : `education` donne Campus, `business` donne
+# Business. Ce n'est pas une edition technique distincte — les deux traversent
+# la meme infrastructure Organization, et seule cette valeur les separe.
+#
+# Cette constante est l'**amorcage** : elle decide de ce qui est ecrit dans la
+# ligne `organizations` au premier demarrage. Elle n'est jamais l'autorite pour
+# une organisation deja creee : c'est `organizations.org_type` qui l'est, et
+# `organization_type_of` est le seul chemin de lecture. La difference compte en
+# multi-tenant, ou une seule variable d'environnement ne peut pas decrire deux
+# organisations de natures differentes servies par le meme processus.
+ORGANIZATION_TYPES = ("education", "business")
 ORGANIZATION_TYPE = os.getenv("NOVA_ORGANIZATION_TYPE", "education").lower()
-if ORGANIZATION_TYPE not in {"education", "business"}:
+if ORGANIZATION_TYPE not in ORGANIZATION_TYPES:
     ORGANIZATION_TYPE = "education"
 EDUCATION_MODE = os.getenv("NOVA_EDUCATION_MODE", "normal").lower()
 AI_SKILLS_REQUIRED = os.getenv("NOVA_AI_SKILLS_REQUIRED", "false").lower() == "true"
@@ -1856,7 +1865,9 @@ def create_user(conn, organization_id: str, email: str, **fields):
         "updated_at, last_seen) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
             user_id, organization_id, email.strip(), normalize_email(email),
-            fields.get("role", "student"),
+            # Le metier par defaut suit la nature de l'organisation, pas une
+            # constante ecrite du temps ou Nova ne servait que des ecoles.
+            fields.get("role") or default_member_role_in(conn, organization_id),
             fields.get("security_role", SECURITY_ROLE_MEMBER),
             fields.get("cohort", ""), fields.get("note", ""),
             1 if fields.get("disabled") else 0,
@@ -2639,10 +2650,18 @@ def require_product_capability(account, capability: str, feature: str):
 
 
 # `users.role` décrit un métier. La correspondance ne produit jamais de droit.
+#
+# Les métiers d'une entreprise (`employee`, `manager`) rejoignent ceux d'un
+# établissement dans la **même** table : une organisation Business n'a pas de
+# modèle de membre a part, elle emploie d'autres métiers. `manager` reste un
+# métier — il ne confère aucun privilège d'administration, exactement comme
+# `teacher` : c'est `security_role` qui décide, et lui seul.
 MEMBER_TYPE_BY_ROLE = {
     "student": "student",
     "teacher": "teacher",
     "staff": "staff",
+    "employee": "employee",
+    "manager": "manager",
     # `partner` est la catégorie fourre-tout du serveur : elle ne désigne
     # aucun métier.
     "partner": "other",
@@ -3526,6 +3545,68 @@ AI_SKILLS = [
     },
 ]
 
+def normalize_organization_type(value: str | None) -> str:
+    """Nature d'organisation lisible, ou l'amorcage a defaut.
+
+    Une valeur inconnue — colonne vide, ecriture d'une version future — ne
+    devient jamais une nature inventee.
+    """
+    org_type = (value or "").strip().lower()
+    return org_type if org_type in ORGANIZATION_TYPES else ORGANIZATION_TYPE
+
+
+def organization_type_in(conn, organization_id: str | None) -> str:
+    """`organization_type_of`, mais sur une connexion deja ouverte.
+
+    Les deux existent parce qu'ouvrir une seconde connexion au milieu d'une
+    transaction est exactement la maniere de se bloquer soi-meme. Un appelant
+    qui tient deja `conn` passe par ici.
+    """
+    if not organization_id:
+        return ORGANIZATION_TYPE
+    row = conn.execute(
+        "SELECT org_type FROM organizations WHERE id=?", (organization_id,)
+    ).fetchone()
+    return normalize_organization_type(row["org_type"] if row is not None else None)
+
+
+# Metier attribue a un compte cree sans role explicite. Un etablissement inscrit
+# des etudiants, une entreprise emploie des salaries : laisser `student` par
+# defaut dans une organisation Business aurait donne a chaque salarie un metier
+# qui n'existe pas chez lui. Aucun de ces defauts n'accorde de privilege.
+DEFAULT_MEMBER_ROLE_BY_ORGANIZATION_TYPE = {
+    "education": "student",
+    "business": "employee",
+}
+
+
+def default_member_role_in(conn, organization_id: str | None) -> str:
+    """Metier par defaut d'un nouveau compte de cette organisation."""
+    return DEFAULT_MEMBER_ROLE_BY_ORGANIZATION_TYPE[
+        organization_type_in(conn, organization_id)
+    ]
+
+
+def organization_type_of(organization_id: str | None) -> str:
+    """Nature d'une organisation : `education` ou `business`.
+
+    Lue dans **sa** ligne, jamais dans l'environnement. `NOVA_ORGANIZATION_TYPE`
+    n'amorce que la creation ; une fois l'organisation creee, la ligne est
+    l'autorite. En mode dedie les deux coincident, et rien ne change ; en
+    multi-tenant, une seule variable de processus ne peut pas decrire a la fois
+    un etablissement et une entreprise, et repondre `education` pour un tenant
+    Business ferait sortir ses membres du bon chemin produit.
+
+    Une valeur absente, vide ou inconnue retombe sur l'amorcage plutot que
+    d'inventer une nature : une colonne ecrite par une version future ne doit
+    pas faire disparaitre l'organisation du modele.
+    """
+    if not organization_id:
+        return ORGANIZATION_TYPE
+    with db() as conn:
+        return organization_type_in(conn, organization_id)
+
+
 def public_campus_config(organization_id: str | None = None) -> dict:
     """Ce que le poste apprend de l'organisation qu'il sert.
 
@@ -3545,13 +3626,17 @@ def public_campus_config(organization_id: str | None = None) -> dict:
     auth_methods = ["email_code"]
     if ENTRA_CLIENT_ID:
         auth_methods.append("entra")
-    policy = organization_policy(organization_id or nova_organization_id())
+    resolved_organization_id = organization_id or nova_organization_id()
+    policy = organization_policy(resolved_organization_id)
     config = {
         # Identifiant Nova immuable de l'organisation. Distinct du slug lisible
         # (`organization.id`) et du nom d'affichage : c'est celui qui servira de
         # clé de tenant le jour du Control Plane.
         "organization_id": nova_organization_id(),
-        "organization_type": ORGANIZATION_TYPE,
+        # La nature vient de la ligne de **cette** organisation. C'est ce qui
+        # permet a un tenant Business et a un tenant Education servis par le
+        # meme processus de recevoir chacun la sienne.
+        "organization_type": organization_type_of(resolved_organization_id),
         "organization": {
             "id": ORGANIZATION_ID,
             "name": ORGANIZATION_NAME,
@@ -8113,7 +8198,7 @@ MEMBER_PAGE_MAX = 100
 # Metiers acceptes, tels que la base les stocke aujourd'hui. Changer ce champ
 # ne change **jamais** un privilege : `security_role` vit ailleurs, et c'est
 # tout l'objet de la separation posee en Phase 13.
-MEMBER_ROLES = ("student", "teacher", "staff", "partner")
+MEMBER_ROLES = ("student", "teacher", "staff", "employee", "manager", "partner")
 
 
 def member_view(row, groups: bool = True) -> dict:
@@ -8636,7 +8721,11 @@ def me(user: str = Depends(current_user), u=Depends(current_account)):
         "contract_version": 2,
         "user_id": u["user_id"],
         "organization_id": u["organization_id"],
-        "organization_type": organization["org_type"] if organization else ORGANIZATION_TYPE,
+        # Autorite : la ligne de l'organisation du membre. Le poste ne peut
+        # pas l'ecraser — il ne fait que lire ce que le serveur annonce ici.
+        "organization_type": normalize_organization_type(
+            organization["org_type"] if organization else None
+        ),
         "membership": {
             "member_type": member_type_for(u["role"]),
             "security_role": security_role_for(u),

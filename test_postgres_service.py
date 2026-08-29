@@ -619,5 +619,110 @@ class PostgresOutageTests(unittest.TestCase):
         self.assertTrue(result["still_serves"])
 
 
+@unittest.skipUnless(POSTGRES_URL, "NOVA_TEST_POSTGRES_URL is not set")
+class PostgresBusinessOrganizationTests(unittest.TestCase):
+    """Une organisation Business sous PostgreSQL, chemin de production.
+
+    Le SQLite de developpement suffit a decrire le comportement, pas a le
+    garantir : `org_type` est lu par des requetes reelles, et un dialecte se
+    distingue precisement la ou l'on ne regarde pas.
+    """
+
+    def test_a_business_tenant_lives_the_organization_lifecycle(self):
+        result = run_against_postgres(
+            """
+            import time, uuid
+            main.init_db()
+            active = main.nova_organization_id()
+
+            business = "org-" + uuid.uuid4().hex[:12]
+            with main.db() as conn:
+                conn.execute(
+                    "INSERT INTO organizations(id, slug, display_name, org_type, "
+                    "status, created_at) VALUES (?,?,?,?,?,?)",
+                    (business, "acme-pg", "Acme Industries", "business",
+                     "active", time.time()),
+                )
+                # Le metier par defaut suit la nature de l'organisation.
+                employee_id = main.create_user(
+                    conn, business, "salarie@example.com")
+                student_id = main.create_user(
+                    conn, active, "etudiant@example.com")
+                employee = main.user_by_id(conn, employee_id)
+                student = main.user_by_id(conn, student_id)
+
+            result["dialect"] = main.database_handle().dialect
+            result["business_type"] = main.organization_type_of(business)
+            result["education_type"] = main.organization_type_of(active)
+            result["employee_role"] = employee["role"]
+            result["employee_member_type"] = main.member_type_for(employee["role"])
+            result["employee_security_role"] = main.security_role_for(employee)
+            result["student_role"] = student["role"]
+            # Deux natures differentes, servies par le meme processus.
+            result["business_config_type"] = main.public_campus_config(
+                business)["organization_type"]
+            result["education_config_type"] = main.public_campus_config(
+                active)["organization_type"]
+            """
+        )
+        self.assertEqual(result["dialect"], "postgresql")
+        self.assertEqual(result["business_type"], "business")
+        self.assertEqual(result["education_type"], "education")
+        self.assertEqual(result["employee_role"], "employee")
+        self.assertEqual(result["employee_member_type"], "employee")
+        # Le metier n'accorde rien : c'est tout l'objet de la separation.
+        self.assertEqual(result["employee_security_role"], "member")
+        self.assertEqual(result["student_role"], "student")
+        self.assertEqual(result["business_config_type"], "business")
+        self.assertEqual(result["education_config_type"], "education")
+
+    def test_a_business_member_signs_in_and_reads_its_own_nature(self):
+        result = run_against_postgres(
+            """
+            from fastapi.testclient import TestClient
+
+            main.init_db()
+            organization = main.nova_organization_id()
+            with main.db() as conn:
+                conn.execute(
+                    "UPDATE organizations SET org_type='business' WHERE id=?",
+                    (organization,),
+                )
+
+            client = TestClient(main.app)
+            client.post("/api/auth/request",
+                        json={"email": "salarie@example.com", "machine": "poste"})
+            with main.db() as conn:
+                code = conn.execute(
+                    "SELECT code FROM auth_codes WHERE email=?",
+                    ("salarie@example.com",),
+                ).fetchone()["code"]
+            verified = client.post(
+                "/api/auth/verify",
+                json={"email": "salarie@example.com", "code": code,
+                      "machine": "poste"})
+            token = verified.json()["token"]
+            me = client.get("/api/me",
+                            headers={"Authorization": f"Bearer {token}"}).json()
+
+            result["config_type"] = client.get("/api/config").json()["organization_type"]
+            result["me_type"] = me["organization_type"]
+            result["role"] = me["role"]
+            result["member_type"] = me["membership"]["member_type"]
+            result["security_role"] = me["membership"]["security_role"]
+            result["core"] = sorted(
+                capability for capability in me["capabilities"]
+                if capability in ("dictation", "rewrite", "styles"))
+            """
+        )
+        self.assertEqual(result["config_type"], "business")
+        self.assertEqual(result["me_type"], "business")
+        self.assertEqual(result["role"], "employee")
+        self.assertEqual(result["member_type"], "employee")
+        self.assertEqual(result["security_role"], "member")
+        # Business n'est pas une edition amoindrie.
+        self.assertEqual(result["core"], ["dictation", "rewrite", "styles"])
+
+
 if __name__ == "__main__":
     unittest.main()
