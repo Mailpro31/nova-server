@@ -62,7 +62,13 @@ class EngineMigrationTests:
         try:
             self.assertEqual(migrations.status(db)["state"], "empty")
             applied = migrations.migrate(db)
-            self.assertEqual(applied["applied"], [1])
+            # Derive du disque, pas d'une liste ecrite ici : figer `[1]` faisait
+            # echouer ce test a chaque migration ajoutee, pour une raison sans
+            # rapport avec ce qu'il verifie.
+            self.assertEqual(
+                applied["applied"],
+                [migration.version for migration in migrations.discover()],
+            )
             state = migrations.status(db)
             self.assertEqual(state["state"], "current")
             self.assertEqual(state["current_version"], state["latest_version"])
@@ -200,10 +206,19 @@ class LegacyAdoptionTests(unittest.TestCase):
         self.addCleanup(self.directory.cleanup)
 
     def _phase37_database(self) -> str:
-        """Une base au schema courant, mais sans table de version."""
+        """Une base au schema de la Phase 37, sans table de version.
+
+        La baseline seule, pas le schema courant : une base historique s'est
+        arretee la ou le versionnement a commence. Y appliquer d'abord les
+        migrations posterieures aurait decrit une situation qui n'existe pas —
+        elles ne sont livrees qu'avec le moteur qui enregistre les versions.
+        """
         url = temporary_sqlite(self.directory)
         db = database.Database(url)
-        migrations.migrate(db)
+        baseline = migrations.discover()[0]
+        with db.connect() as conn:
+            migrations._ensure_version_table(conn)
+            baseline.apply(conn)
         with db.connect() as conn:
             conn.executescript("DROP TABLE schema_migrations;")
             conn.execute(
@@ -232,7 +247,10 @@ class LegacyAdoptionTests(unittest.TestCase):
                     "SELECT display_name FROM organizations WHERE id=?", ("org-legacy",)
                 ).fetchone()
                 self.assertEqual(kept["display_name"], "Legacy")
-                self.assertEqual(migrations.applied_versions(conn), {1})
+                self.assertEqual(
+                    migrations.applied_versions(conn),
+                    {migration.version for migration in migrations.discover()},
+                )
         finally:
             db.close()
 

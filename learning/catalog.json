@@ -1,0 +1,670 @@
+{
+  "catalog_version": 1,
+  "locale": "en",
+  "paths": [
+    {
+      "id": "use-ai",
+      "pillar": "use_ai",
+      "title": "Use AI",
+      "description": "Get better answers by asking better.",
+      "icon": "message-square",
+      "order": 1,
+      "tags": ["general"],
+      "modules": [
+        {
+          "id": "use-ai-foundations",
+          "title": "Asking well",
+          "description": "The three habits that change the answer you get.",
+          "order": 1,
+          "lessons": [
+            {
+              "id": "ask-better-questions",
+              "title": "Ask better questions",
+              "description": "Say what you want, for whom, and in what shape.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 1,
+              "version": 1,
+              "tags": ["general"],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "You ask for a summary. What comes back is three bland paragraphs you have to rewrite anyway. The model did not fail — it was never told what a good answer would look like."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "A request has three parts",
+                    "body": "A useful request names the task, the reader, and the shape of the answer. Drop any one of them and the model fills the gap with an average guess. The task says what to do. The reader sets the vocabulary and the level of detail. The shape — length, format, what to keep — is what stops you from rewriting the result."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "comparison",
+                  "order": 3,
+                  "content": {
+                    "worse_label": "Vague",
+                    "worse": "Summarise this.",
+                    "better_label": "Specific",
+                    "better": "Summarise this text in 5 bullet points for someone new to the subject. Keep the important figures, and end with the 2 ideas worth remembering.",
+                    "note": "The second version names the task, the reader, and the shape. Nothing about it is clever — it is only complete."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 4,
+                  "content": {
+                    "question": "Which part is missing from: \"Rewrite this email so it is shorter\"?",
+                    "options": [
+                      { "id": "a", "label": "The task" },
+                      { "id": "b", "label": "The reader" },
+                      { "id": "c", "label": "Nothing is missing" }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "The task and the shape are there. Who reads it — a client, your manager, a colleague — decides the tone, and the model has to guess it."
+                  }
+                },
+                {
+                  "id": "try-it",
+                  "type": "prompt_exercise",
+                  "order": 5,
+                  "content": {
+                    "instruction": "Rewrite this request so it names the task, the reader, and the shape.",
+                    "starting_text": "Explain machine learning.",
+                    "hint": "Who is reading? How long should it be? What must the answer contain?",
+                    "sample_answer": "Explain machine learning to a colleague with no technical background, in under 150 words, using one everyday example and no jargon."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "Task, reader, shape. When an answer disappoints, one of the three was missing."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "give-useful-context",
+              "title": "Give useful context",
+              "description": "What the model needs to know, and what only adds noise.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 2,
+              "version": 1,
+              "tags": ["general"],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "The model knows nothing about your project, your team, or the decision you made last week. It answers from what is in front of it — and everything you leave out, it invents a plausible substitute for."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Context is what changes the answer",
+                    "body": "Useful context is anything that would change a competent person's answer: constraints, audience, what you already tried, the format you must fit. Everything else is noise. Pasting an entire document when three sentences matter does not make the answer better — it dilutes what you actually wanted."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "Same question, different context",
+                    "body": "\"Is this a good design?\" gets a generic checklist.\n\n\"Is this a good design for a team of three that ships weekly and has no dedicated ops engineer?\" gets an answer about operational cost — because the constraint was stated."
+                  }
+                },
+                {
+                  "id": "warning",
+                  "type": "warning",
+                  "order": 4,
+                  "content": {
+                    "body": "Context is not a place to paste secrets. Credentials, personal data about other people, and confidential documents do not become safe because they are useful."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 5,
+                  "content": {
+                    "question": "You want feedback on a job application. Which detail is worth adding?",
+                    "options": [
+                      { "id": "a", "label": "The role and what the posting asks for" },
+                      { "id": "b", "label": "Your full address and date of birth" },
+                      { "id": "c", "label": "The date you started writing it" }
+                    ],
+                    "correct_option_id": "a",
+                    "explanation": "The role changes the answer. Your address does not — and it is personal data with no reason to be there."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "Add what would change a competent person's answer. Leave out the rest, and never paste what you would not want stored."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "iterate-instead-of-restarting",
+              "title": "Iterate instead of starting over",
+              "description": "The second message is where the value is.",
+              "estimated_minutes": 3,
+              "difficulty": "beginner",
+              "order": 3,
+              "version": 1,
+              "tags": ["general"],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "The answer is nearly right. Most people delete it and rewrite the whole request. That throws away the part that worked."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Correct, do not restart",
+                    "body": "Treat the first answer as a draft you can edit by talking. Name what to keep, then what to change. \"Keep the structure, make the second point concrete, cut the last paragraph\" gets you there in one step. Starting over rolls the dice again."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "comparison",
+                  "order": 3,
+                  "content": {
+                    "worse_label": "Starting over",
+                    "worse": "That's not what I wanted. Write me a better summary.",
+                    "better_label": "Correcting",
+                    "better": "Good structure. Point 2 is too abstract — replace it with the actual figure from the text. Drop the closing paragraph.",
+                    "note": "The second one keeps what worked. The first one asks the model to guess again, with no more information than before."
+                  }
+                },
+                {
+                  "id": "tip",
+                  "type": "tip",
+                  "order": 4,
+                  "content": {
+                    "body": "If two rounds of correction do not converge, the problem is usually the original request, not the answer. Go back and add what was missing."
+                  }
+                },
+                {
+                  "id": "practice",
+                  "type": "prompt_exercise",
+                  "order": 5,
+                  "content": {
+                    "instruction": "The answer you got is too formal and too long. Write the correction — do not rewrite the request.",
+                    "starting_text": "",
+                    "hint": "Name one thing to keep and two things to change.",
+                    "sample_answer": "Keep the three sections. Make it about half as long, and use the tone you would use with a colleague rather than a client."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "Say what to keep before you say what to change. Restarting throws away the part that already worked."
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "learn-ai",
+      "pillar": "learn_ai",
+      "title": "Learn AI",
+      "description": "How these systems actually work — without the maths.",
+      "icon": "brain",
+      "order": 2,
+      "tags": ["general"],
+      "modules": [
+        {
+          "id": "learn-ai-foundations",
+          "title": "What is really happening",
+          "description": "Enough understanding to predict where it will fail.",
+          "order": 1,
+          "lessons": [
+            {
+              "id": "what-an-llm-does",
+              "title": "What an LLM actually does",
+              "description": "It predicts text. That single fact explains most of its behaviour.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 1,
+              "version": 1,
+              "tags": ["general"],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "A language model does not look things up, and it does not reason the way a person does. It predicts what text plausibly comes next. Almost everything surprising about these systems follows from that one sentence."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Prediction, trained at scale",
+                    "body": "During training, the model saw enormous amounts of text and got very good at continuing it. Nothing is stored as facts in a database. What it learned is which words tend to follow which — across grammar, argument structure, code, and conventions.\n\nThat is why it writes fluently about things it has no way of knowing, and why fluency is not evidence of accuracy."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "Why it helps to know this",
+                    "body": "Ask for a well-known formula and you will usually get it right — it appeared consistently in the training text.\n\nAsk for the page number of a quote in a specific edition and you may get a confident, invented number. It is a plausible continuation. It was never a lookup."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 4,
+                  "content": {
+                    "question": "Why can a model write a fluent answer that is wrong?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Fluency and accuracy come from the same process — plausible continuation"
+                      },
+                      { "id": "b", "label": "It ran out of memory" },
+                      { "id": "c", "label": "It was trained on bad grammar" }
+                    ],
+                    "correct_option_id": "a",
+                    "explanation": "Sounding right and being right come from the same mechanism. That is why the style of an answer tells you nothing about its truth."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 5,
+                  "content": {
+                    "body": "It predicts text. Confidence is a property of the writing, not of the facts."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "why-ai-hallucinates",
+              "title": "Why AI can hallucinate",
+              "description": "And how to tell which answers deserve checking.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 2,
+              "version": 1,
+              "tags": ["general"],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "A hallucination is not a glitch. It is the system doing exactly what it does — producing a plausible continuation — in a place where plausible and true have come apart."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Where the risk concentrates",
+                    "body": "Invention is most likely where the text is specific and verifiable but rare: exact citations, page numbers, statistics, legal references, API methods, people's biographies. The model has seen the shape of such things thousands of times, so it can produce a convincing one on demand.\n\nIt is least likely where the answer is common knowledge, or where you supplied the source text yourself."
+                  }
+                },
+                {
+                  "id": "tip",
+                  "type": "tip",
+                  "order": 3,
+                  "content": {
+                    "body": "Asking \"what is your source?\" does not help by itself — the source can be invented too. Checking the source does."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 4,
+                  "content": {
+                    "question": "Which answer most deserves verification?",
+                    "options": [
+                      { "id": "a", "label": "A rewrite of a paragraph you pasted in" },
+                      { "id": "b", "label": "A specific statistic with a year and a percentage" },
+                      { "id": "c", "label": "A list of ideas for a team name" }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "Specific, verifiable, and not supplied by you — that is exactly where a plausible invention is hardest to spot."
+                  }
+                },
+                {
+                  "id": "reflection",
+                  "type": "reflection",
+                  "order": 5,
+                  "content": {
+                    "prompt": "Think of a task you use AI for. Which part of its answer would cause a real problem if it were quietly wrong?",
+                    "hint": "That part is the one to check, every time."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "Check what is specific, verifiable, and not yours. Trust nothing because it sounds certain."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "context-and-tokens",
+              "title": "Context and tokens",
+              "description": "Why long conversations drift, and what the model can actually see.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 3,
+              "version": 1,
+              "tags": ["general"],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Halfway through a long conversation, the model forgets a constraint you set at the start. It is not being careless. There is a limit to what it can see at once, and you crossed it."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Tokens and the window",
+                    "body": "Text is cut into tokens — roughly word fragments. A token is often about three quarters of a word. Everything the model considers at once, your messages and its own replies together, must fit inside a fixed context window.\n\nWhen the conversation grows past it, the earliest parts stop being visible. The model is not remembering a conversation; it is re-reading whatever still fits."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "What this changes in practice",
+                    "body": "If a rule matters — \"always answer in French\", \"never exceed 200 words\" — restate it in the message where it matters, rather than trusting that it survived twenty exchanges.\n\nAnd if you have drifted a long way, starting a fresh conversation with a clean summary usually beats continuing a crowded one."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 4,
+                  "content": {
+                    "question": "A long conversation stops following an instruction from the beginning. What is the most likely cause?",
+                    "options": [
+                      { "id": "a", "label": "The instruction has scrolled out of the context window" },
+                      { "id": "b", "label": "The model has decided to ignore you" },
+                      { "id": "c", "label": "The instruction was grammatically wrong" }
+                    ],
+                    "correct_option_id": "a",
+                    "explanation": "What is no longer in the window may as well never have been said. Restate the constraint where it matters."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 5,
+                  "content": {
+                    "body": "The model sees a window, not a memory. Restate what matters, and start fresh when the conversation is crowded."
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "adapt-ai",
+      "pillar": "adapt_ai",
+      "title": "Adapt AI",
+      "description": "Make it fit your work rather than the other way round.",
+      "icon": "settings-2",
+      "order": 3,
+      "tags": [
+        "general",
+        "student",
+        "engineering",
+        "marketing",
+        "developer",
+        "creator",
+        "management"
+      ],
+      "modules": [
+        {
+          "id": "adapt-ai-foundations",
+          "title": "Fitting it to your work",
+          "description": "From one-off answers to something you can reuse.",
+          "order": 1,
+          "lessons": [
+            {
+              "id": "an-assistant-for-your-work",
+              "title": "Turn AI into a work or study assistant",
+              "description": "Describe your situation once, and stop repeating it.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 1,
+              "version": 1,
+              "tags": ["general", "student", "management"],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Most people re-explain who they are and what they are working on in every request. The assistant that actually saves time is the one you have described once."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "A standing brief",
+                    "body": "A standing brief is three or four sentences that stay true across many requests: your role, the audience you usually write for, the tone you want, and the things you never want. Written once, it turns every later request into a short one.\n\nIn Nova this is what a writing style is for: the instruction lives in one place and applies whenever you choose it."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "A standing brief",
+                    "body": "\"I am a second-year engineering student. I write lab reports for a tutor who values precision over length. Use plain, technical English. Never pad with introductions or conclusions that repeat the body.\"\n\nEvery later request can now be two lines instead of ten."
+                  }
+                },
+                {
+                  "id": "practice",
+                  "type": "prompt_exercise",
+                  "order": 4,
+                  "content": {
+                    "instruction": "Write your own standing brief in three or four sentences.",
+                    "starting_text": "",
+                    "hint": "Role, usual audience, tone, and one thing you never want.",
+                    "sample_answer": "I am a product manager writing for engineers and designers. Be concrete and short; prefer examples over adjectives. Never open with a summary of what I just asked."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 5,
+                  "content": {
+                    "body": "Describe your situation once, in a place that persists. Then every request gets shorter."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "build-a-reusable-workflow",
+              "title": "Build a reusable workflow",
+              "description": "Turn a task you repeat into something you run.",
+              "estimated_minutes": 4,
+              "difficulty": "intermediate",
+              "order": 2,
+              "version": 1,
+              "tags": ["general", "engineering", "marketing", "developer"],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "If you have written nearly the same request three times, you do not have a request. You have a workflow you have not written down yet."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Fixed instruction, variable input",
+                    "body": "A workflow separates the part that never changes from the part that does. The instruction — what to do, for whom, in what shape, what to check — is fixed. The text you feed it changes every time.\n\nOnce separated, the fixed part can be saved and reused, and it stops drifting each time you retype it from memory."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "comparison",
+                  "order": 3,
+                  "content": {
+                    "worse_label": "Retyped each time",
+                    "worse": "Can you look at these meeting notes and pull out what I need to do?",
+                    "better_label": "A workflow",
+                    "better": "From the notes below, extract only the actions assigned to me. One line each, starting with a verb, with the deadline if one is stated. If no action is assigned to me, say so and stop.",
+                    "note": "The second one is worth saving. It also says what to do when there is nothing to find — which is where the retyped version quietly invents tasks."
+                  }
+                },
+                {
+                  "id": "tip",
+                  "type": "tip",
+                  "order": 4,
+                  "content": {
+                    "body": "Always tell a workflow what to do when the input does not fit. That single sentence prevents most invented output."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 5,
+                  "content": {
+                    "question": "What belongs in the fixed part of a workflow?",
+                    "options": [
+                      { "id": "a", "label": "The text to process this time" },
+                      { "id": "b", "label": "The rules for what a good result looks like" },
+                      { "id": "c", "label": "Today's date" }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "The rules are what you want to stop retyping. The input is what changes."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "Separate the fixed instruction from the changing input, and say what to do when there is nothing to find."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "adapt-ai-to-your-domain",
+              "title": "Adapt AI to your domain",
+              "description": "Vocabulary, conventions, and the checks your field expects.",
+              "estimated_minutes": 5,
+              "difficulty": "intermediate",
+              "order": 3,
+              "version": 1,
+              "tags": ["engineering", "marketing", "developer", "creator", "student", "management"],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "A generic answer is generic because nothing in the request said which field you are in. Your domain has vocabulary, conventions, and a standard of proof — and none of it is obvious from the outside."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Three things your field expects",
+                    "body": "Name the vocabulary you use, so the answer does not translate itself into someone else's terms. Name the convention you follow — a report structure, a commit style, a house tone. And name the check: what makes an answer acceptable in your field rather than merely reasonable.\n\nThe third one is the one most people leave out, and it is the one that does the most work."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "The same request in three fields",
+                    "body": "Engineering: \"State the assumption behind each figure. If a value is estimated rather than measured, mark it.\"\n\nMarketing: \"Match our house tone: direct, no superlatives. Give two options so we can compare.\"\n\nDevelopment: \"Follow the conventions already in the file. If an approach needs a dependency we do not have, say so instead of adding it.\""
+                  }
+                },
+                {
+                  "id": "ai-practice",
+                  "type": "ai_exercise",
+                  "order": 4,
+                  "content": {
+                    "exercise_id": "adapt-domain-request",
+                    "instruction": "Write a request for a task in your own field. Name the vocabulary, the convention, and the check that makes an answer acceptable.",
+                    "starting_text": "",
+                    "hint": "The check is the part most people forget: what would make you reject an otherwise reasonable answer?"
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 5,
+                  "content": {
+                    "body": "Vocabulary, convention, and the check your field applies. The check is what turns a reasonable answer into a usable one."
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "exercises": [
+    {
+      "id": "adapt-domain-request",
+      "task": "learning_feedback",
+      "instruction": "You are helping someone learn to write better requests to an AI assistant. They were asked to write a request for a task in their own professional or academic field, naming three things: the vocabulary of their field, the convention they follow, and the check that makes an answer acceptable rather than merely reasonable.\n\nRead their attempt and reply in at most four short sentences. Say plainly which of the three are present and which are missing. Then give one concrete improvement, rewriting a fragment of their own request rather than replacing it with yours. Do not score them, do not use percentages, and do not praise without a reason. If their request is already complete, say so and name the strongest part.\n\nReply in the language they wrote in."
+    }
+  ]
+}

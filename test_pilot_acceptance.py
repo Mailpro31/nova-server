@@ -27,6 +27,8 @@ import textwrap
 import unittest
 import uuid
 
+import migrations
+
 
 POSTGRES_URL = os.getenv("NOVA_TEST_POSTGRES_URL", "").strip()
 REDIS_URL = os.getenv("NOVA_TEST_REDIS_URL", "").strip()
@@ -192,7 +194,13 @@ class FreshTenantBootstrapTests(unittest.TestCase):
         )
         self.assertEqual(result["state_before"], "empty")
         self.assertEqual(result["startup_before"], "DATABASE_MIGRATION_REQUIRED")
-        self.assertEqual(result["migrated"], [1])
+        # Derive du disque : figer la liste faisait echouer ce test a chaque
+        # migration ajoutee, pour une raison sans rapport avec ce qu'il verifie —
+        # qu'un tenant neuf atteint le schema courant sans SQL manuel.
+        self.assertEqual(
+            result["migrated"],
+            [migration.version for migration in migrations.discover()],
+        )
         self.assertEqual(result["state_after"], "current")
         self.assertTrue(result["organization_id_stable"])
         self.assertTrue(result["account_created"])

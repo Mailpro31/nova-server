@@ -36,6 +36,7 @@ import deployment
 import migrations
 import observability
 import production_config
+import learning
 import ratelimit
 import scim
 import secrets_provider
@@ -2072,6 +2073,7 @@ POLICY_SETTINGS: dict[str, PolicySetting] = {
         PolicySetting("voice_commands_enabled", bool, True, "commands"),
         PolicySetting("engineering_notes_enabled", bool, True, "engineeringNotes"),
         PolicySetting("file_import_enabled", bool, True, "fileTranscription"),
+        PolicySetting("learning_enabled", bool, True, "learning"),
     )
 }
 
@@ -3583,6 +3585,11 @@ def public_campus_config(organization_id: str | None = None) -> dict:
             # lequel croire.
             "aiSkills": EDUCATION_MODE != "assessment",
             "personalization": True,
+            # Learn appartient au Nova Core : la capacite existe pour toutes
+            # les editions, et c'est la policy qui decide, pas l'edition.
+            # En mode examen elle se ferme comme le reste de ce qui appelle
+            # un modele.
+            "learning": EDUCATION_MODE != "assessment",
         },
         "privacy": {
             "verified": True,
@@ -9179,6 +9186,238 @@ async def engineering_notes(body: CommandRequest, user: str = Depends(current_us
     if context:
         prompt += f"\n\n{context}"
     return {"text": await execute_text(TaskType.ENGINEERING_NOTES, prompt, source_text)}
+
+
+# ================================================================ LEARN
+#
+# Learn appartient au Nova Core. Rien ici ne cite une edition : la capacite
+# `learning` decide, et elle se resout de la meme facon que les autres —
+# `product_capability`. Un poste Personal, Campus ou Business emprunte donc
+# exactement ces routes.
+#
+# ## Trois choses que ces routes ne font pas
+#
+# Elles ne renvoient jamais l'instruction d'un exercice IA : elle vit dans le
+# catalogue et n'en sort pas. Elles ne conservent aucun texte libre : un
+# exercice se traite et se jette. Et elles n'ecrivent que la progression de
+# celui qui appelle — il n'existe aucune route pour ecrire celle d'un autre,
+# parce qu'aucun besoin produit ne la demande.
+
+
+class LearningProgressUpdate(BaseModel):
+    """Ce qu'un poste a le droit d'annoncer sur sa propre progression.
+
+    `status` n'y figure pas. Le poste dit ou il en est ; le serveur en deduit
+    l'etat. Laisser le poste ecrire `completed` aurait fait de la completion
+    une declaration plutot qu'un fait — voir `learning.completion_is_earned`.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    completed_blocks: list[str] = Field(default_factory=list, max_length=200)
+    last_block_id: str | None = None
+
+
+class LearningExerciseRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    text: str
+
+
+def learning_progress_row(organization_id: str, email: str, lesson_id: str):
+    with db() as conn:
+        return conn.execute(
+            """SELECT lesson_id, status, lesson_version, completed_blocks,
+                      last_block_id, started_at, updated_at, completed_at
+               FROM learning_progress
+               WHERE organization_id=? AND email=? AND lesson_id=?""",
+            (organization_id, email, lesson_id),
+        ).fetchone()
+
+
+def learning_progress_view(row) -> dict:
+    try:
+        completed = json.loads(row["completed_blocks"])
+    except (TypeError, ValueError):
+        completed = []
+    return {
+        "lesson_id": row["lesson_id"],
+        "status": row["status"],
+        "lesson_version": row["lesson_version"],
+        "completed_blocks": completed if isinstance(completed, list) else [],
+        "last_block_id": row["last_block_id"],
+        "started_at": row["started_at"],
+        "updated_at": row["updated_at"],
+        "completed_at": row["completed_at"],
+    }
+
+
+@app.get("/api/learning/catalog",
+         dependencies=[Depends(product_capability("learning", "learning"))])
+def learning_catalog(user: str = Depends(current_user)):
+    """Le catalogue, sans les instructions destinees au modele.
+
+    Statique et identique pour tout le monde : aucun appel d'inference n'a lieu
+    ici. Ouvrir Learn ne doit rien couter au moteur.
+    """
+    return learning.public_catalog()
+
+
+@app.get("/api/learning/progress",
+         dependencies=[Depends(product_capability("learning", "learning"))])
+def learning_progress(user: str = Depends(current_user),
+                      account=Depends(current_account)):
+    """La progression de l'appelant, et rien d'autre.
+
+    L'organisation vient du compte, jamais d'un parametre : c'est ce qui rend
+    impossible de lire la progression d'un autre tenant en changeant une chaine
+    dans l'URL.
+    """
+    organization_id = account_organization(account)
+    with db() as conn:
+        rows = conn.execute(
+            """SELECT lesson_id, status, lesson_version, completed_blocks,
+                      last_block_id, started_at, updated_at, completed_at
+               FROM learning_progress
+               WHERE organization_id=? AND email=?
+               ORDER BY lesson_id""",
+            (organization_id, user),
+        ).fetchall()
+    return {
+        "catalog_version": learning.load_catalog()["catalog_version"],
+        "lessons": [learning_progress_view(row) for row in rows],
+    }
+
+
+@app.put("/api/learning/progress/{lesson_id}",
+         dependencies=[Depends(product_capability("learning", "learning"))])
+def update_learning_progress(lesson_id: str, body: LearningProgressUpdate,
+                             user: str = Depends(current_user),
+                             account=Depends(current_account)):
+    """Avance la progression de l'appelant sur une lecon.
+
+    ## Le serveur decide de l'etat
+
+    Le poste envoie les blocs qu'il a traites ; l'etat s'en deduit. Il n'existe
+    aucun chemin par lequel un client obtient `completed` en le demandant.
+
+    ## Ce qui arrive quand une lecon change
+
+    La progression porte la version de la lecon sur laquelle elle a ete faite.
+    Si la lecon a change de version depuis, la progression repart : garder des
+    identifiants de blocs qui n'existent plus produirait un pourcentage juste
+    en apparence et faux en pratique. Rien n'est perdu de ce qui a du sens —
+    une lecon terminee sur une version anterieure le reste, avec sa date.
+    """
+    index = learning.lessons_index()
+    entry = index.get(lesson_id)
+    if entry is None:
+        raise auth_error(404, "LESSON_NOT_FOUND")
+    lesson = entry["lesson"]
+
+    known_blocks = {block["id"] for block in lesson["blocks"]}
+    submitted = [block for block in body.completed_blocks if block in known_blocks]
+    # Ni ordre, ni doublon : c'est un ensemble, et il est stocke comme tel.
+    ordered = [
+        block["id"]
+        for block in sorted(lesson["blocks"], key=lambda item: item["order"])
+        if block["id"] in set(submitted)
+    ]
+    last_block = body.last_block_id if body.last_block_id in known_blocks else None
+
+    now = time.time()
+    existing = learning_progress_row(account_organization(account), user, lesson_id)
+    previous_version = existing["lesson_version"] if existing else lesson["version"]
+    version_changed = existing is not None and previous_version != lesson["version"]
+    if existing is not None and not version_changed:
+        try:
+            already = json.loads(existing["completed_blocks"])
+        except (TypeError, ValueError):
+            already = []
+        if isinstance(already, list):
+            merged = set(ordered) | {b for b in already if b in known_blocks}
+            ordered = [
+                block["id"]
+                for block in sorted(lesson["blocks"], key=lambda item: item["order"])
+                if block["id"] in merged
+            ]
+
+    earned = learning.completion_is_earned(lesson, ordered)
+    status = learning.STATUS_COMPLETED if earned else (
+        learning.STATUS_IN_PROGRESS if ordered or last_block else learning.STATUS_NOT_STARTED
+    )
+    started_at = existing["started_at"] if existing and not version_changed else None
+    if started_at is None and status != learning.STATUS_NOT_STARTED:
+        started_at = now
+    completed_at = existing["completed_at"] if existing and not version_changed else None
+    if earned and completed_at is None:
+        completed_at = now
+    if not earned:
+        completed_at = None
+
+    organization_id = account_organization(account)
+    with db() as conn:
+        conn.execute(
+            """INSERT INTO learning_progress(
+                   progress_id, organization_id, email, lesson_id, status,
+                   lesson_version, completed_blocks, last_block_id,
+                   started_at, updated_at, completed_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(organization_id, email, lesson_id) DO UPDATE SET
+                   status = excluded.status,
+                   lesson_version = excluded.lesson_version,
+                   completed_blocks = excluded.completed_blocks,
+                   last_block_id = excluded.last_block_id,
+                   started_at = excluded.started_at,
+                   updated_at = excluded.updated_at,
+                   completed_at = excluded.completed_at""",
+            (uuid.uuid4().hex, organization_id, user, lesson_id, status,
+             lesson["version"], json.dumps(ordered), last_block,
+             started_at, now, completed_at),
+        )
+    observability.METRICS.count("learning_progress", status)
+    return learning_progress_view(
+        learning_progress_row(organization_id, user, lesson_id)
+    )
+
+
+@app.post("/api/learning/exercises/{exercise_id}/feedback",
+          dependencies=[Depends(product_capability("learning", "learning"))])
+async def learning_exercise_feedback(exercise_id: str,
+                                     body: LearningExerciseRequest,
+                                     user: str = Depends(current_user)):
+    """Un retour pedagogique sur ce que quelqu'un vient d'ecrire.
+
+    ## L'instruction vient du catalogue, jamais du poste
+
+    Le corps de la requete ne porte que le texte de l'apprenant. C'est le meme
+    choix que pour un AI Skill, et pour la meme raison : si le poste envoyait
+    l'instruction, n'importe qui pourrait faire executer n'importe quoi au
+    moteur de l'organisation en se reclamant d'un exercice. Le modele
+    `LearningExerciseRequest` refuse tout champ supplementaire, donc une
+    tentative echoue en 422 plutot que d'etre silencieusement ignoree.
+
+    ## Le texte n'est pas conserve
+
+    Il traverse, il produit un retour, il disparait. Aucune ligne de
+    `learning_progress` ne le recoit, et aucun journal ne le cite. Learn
+    n'invente pas une exception a ce que Nova promet ailleurs.
+    """
+    item = learning.exercise(exercise_id)
+    if item is None:
+        raise auth_error(404, "EXERCISE_NOT_FOUND")
+    text = clean_required(body.text, "text", learning.MAX_EXERCISE_INPUT)
+    enforce_rate_limit("principal", hash_token(user), ratelimit.LEARNING_EXERCISE,
+                       "LEARNING_RATE_LIMITED")
+    try:
+        feedback = await execute_text(TaskType.LEARNING_FEEDBACK,
+                                      item["instruction"], text)
+    except HTTPException:
+        observability.METRICS.count("learning_exercise", "error")
+        raise
+    observability.METRICS.count("learning_exercise", "ok")
+    return {"exercise_id": exercise_id, "feedback": feedback}
+
 
 # ================================================================ ADMIN
 

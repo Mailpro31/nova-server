@@ -56,6 +56,7 @@ CLASS_ADMIN = "admin"
 CLASS_SCIM = "scim"
 CLASS_CONNECTOR = "connector"
 CLASS_DEPLOYMENT = "deployment"
+CLASS_LEARNING = "learning"
 
 
 class RateLimitExceeded(Exception):
@@ -248,6 +249,11 @@ AUTH_VERIFY = Quota(20, 60.0, CLASS_AUTH, FAIL_CLOSED)
 ADMIN_STEP_UP = Quota(10, 60.0, CLASS_ADMIN, FAIL_CLOSED)
 ADMIN_CREDENTIAL_CREATE = Quota(20, 60.0, CLASS_ADMIN, FAIL_CLOSED)
 DEPLOYMENT_VERIFY = Quota(60, 60.0, CLASS_DEPLOYMENT, FAIL_CLOSED)
+# Un exercice Learn appelle un moteur d'inference. La borne protege le
+# moteur, pas un secret : un membre qui pratique honnetement ne l'atteint
+# jamais. `FAIL_CLOSED` — si le compteur partage tombe, mieux vaut refuser
+# un exercice que laisser une boucle saturer le runtime de tout le monde.
+LEARNING_EXERCISE = Quota(20, 60.0, CLASS_LEARNING, FAIL_CLOSED)
 
 ALL_QUOTAS = {
     "scim_per_credential": SCIM_PER_CREDENTIAL,
@@ -260,4 +266,5 @@ ALL_QUOTAS = {
     "admin_step_up": ADMIN_STEP_UP,
     "admin_credential_create": ADMIN_CREDENTIAL_CREATE,
     "deployment_verify": DEPLOYMENT_VERIFY,
+    "learning_exercise": LEARNING_EXERCISE,
 }

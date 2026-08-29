@@ -30,6 +30,7 @@ class TaskType(str, Enum):
     STYLE_TRANSFORM = "style_transform"
     VOICE_COMMAND = "voice_command"
     AI_SKILL = "ai_skill"
+    LEARNING_FEEDBACK = "learning_feedback"
     ENGINEERING_NOTES = "engineering_notes"
     TRANSCRIPTION_REALTIME = "transcription_realtime"
     TRANSCRIPTION_FILE = "transcription_file"
@@ -41,6 +42,7 @@ TEXT_TASKS = frozenset(
         TaskType.STYLE_TRANSFORM,
         TaskType.VOICE_COMMAND,
         TaskType.AI_SKILL,
+        TaskType.LEARNING_FEEDBACK,
         TaskType.ENGINEERING_NOTES,
     }
 )
@@ -558,6 +560,10 @@ TEXT_TIMEOUTS = {
     TaskType.STYLE_TRANSFORM: 45.0,
     TaskType.VOICE_COMMAND: 45.0,
     TaskType.AI_SKILL: 90.0,
+    # Un retour pedagogique tient en quatre phrases. Lui laisser le budget
+    # d'un AI Skill ferait attendre quelqu'un qui pratique un exercice de
+    # trois minutes.
+    TaskType.LEARNING_FEEDBACK: 45.0,
     TaskType.ENGINEERING_NOTES: 60.0,
 }
 SPEECH_TIMEOUTS = {
