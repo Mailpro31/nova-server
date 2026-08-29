@@ -64,7 +64,35 @@ MAX_SEATS = int(os.getenv("NOVA_MAX_SEATS", "300"))
 MAX_MACHINES_PER_EMAIL = int(os.getenv("NOVA_MAX_MACHINES", "3"))
 CODE_TTL_SECONDS = 600          # code email valide 10 min
 CODE_MAX_ATTEMPTS = 5
-REQUIRE_AUTH = os.getenv("NOVA_REQUIRE_AUTH", "true").lower() == "true"
+
+# Environnement d'exécution. Le défaut est `production` : un déploiement qui
+# oublie de le déclarer obtient le comportement le plus prudent, jamais le plus
+# bavard. Seul `development` autorise l'affichage d'un code de connexion.
+#
+# Lu ici, tout en haut, parce que c'est lui qui décide si le contournement
+# d'authentification ci-dessous a seulement le droit d'exister.
+NOVA_ENV = os.getenv("NOVA_ENV", "production").strip().lower()
+
+# `NOVA_REQUIRE_AUTH=false` ouvre un chemin de développement où `current_user()`
+# renvoie une identité fictive sans lire le moindre jeton. Il rend praticable un
+# poste de développement, et il n'a aucun sens ailleurs.
+#
+# **En production, ce chemin n'existe pas.** `production_config` refuse déjà la
+# variable au démarrage ; cette ligne est la seconde barrière, pour les cas où
+# l'on entre dans `main` sans passer par lui — un worker lancé à la main, un
+# import depuis un script d'exploitation, un conteneur dont l'entrypoint a été
+# raccourci. Un contrôle qui ne tient que par un seul point d'entrée n'est pas
+# un contrôle, c'est une convention.
+#
+# La comparaison reste `== "true"`, à l'identique de ce qu'elle a toujours été :
+# toute autre valeur — `false`, `0`, `no`, `off`, une faute de frappe — désactive
+# l'authentification **hors production**. Une valeur que l'on ne comprend pas ne
+# vaut jamais permission, et c'est précisément pour cela que la production
+# l'ignore plutôt que de l'interpréter.
+REQUIRE_AUTH = (
+    os.getenv("NOVA_REQUIRE_AUTH", "true").lower() == "true"
+    or NOVA_ENV == "production"
+)
 TOKEN_TTL_SECONDS = int(os.getenv("NOVA_TOKEN_TTL_SECONDS", str(30 * 24 * 3600)))
 
 # Configuration publique Campus. Les valeurs restent sobres et génériques par
@@ -188,10 +216,10 @@ SMTP_FROM = os.getenv("NOVA_SMTP_FROM", "nova@ipsa.fr")
 # Moteurs d'inférence (services du docker-compose)
 ORGANIZATION_AI_ROUTER = router_from_environment()
 
-# Environnement d'exécution. Le défaut est `production` : un déploiement qui
-# oublie de le déclarer obtient le comportement le plus prudent, jamais le plus
-# bavard. Seul `development` autorise l'affichage d'un code de connexion.
-NOVA_ENV = os.getenv("NOVA_ENV", "production").strip().lower()
+# `NOVA_ENV` était lu ici. Il l'est désormais en tête de la section de
+# configuration, juste avant `REQUIRE_AUTH` : c'est lui qui décide si le
+# contournement d'authentification a le droit d'exister, et une valeur ne peut
+# pas arbitrer une décision prise cent lignes plus haut.
 
 # Mode de serveur. `dedicated` sert une organisation — c'est le mode déployé
 # aujourd'hui. `control_plane` en servira plusieurs : il n'existe pas encore

@@ -80,6 +80,108 @@ WEAK_VALUES = frozenset(
 MINIMUM_SECRET_LENGTH = 16
 
 
+# ------------------------------------------------------ invariants de production
+#
+# ## Pourquoi des tables plutôt que des `if`
+#
+# La liste des assouplissements était tenue à la main, et elle a fini par
+# oublier trois choses — dont `NOVA_REQUIRE_AUTH`, qui désactive purement et
+# simplement l'authentification. L'oubli n'est pas surprenant : rien ne reliait
+# la liste au code qui lit réellement ces variables, et une quatrième catégorie
+# de contrôle demandait un quatrième bloc écrit à la main.
+#
+# Les invariants sont donc déclarés ici, par catégorie, en une table que l'on
+# relit d'un coup d'œil. Ajouter un contrôle est une ligne, pas un bloc — et un
+# lecteur voit d'un seul regard ce que « production » signifie.
+#
+# Ce n'est pas un framework de configuration : il n'y a ni schéma, ni typage, ni
+# résolution. Quatre tables et une boucle par table.
+
+
+@dataclass(frozen=True)
+class RequiredValue:
+    """Une variable dont la valeur **effective** est imposée en production.
+
+    `effective` reproduit la lecture faite par le module qui l'emploie —
+    normalisation comprise. C'est délibéré : juger sur une valeur normalisée
+    autrement que le lecteur réel donnerait un validateur qui approuve une
+    configuration que le code interprète différemment.
+    """
+
+    variable: str
+    default: str
+    allowed: frozenset[str]
+    code: str
+
+    def problem(self) -> str | None:
+        effective = os.getenv(self.variable, self.default).strip().lower()
+        return None if effective in self.allowed else self.code
+
+
+# `NOVA_REQUIRE_AUTH` : `main.py` calcule `REQUIRE_AUTH` avec `== "true"`. Toute
+# autre valeur y désactive l'authentification, y compris `1`, `yes` ou une faute
+# de frappe. On exige donc explicitement `true`, et rien d'autre : une valeur
+# que l'on ne comprend pas ne vaut pas permission de servir sans authentifier.
+#
+# `NOVA_CONNECTOR_LOCAL_TRANSPORT` : `loopback` est le canal de développement —
+# `serve.py` l'annonce lui-même comme tel — et il remplace l'identification par
+# les permissions du système de fichiers par un jeton éphémère déposé dans un
+# fichier. C'est adapté à un poste sans AF_UNIX, pas à un déploiement. Seul
+# `unix` est accepté en production ; une valeur inconnue est refusée aussi,
+# plutôt que laissée échouer plus tard au démarrage du canal.
+PRODUCTION_REQUIRED_VALUES = (
+    RequiredValue(
+        "NOVA_REQUIRE_AUTH", "true", frozenset({"true"}),
+        "NOVA_REQUIRE_AUTH_MUST_BE_ENABLED_IN_PRODUCTION",
+    ),
+    RequiredValue(
+        "NOVA_CONNECTOR_LOCAL_TRANSPORT", "unix", frozenset({"unix"}),
+        "NOVA_CONNECTOR_LOCAL_TRANSPORT_MUST_BE_UNIX_IN_PRODUCTION",
+    ),
+)
+
+
+# Un manifeste distribué sans racine de confiance est un manifeste que personne
+# ne vérifie. Les deux chaînes de distribution posent exactement la même
+# question, et l'une des deux ne l'avait jamais posée : le manifeste Desktop
+# était servi avec `signed: false` et ses empreintes SHA-256 livrées telles
+# quelles à la console, alors que le Connector, lui, refusait déjà.
+PRODUCTION_TRUST_ROOTS = (
+    ("NOVA_CONNECTOR_RELEASE_MANIFEST", "NOVA_CONNECTOR_RELEASE_PUBLIC_KEY",
+     "CONNECTOR_RELEASE_TRUST_ROOT_MISSING"),
+    ("NOVA_DESKTOP_RELEASE_MANIFEST", "NOVA_DESKTOP_RELEASE_PUBLIC_KEY",
+     "DESKTOP_RELEASE_TRUST_ROOT_MISSING"),
+)
+
+
+# Assouplissements réservés au développement. Chacun rend un poste de
+# développement praticable, et chacun ouvre en production un trou précis :
+# accepter du HTTP, sauter une vérification, rouvrir un chemin hérité.
+#
+# `NOVA_OIDC_ALLOW_PRIVATE_ISSUER` n'y figure **pas**, et c'est un choix. Un
+# établissement qui héberge son propre Keycloak sur un réseau privé est un cas
+# légitime, documenté comme tel, et l'interdire en production casserait un
+# déploiement valide pour satisfaire une règle générale. Ce qui doit être
+# corrigé de ce côté-là est ailleurs — la colonne `oidc_allow_private_issuer`
+# permet à un administrateur d'ouvrir le mode privé par l'API sans que
+# l'exploitant l'ait autorisé côté serveur — et cela relève d'une correction de
+# code, pas d'un refus de configuration.
+PRODUCTION_FORBIDDEN_FLAGS = (
+    "NOVA_CONNECTOR_ALLOW_INSECURE",
+    "NOVA_CONNECTOR_RELEASE_ALLOW_INSECURE",
+    "NOVA_DISCOVERY_ALLOW_INSECURE_ENDPOINT",
+    "NOVA_ALLOW_LEGACY_DEPLOYMENT_TOKEN",
+)
+
+TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
+
+
+# Authentification héritée, retirée du code depuis les Phases 33 et 36. Leur
+# présence signale une configuration qui croit encore disposer d'un chemin qui
+# n'existe plus — mieux vaut le dire que le laisser croire.
+PRODUCTION_REMOVED_VARIABLES = ("NOVA_ADMIN_TOKEN", "NOVA_DEPLOYMENT_APPLY_TOKEN")
+
+
 def _secret_problem(name: str, raw: str) -> str | None:
     """Ce qui cloche avec un secret, ou `None`.
 
@@ -201,29 +303,28 @@ def check(*, require_redis: bool = True) -> Report:
         if not os.getenv(variable, "").strip():
             report.refuse(f"{variable}_REQUIRED_IN_PRODUCTION")
 
+    # -- valeurs imposées : ce que « production » veut dire, en clair
+    #
+    # L'authentification doit être active, et le canal local du Connector doit
+    # être le socket unix. Ni l'une ni l'autre n'est un réglage de confort :
+    # les deux décident qui peut parler au serveur.
+    for required in PRODUCTION_REQUIRED_VALUES:
+        problem = required.problem()
+        if problem:
+            report.refuse(problem)
+
     # -- racines de confiance, quand la vérification est obligatoire
-    if os.getenv("NOVA_CONNECTOR_RELEASE_MANIFEST", "").strip() and not os.getenv(
-        "NOVA_CONNECTOR_RELEASE_PUBLIC_KEY", ""
-    ).strip():
-        report.refuse("CONNECTOR_RELEASE_TRUST_ROOT_MISSING")
+    for manifest, public_key, code in PRODUCTION_TRUST_ROOTS:
+        if os.getenv(manifest, "").strip() and not os.getenv(public_key, "").strip():
+            report.refuse(code)
 
     # -- assouplissements réservés au développement
-    #
-    # Chacun d'eux existe pour rendre un poste de développement praticable.
-    # Aucun n'a de raison d'être en production, et chacun y ouvrirait un trou
-    # précis : accepter du HTTP, sauter une vérification, faire confiance à un
-    # émetteur privé.
-    for flag in (
-        "NOVA_CONNECTOR_ALLOW_INSECURE",
-        "NOVA_CONNECTOR_RELEASE_ALLOW_INSECURE",
-        "NOVA_DISCOVERY_ALLOW_INSECURE_ENDPOINT",
-        "NOVA_ALLOW_LEGACY_DEPLOYMENT_TOKEN",
-    ):
-        if os.getenv(flag, "").strip().lower() in {"1", "true", "yes", "on"}:
+    for flag in PRODUCTION_FORBIDDEN_FLAGS:
+        if os.getenv(flag, "").strip().lower() in TRUE_VALUES:
             report.refuse(f"{flag}_FORBIDDEN_IN_PRODUCTION")
 
-    # -- authentification héritée, retirée du code depuis les Phases 33 et 36
-    for removed in ("NOVA_ADMIN_TOKEN", "NOVA_DEPLOYMENT_APPLY_TOKEN"):
+    # -- authentification héritée, retirée du code
+    for removed in PRODUCTION_REMOVED_VARIABLES:
         if os.getenv(removed, "").strip():
             report.refuse(f"{removed}_NO_LONGER_SUPPORTED")
 

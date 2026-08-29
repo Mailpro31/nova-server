@@ -232,6 +232,109 @@ class TrustRootTests(unittest.TestCase):
                 "CONNECTOR_RELEASE_TRUST_ROOT_MISSING", production_config.check().problems
             )
 
+    def test_the_desktop_manifest_asks_the_same_question(self):
+        # Les deux chaînes de distribution posent la même question, et l'une
+        # d'elles ne la posait pas : le manifeste Desktop était servi avec
+        # `signed: false` et ses empreintes livrées telles quelles à la console.
+        with environment(**BASE, NOVA_DESKTOP_RELEASE_MANIFEST="/srv/desktop.json"):
+            self.assertIn(
+                "DESKTOP_RELEASE_TRUST_ROOT_MISSING", production_config.check().problems
+            )
+
+    def test_a_desktop_manifest_with_its_trust_root_passes(self):
+        with environment(**BASE, NOVA_DESKTOP_RELEASE_MANIFEST="/srv/desktop.json",
+                         NOVA_DESKTOP_RELEASE_PUBLIC_KEY="ab" * 32):
+            self.assertNotIn(
+                "DESKTOP_RELEASE_TRUST_ROOT_MISSING", production_config.check().problems
+            )
+
+
+class AuthenticationTests(unittest.TestCase):
+    """`NOVA_REQUIRE_AUTH=false` fait renvoyer une identité fictive par
+    `current_user()`, sans lire le moindre jeton. C'est un outil de
+    développement, et il n'a aucun sens en production."""
+
+    CODE = "NOVA_REQUIRE_AUTH_MUST_BE_ENABLED_IN_PRODUCTION"
+
+    def test_authentication_enabled_is_accepted(self):
+        with environment(**BASE, NOVA_REQUIRE_AUTH="true"):
+            self.assertNotIn(self.CODE, production_config.check().problems)
+
+    def test_the_default_is_accepted(self):
+        # Ne rien déclarer vaut « authentification active » : le défaut de
+        # `main.py` est `true`, et le validateur doit lire le même défaut.
+        with environment(**BASE):
+            self.assertNotIn(self.CODE, production_config.check().problems)
+
+    def test_every_way_of_disabling_authentication_is_refused(self):
+        # `main.py` calcule `REQUIRE_AUTH` avec `== "true"`. Tout le reste y
+        # désactive l'authentification — y compris `1` et `yes`, qui ressemblent
+        # pourtant à des « oui ». Le validateur doit donc refuser chacune de ces
+        # valeurs, et pas seulement celles qui ressemblent à un « non ».
+        for value in ("false", "0", "no", "off", "FALSE", "1", "yes",
+                      "peut-etre", "", "  "):
+            with self.subTest(value=value):
+                with environment(**BASE, NOVA_REQUIRE_AUTH=value):
+                    self.assertIn(self.CODE, production_config.check().problems)
+
+    def test_development_keeps_its_shortcut(self):
+        # Le durcissement ne doit pas rendre un poste de développement
+        # impraticable : hors production, la variable garde son sens.
+        for env in ("development", "test"):
+            with self.subTest(environment=env):
+                with environment(NOVA_ENV=env, NOVA_DB="nova.db",
+                                 NOVA_REQUIRE_AUTH="false"):
+                    self.assertTrue(production_config.check().ok)
+
+
+class ConnectorLocalTransportTests(unittest.TestCase):
+    """`loopback` est le canal de développement — `serve.py` l'annonce
+    lui-même comme tel. Il remplace l'identification par les permissions du
+    système de fichiers par un jeton éphémère déposé dans un fichier."""
+
+    CODE = "NOVA_CONNECTOR_LOCAL_TRANSPORT_MUST_BE_UNIX_IN_PRODUCTION"
+
+    def test_loopback_is_refused_in_production(self):
+        with environment(**BASE, NOVA_CONNECTOR_LOCAL_TRANSPORT="loopback"):
+            self.assertIn(self.CODE, production_config.check().problems)
+
+    def test_unix_is_accepted(self):
+        with environment(**BASE, NOVA_CONNECTOR_LOCAL_TRANSPORT="unix"):
+            self.assertNotIn(self.CODE, production_config.check().problems)
+
+    def test_the_default_is_accepted(self):
+        # `local_channel.py` retombe sur `unix` : le validateur lit le même
+        # défaut, sans quoi il refuserait une configuration parfaitement saine.
+        with environment(**BASE):
+            self.assertNotIn(self.CODE, production_config.check().problems)
+
+    def test_an_unknown_transport_is_refused_rather_than_left_to_fail_later(self):
+        with environment(**BASE, NOVA_CONNECTOR_LOCAL_TRANSPORT="tcp"):
+            self.assertIn(self.CODE, production_config.check().problems)
+
+    def test_development_may_use_loopback(self):
+        # Windows ne fournit pas AF_UNIX : sans loopback, aucun développement
+        # n'y serait possible.
+        with environment(NOVA_ENV="development", NOVA_DB="nova.db",
+                         NOVA_CONNECTOR_LOCAL_TRANSPORT="loopback"):
+            self.assertTrue(production_config.check().ok)
+
+
+class PrivateIssuerTests(unittest.TestCase):
+    """Un émetteur OIDC privé n'est **pas** un assouplissement de développement.
+
+    Un établissement qui héberge son propre Keycloak sur un réseau privé est un
+    cas légitime, et l'interdire en production casserait un déploiement valide.
+    Ce test existe pour que la décision reste explicite : si quelqu'un ajoute un
+    jour cette variable à la liste des drapeaux interdits, il devra d'abord lire
+    pourquoi elle n'y est pas.
+    """
+
+    def test_a_private_issuer_stays_possible_in_production(self):
+        with environment(**BASE, NOVA_OIDC_ALLOW_PRIVATE_ISSUER="true"):
+            report = production_config.check()
+            self.assertTrue(report.ok, report.problems)
+
 
 class EnforcementTests(unittest.TestCase):
     def test_enforce_raises_with_every_problem_at_once(self):
