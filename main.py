@@ -34,7 +34,11 @@ import connector_release
 import database
 import deployment
 import migrations
+import observability
+import production_config
+import ratelimit
 import scim
+import secrets_provider
 from ai_runtime import (
     AI_MODEL_NOT_READY,
     AI_RUNTIME_BUSY,
@@ -99,7 +103,14 @@ ENTRA_ALLOWED_TENANT_ID = os.getenv("NOVA_ENTRA_ALLOWED_TENANT_ID", "").strip()
 # serveur — jamais dans Nova.exe — parce que c'est le serveur qui échange le
 # code. Le poste demeure un client public au sens strict.
 GOOGLE_CLIENT_ID = os.getenv("NOVA_GOOGLE_CLIENT_ID", "").strip()
-GOOGLE_CLIENT_SECRET = os.getenv("NOVA_GOOGLE_CLIENT_SECRET", "").strip()
+# Les secrets acceptent desormais une **reference** autant qu'une valeur :
+# `env://NOM` ou `file:///run/secrets/nom`. Une valeur brute reste acceptee
+# pour ne pas casser les deploiements existants, mais elle devient un choix
+# visible plutot qu'un defaut — et un orchestrateur qui monte ses secrets en
+# fichiers n'a plus a les recopier dans l'environnement.
+GOOGLE_CLIENT_SECRET = secrets_provider.resolve_value(
+    os.getenv("NOVA_GOOGLE_CLIENT_SECRET", "")
+) or ""
 # Domaine hébergé Workspace autorisé — le mapping explicite « organisation
 # Google → organisation Nova ». Vide, le fournisseur reste indisponible : aucun
 # compte Google, personnel ou non, n'entre par défaut.
@@ -118,7 +129,9 @@ OIDC_ISSUER = os.getenv("NOVA_OIDC_ISSUER", "").strip().rstrip("/")
 OIDC_CLIENT_ID = os.getenv("NOVA_OIDC_CLIENT_ID", "").strip()
 # Présent seulement si l'IdP l'exige. Il ne quitte jamais le serveur : ni vers
 # le poste, ni vers /api/config, ni vers /api/me, ni vers les journaux.
-OIDC_CLIENT_SECRET = os.getenv("NOVA_OIDC_CLIENT_SECRET", "").strip()
+OIDC_CLIENT_SECRET = secrets_provider.resolve_value(
+    os.getenv("NOVA_OIDC_CLIENT_SECRET", "")
+) or ""
 # `none` | `client_secret_post` | `client_secret_basic`. Rien d'exotique.
 OIDC_CLIENT_AUTH_METHOD = os.getenv("NOVA_OIDC_CLIENT_AUTH_METHOD", "none").strip()
 OIDC_SCOPES = os.getenv("NOVA_OIDC_SCOPES", "openid email profile")
@@ -159,7 +172,7 @@ ENTRA_FLOWS: dict[str, dict] = {}
 SMTP_HOST = os.getenv("NOVA_SMTP_HOST", "")          # ex. smtp.ipsa.fr
 SMTP_PORT = int(os.getenv("NOVA_SMTP_PORT", "587"))
 SMTP_USER = os.getenv("NOVA_SMTP_USER", "")
-SMTP_PASS = os.getenv("NOVA_SMTP_PASS", "")
+SMTP_PASS = secrets_provider.resolve_value(os.getenv("NOVA_SMTP_PASS", "")) or ""
 SMTP_FROM = os.getenv("NOVA_SMTP_FROM", "nova@ipsa.fr")
 
 # Moteurs d'inférence (services du docker-compose)
@@ -3046,9 +3059,11 @@ class AdminPrincipal:
     def can(self, capability: str) -> bool:
         return capability in self.capabilities
 
-    @property
-    def is_legacy_token(self) -> bool:
-        return self.session_id is None
+    # `is_legacy_token` vivait ici. Il designait un principal issu de l'en-tete
+    # d'administration herite, chemin retire du code en Phase 33. Aucun appelant
+    # ne subsistait — verifie sur le serveur et sur la console. Le garder
+    # suggerait qu'un mode d'authentification disparu pouvait encore se
+    # presenter, ce qui est la pire forme de code mort.
 
 
 def new_request_id() -> str:
@@ -3644,6 +3659,9 @@ def campus_config():
 @app.post("/api/auth/request")
 def auth_request(body: RequestCode):
     email = body.email.lower()
+    # Compte par adresse : c'est la ressource qu'un attaquant epuiserait, en
+    # envoyant mille codes a la meme personne ou en balayant un annuaire.
+    enforce_rate_limit("email", hash_token(email), ratelimit.AUTH_START)
     domain = email.split("@")[-1]
     if domain not in ALLOWED_DOMAINS:
         return {"sent": True}   # réponse identique : ne pas révéler les domaines
@@ -3668,6 +3686,10 @@ def auth_request(body: RequestCode):
 @app.post("/api/auth/verify")
 def auth_verify(body: VerifyCode):
     email = body.email.lower()
+    # Le compteur par adresse existe deja en base (`attempts`), mais il ne
+    # franchit pas la frontiere d'une adresse : mille adresses valent mille
+    # essais. Celui-ci est partage entre les workers.
+    enforce_rate_limit("email", hash_token(email), ratelimit.AUTH_VERIFY)
     with db() as conn:
         row = conn.execute("SELECT * FROM auth_codes WHERE email=?", (email,)).fetchone()
         if not row or row["expires_at"] < time.time():
@@ -5209,6 +5231,7 @@ async def admin_step_up_start(
     récente, et résoudre exactement le même compte — trois conditions qu'un jeton
     volé ne procure pas.
     """
+    enforce_rate_limit("principal", hash_token(user), ratelimit.ADMIN_STEP_UP)
     account = admin_candidate(user)
     identity = step_up_identity_for(account)
     if identity is None:
@@ -6015,17 +6038,71 @@ class ConnectorPrincipal:
 # Compteurs de cadence, par Connector. La cle est l'identite, pas le tenant :
 # un Connector bavard ne doit pas faire taire les autres Connectors de son
 # organisation.
-_CONNECTOR_CALLS: dict[str, list[float]] = {}
+# ------------------------------------------------------------- limitation
+#
+# Un seul compteur, partage entre tous les workers quand `NOVA_REDIS_URL` est
+# defini. Il n'existe plus de second limiteur en memoire de processus : deux
+# autorites de limitation donneraient deux verites, et c'est celle qui protege
+# le moins qui gagnerait.
+_RATE_LIMITER: ratelimit.RateLimiter | None = None
+_RATE_LIMITER_LOCK = threading.Lock()
 
 
-def connector_rate_limit(key: str, limit: int, window_seconds: float) -> None:
-    now = time.time()
-    calls = [moment for moment in _CONNECTOR_CALLS.get(key, []) if now - moment < window_seconds]
-    if len(calls) >= limit:
-        _CONNECTOR_CALLS[key] = calls
-        raise auth_error(429, "CONNECTOR_RATE_LIMITED")
-    calls.append(now)
-    _CONNECTOR_CALLS[key] = calls
+def rate_limiter() -> ratelimit.RateLimiter:
+    """Le limiteur du processus. Construit au premier usage, jamais a l'import."""
+    global _RATE_LIMITER
+    if _RATE_LIMITER is None:
+        with _RATE_LIMITER_LOCK:
+            if _RATE_LIMITER is None:
+                _RATE_LIMITER = ratelimit.RateLimiter()
+    return _RATE_LIMITER
+
+
+def reset_rate_limiter() -> None:
+    """Oublie le limiteur du processus. Destine aux tests et aux recettes."""
+    global _RATE_LIMITER
+    with _RATE_LIMITER_LOCK:
+        _RATE_LIMITER = None
+
+
+def enforce_rate_limit(
+    scope: str, identity: str, quota: ratelimit.Quota, code: str = "RATE_LIMITED"
+) -> None:
+    """Consomme un jeton, ou refuse.
+
+    Le corps de la reponse ne porte qu'un code : ni l'identite comptee, ni le
+    quota restant, ni la duree exacte. Un attaquant qui apprend quand sa
+    fenetre se rouvre apprend a la contourner.
+    """
+    try:
+        rate_limiter().check(scope, identity, quota)
+    except ratelimit.RateLimitExceeded:
+        raise auth_error(429, code)
+    except ratelimit.LimiterUnavailable:
+        # Route fail-closed sans compteur partage : on refuse. Sans compteur,
+        # rien ne distingue un utilisateur d'un attaquant qui essaie mille fois.
+        raise auth_error(503, "RATE_LIMIT_BACKEND_UNAVAILABLE")
+
+
+# Le cooldown de rotation d'un Connector est une cadence, pas un quota de
+# trafic : un seul passage par fenetre. La valeur reste celle de la Phase 34.
+CONNECTOR_ROTATION_QUOTA = ratelimit.Quota(
+    1,
+    float(CONNECTOR_ROTATION_COOLDOWN_SECONDS),
+    ratelimit.CLASS_CONNECTOR,
+    ratelimit.FAIL_CLOSED,
+)
+
+
+def connector_rate_limit(scope: str, identity: str, quota: ratelimit.Quota) -> None:
+    """Limite une route Connector avec le compteur **partage**.
+
+    Le compteur en memoire de processus qui vivait ici a ete retire. Derriere
+    quatre workers, il autorisait quatre fois la limite annoncee sans que rien
+    ne le signale — et une limite qu'on croit avoir est pire qu'une limite
+    qu'on sait ne pas avoir.
+    """
+    enforce_rate_limit(scope, identity, quota, "CONNECTOR_RATE_LIMITED")
 
 
 def connector_principal(
@@ -6062,7 +6139,7 @@ def connector_principal(
     # existe ».
     if row is None or row["revoked_at"] is not None:
         raise auth_error(401, "CONNECTOR_CREDENTIAL_INVALID")
-    connector_rate_limit(f"sync:{row['connector_id']}", limit=120, window_seconds=60)
+    connector_rate_limit("sync", row["connector_id"], ratelimit.CONNECTOR_SYNC)
     return ConnectorPrincipal(row, presented)
 
 
@@ -6504,7 +6581,7 @@ def connector_enroll(body: ConnectorEnrollBody):
     """
     require_supported_protocol(body.protocol_version)
     token = body.enrollment_token.strip()
-    connector_rate_limit(f"enroll:{hash_token(token)}", limit=5, window_seconds=60)
+    connector_rate_limit("enroll", hash_token(token), ratelimit.CONNECTOR_ENROLL)
     now = time.time()
     credential = secrets.token_urlsafe(40)
     connector_id = uuid.uuid4().hex
@@ -7060,9 +7137,7 @@ def connector_rotate_credential(
     if row["pending_credential_hash"]:
         raise auth_error(409, "CONNECTOR_ROTATION_IN_PROGRESS")
     connector_rate_limit(
-        f"rotate:{principal.connector_id}",
-        limit=1,
-        window_seconds=CONNECTOR_ROTATION_COOLDOWN_SECONDS,
+        "rotate", principal.connector_id, CONNECTOR_ROTATION_QUOTA
     )
     now = time.time()
     credential = secrets.token_urlsafe(40)
@@ -8071,7 +8146,18 @@ def guard_last_identity_manager(conn, organization_id: str, user_id: str):
     Meme garde-fou que la Phase 26, applique ici a la **desactivation** : un
     compte suspendu ne peut plus administrer, donc suspendre le dernier
     gestionnaire ferme la porte aussi surement que lui retirer son role.
+
+    **Le verrou n'est pas decoratif.** Lire puis verifier ne protege rien sous
+    concurrence : deux transactions qui retirent chacune un des deux derniers
+    gestionnaires lisent toutes deux « il en reste deux », concluent toutes
+    deux que ce n'est pas le dernier, et laissent l'organisation sans personne
+    pour nommer un administrateur. On verrouille donc les comptes
+    d'administration de l'organisation avant de compter.
     """
+    conn.lock_rows(
+        "SELECT user_id FROM users WHERE organization_id=? AND security_role<>?",
+        (organization_id, SECURITY_ROLE_MEMBER),
+    )
     managers = identity_managers_of(conn, organization_id)
     if managers == [user_id]:
         raise auth_error(409, "ADMIN_LAST_IDENTITY_MANAGER")
@@ -9109,6 +9195,7 @@ scim.install_routes(
         require_organization_access=require_organization_access,
         admin_read_guard=require_admin_capability(CAPABILITY_ORGANIZATION_READ),
         admin_manage_guard=require_admin_capability(CAPABILITY_PROVISIONING_MANAGE),
+        rate_limit=enforce_rate_limit,
     ),
 )
 
@@ -9127,6 +9214,7 @@ deployment.install_routes(
         # `it_admin` le gere, `organization_admin` ne le gere pas. C'est la
         # frontiere posee en Phase 22, appliquee sans exception ajoutee.
         admin_manage_guard=require_admin_capability(CAPABILITY_DEPLOYMENT_MANAGE),
+        rate_limit=enforce_rate_limit,
     ),
 )
 
@@ -9136,3 +9224,124 @@ async def deployment_error_handler(request, error: deployment.DeploymentError):
     # Un code stable, jamais un chemin de fichier ni un detail d'hote : la
     # console doit pouvoir afficher l'erreur sans en apprendre davantage.
     return JSONResponse({"error": error.code}, status_code=error.status)
+
+
+# ------------------------------------------------------- observabilite HTTP
+#
+# Un seul middleware : correlation, mesure, en-tetes. Les separer ferait trois
+# passages sur chaque requete pour trois lignes de code chacun.
+
+TRUSTED_PROXIES = observability.trusted_proxies_from_environment(
+    os.getenv("NOVA_TRUSTED_PROXIES", "")
+)
+
+
+@app.middleware("http")
+async def observability_middleware(request, call_next):
+    request_id = observability.accept_request_id(
+        request.headers.get(observability.REQUEST_ID_HEADER)
+    )
+    observability.set_request_id(request_id)
+    request.state.request_id = request_id
+    # L'adresse ne sert qu'a la limitation, jamais a une etiquette de metrique.
+    request.state.client_address = observability.client_address(
+        request.client.host if request.client else None,
+        request.headers.get("X-Forwarded-For"),
+        TRUSTED_PROXIES,
+    )
+    started = time.monotonic()
+    route = observability.route_class(request.url.path)
+    try:
+        response = await call_next(request)
+    except Exception:
+        observability.METRICS.observe_request(route, 500, time.monotonic() - started)
+        observability.log("http.error", level="error", route=route, status=500)
+        observability.set_request_id(None)
+        raise
+    elapsed = time.monotonic() - started
+    observability.METRICS.observe_request(route, response.status_code, elapsed)
+    if response.status_code >= 500:
+        observability.log(
+            "http.error", level="error", route=route, status=response.status_code
+        )
+    response.headers[observability.REQUEST_ID_HEADER] = request_id
+    for name, value in observability.security_headers(
+        production=NOVA_ENV == "production"
+    ).items():
+        response.headers.setdefault(name, value)
+    observability.set_request_id(None)
+    return response
+
+
+@app.get("/api/livez")
+def liveness_probe():
+    """Vivacite du processus, et **rien** d'autre.
+
+    `/api/health` existe depuis longtemps et chaque poste l'interroge toutes
+    les trente secondes ; il porte les domaines et les methodes d'auth, donc il
+    lit la base. C'est utile au poste, mais ce n'est pas une sonde de vivacite :
+    un orchestrateur qui l'utiliserait redemarrerait un processus parfaitement
+    vivant parce que sa base est momentanement injoignable.
+
+    Cette route ne touche ni la base, ni Redis, ni aucune configuration. Elle
+    repond si le processus repond.
+    """
+    return {"status": "ok"}
+
+
+@app.get("/api/readyz")
+def readiness_probe():
+    """Aptitude a servir. Distincte de la vivacite.
+
+    Un orchestrateur a besoin des deux : la vivacite dit s'il faut redemarrer
+    le processus, l'aptitude s'il faut lui envoyer du trafic. Les confondre
+    fait redemarrer un service parfaitement vivant parce que sa base est
+    momentanement injoignable.
+    """
+
+    def database_reachable() -> bool:
+        with db() as conn:
+            conn.execute("SELECT 1")
+        return True
+
+    def schema_current() -> bool:
+        migrations.check_startup(database_handle())
+        return True
+
+    def limiter_available() -> bool:
+        limiter = rate_limiter()
+        # Sans compteur partage configure, on ne pretend pas etre pret en
+        # production : les routes fail-closed refuseraient tout.
+        if not limiter.configured:
+            return NOVA_ENV != "production"
+        return limiter.healthy()
+
+    result = observability.readiness(
+        {
+            "database": database_reachable,
+            "schema": schema_current,
+            "rate_limiter": limiter_available,
+        }
+    )
+    return JSONResponse(result, status_code=200 if result["ready"] else 503)
+
+
+@app.get("/api/metrics")
+def metrics_endpoint():
+    """Exposition Prometheus.
+
+    Aucune etiquette ne porte d'identifiant : ni utilisateur, ni organisation,
+    ni parc, ni connecteur. Une metrique etiquetee par identifiant fabrique une
+    serie par identifiant — et publie la liste au passage.
+    """
+    pool = database_handle().pool_stats
+    gauges = {
+        "db_pool_idle": pool["idle"],
+        "db_pool_leased": pool["leased"],
+        "db_pool_max": pool["max"],
+        "rate_limiter_shared": 1 if rate_limiter().shared else 0,
+    }
+    return PlainTextResponse(
+        observability.METRICS.render(gauges),
+        media_type="text/plain; version=0.0.4; charset=utf-8",
+    )

@@ -29,6 +29,7 @@ import json
 import os
 import re
 import database
+import ratelimit
 import time
 import uuid
 from dataclasses import dataclass
@@ -128,6 +129,8 @@ class Backend:
     record_admin_action: Callable[..., Any]
     admin_read_guard: Callable[..., Any]
     admin_manage_guard: Callable[..., Any]
+    # Meme contrat que pour SCIM : injectee, jamais importee.
+    rate_limit: Callable[[str, str, Any], None]
 
 
 # --------------------------------------------------------------------- release
@@ -528,6 +531,11 @@ def install_routes(app: Any, backend: Backend) -> None:
             organization_id
         ):
             raise DeploymentError(400, "DEPLOYMENT_VERIFY_INVALID")
+        # Route non authentifiee : sans compteur partage, elle permettrait de
+        # sonder des couples (parc, organisation) a volonte. La forme est
+        # validee d'abord, pour ne pas compter des requetes malformees a la
+        # place de celles qui sondent.
+        backend.rate_limit("deployment", deployment_id, ratelimit.DEPLOYMENT_VERIFY)
         with backend.database() as conn:
             row = conn.execute(
                 "SELECT * FROM deployment_profiles WHERE profile_id=? AND "

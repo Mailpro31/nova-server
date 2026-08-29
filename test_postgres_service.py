@@ -386,5 +386,238 @@ class PostgresHttpServiceTests(unittest.TestCase):
         )
 
 
+@unittest.skipUnless(POSTGRES_URL, "NOVA_TEST_POSTGRES_URL is not set")
+class PostgresRaceTests(unittest.TestCase):
+    """Les courses que la Phase 38A avait laissees non rejouees sous PostgreSQL."""
+
+    def test_the_last_identity_manager_survives_concurrent_removals(self):
+        """Deux retraits concurrents ne doivent pas vider l'administration.
+
+        C'est la course que « lire puis verifier » ne protegeait pas : deux
+        transactions lisent toutes deux « il en reste deux », concluent toutes
+        deux que ce n'est pas le dernier, et l'organisation se retrouve sans
+        personne pour nommer un administrateur. La garde verrouille desormais
+        les comptes d'administration avant de compter.
+        """
+        result = run_against_postgres(
+            """
+            import threading
+            main.init_db()
+            organization_id = main.nova_organization_id()
+
+            with main.db() as conn:
+                first = main.create_user(
+                    conn, organization_id, "race-admin-1@example.com",
+                    security_role="organization_admin",
+                )
+                second = main.create_user(
+                    conn, organization_id, "race-admin-2@example.com",
+                    security_role="organization_admin",
+                )
+
+            outcomes = []
+            lock = threading.Lock()
+            barrier = threading.Barrier(2)
+
+            def demote(user_id):
+                barrier.wait()
+                try:
+                    with main.db() as conn:
+                        main.guard_last_identity_manager(conn, organization_id, user_id)
+                        conn.execute(
+                            "UPDATE users SET security_role=? WHERE user_id=? "
+                            "AND organization_id=?",
+                            ("member", user_id, organization_id),
+                        )
+                    with lock:
+                        outcomes.append("removed")
+                except Exception as error:
+                    with lock:
+                        outcomes.append(type(error).__name__)
+
+            threads = [threading.Thread(target=demote, args=(u,))
+                       for u in (first, second)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+
+            result["outcomes"] = sorted(outcomes)
+            with main.db() as conn:
+                result["managers_left"] = len(
+                    main.identity_managers_of(conn, organization_id)
+                )
+            """
+        )
+        self.assertGreaterEqual(
+            result["managers_left"], 1,
+            f"organisation sans administrateur: {result['outcomes']}",
+        )
+
+    def test_concurrent_deployment_profiles_with_the_same_name_produce_one(self):
+        result = run_against_postgres(
+            """
+            import threading
+            from fastapi.testclient import TestClient
+            main.init_db()
+            client = TestClient(main.app)
+            organization_id = main.nova_organization_id()
+            with main.db() as conn:
+                it_id = main.create_user(
+                    conn, organization_id, "race-it@example.com",
+                    security_role="it_admin",
+                )
+                it_row = main.user_by_id(conn, it_id)
+            it = {"Authorization": "Bearer " +
+                  main.create_admin_session(it_row, "test")["token"]}
+
+            codes = []
+            lock = threading.Lock()
+            barrier = threading.Barrier(4)
+
+            def create():
+                barrier.wait()
+                response = client.post(
+                    f"/api/control/organizations/{organization_id}/deployment/profiles",
+                    headers=it, json={"name": "parc-unique"},
+                )
+                with lock:
+                    codes.append(response.status_code)
+
+            threads = [threading.Thread(target=create) for _ in range(4)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+
+            result["codes"] = sorted(codes)
+            with main.db() as conn:
+                result["profiles"] = conn.execute(
+                    "SELECT COUNT(*) FROM deployment_profiles WHERE organization_id=? "
+                    "AND name=?", (organization_id, "parc-unique"),
+                ).fetchone()[0]
+            """
+        )
+        self.assertEqual(result["profiles"], 1, "la contrainte doit trancher")
+        self.assertTrue(
+            all(code < 500 for code in result["codes"]),
+            f"une course ne doit jamais devenir une erreur serveur: {result['codes']}",
+        )
+
+    def test_concurrent_package_versions_never_produce_an_engine_error(self):
+        result = run_against_postgres(
+            """
+            import threading, uuid
+            main.init_db()
+            organization_id = main.nova_organization_id()
+            package_id = "pkg-" + uuid.uuid4().hex[:8]
+            with main.db() as conn:
+                columns = set(conn.columns("organization_package_versions"))
+            result["columns"] = sorted(columns)
+
+            outcomes = []
+            lock = threading.Lock()
+            barrier = threading.Barrier(4)
+
+            def add_version():
+                barrier.wait()
+                try:
+                    with main.db() as conn:
+                        conn.execute(
+                            "INSERT INTO organization_packages(package_id, "
+                            "organization_id, package_type, name, created_at, "
+                            "updated_at) VALUES (?,?,?,?,?,?) "
+                            "ON CONFLICT DO NOTHING",
+                            (package_id, organization_id, "styles", "Race", 1.0, 1.0),
+                        )
+                    with lock:
+                        outcomes.append("ok")
+                except database.IntegrityError:
+                    with lock:
+                        outcomes.append("conflict")
+                except Exception as error:
+                    with lock:
+                        outcomes.append(type(error).__name__)
+
+            threads = [threading.Thread(target=add_version) for _ in range(4)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+
+            result["outcomes"] = sorted(outcomes)
+            with main.db() as conn:
+                result["packages"] = conn.execute(
+                    "SELECT COUNT(*) FROM organization_packages WHERE package_id=?",
+                    (package_id,),
+                ).fetchone()[0]
+            """
+        )
+        # Quatre insertions concurrentes du meme identifiant : exactement une
+        # ligne, et aucune erreur de moteur.
+        self.assertEqual(result["packages"], 1)
+        self.assertNotIn("OperationalError", result["outcomes"], result["outcomes"])
+
+    def test_admin_sessions_behave_under_postgres(self):
+        result = run_against_postgres(
+            """
+            from fastapi.testclient import TestClient
+            main.init_db()
+            client = TestClient(main.app)
+            organization_id = main.nova_organization_id()
+            with main.db() as conn:
+                admin_id = main.create_user(
+                    conn, organization_id, "stepup@example.com",
+                    security_role="organization_admin",
+                )
+                admin_row = main.user_by_id(conn, admin_id)
+
+            session = main.create_admin_session(admin_row, "test")
+            admin = {"Authorization": "Bearer " + session["token"]}
+            result["fresh_session_works"] = client.get(
+                "/api/control/organization", headers=admin
+            ).status_code
+
+            with main.db() as conn:
+                conn.execute(
+                    "UPDATE admin_sessions SET revoked_at=? WHERE user_id=?",
+                    (1.0, admin_id),
+                )
+            result["revoked_session_refused"] = client.get(
+                "/api/control/organization", headers=admin
+            ).status_code
+            """
+        )
+        self.assertEqual(result["fresh_session_works"], 200)
+        self.assertIn(result["revoked_session_refused"], (401, 403))
+
+
+@unittest.skipUnless(POSTGRES_URL, "NOVA_TEST_POSTGRES_URL is not set")
+class PostgresOutageTests(unittest.TestCase):
+    def test_an_unreachable_database_fails_safely_with_no_fallback(self):
+        """Une base injoignable produit une erreur, jamais un repli SQLite.
+
+        Un repli silencieux donnerait un service qui semble fonctionner tout en
+        ecrivant dans une base que personne ne sauvegarde.
+        """
+        result = run_against_postgres(
+            """
+            main.init_db()
+            result["dialect_before"] = main.database_handle().dialect
+            try:
+                database.Database("postgresql://postgres:wrong@127.0.0.1:1/absent")
+                result["failure"] = None
+            except Exception as error:
+                result["failure"] = type(error).__name__
+            result["dialect_after"] = main.database_handle().dialect
+            result["still_serves"] = main.nova_organization_id() is not None
+            """
+        )
+        self.assertEqual(result["dialect_before"], "postgresql")
+        self.assertIn(result["failure"], ("OperationalError", "DatabaseError"))
+        self.assertEqual(result["dialect_after"], "postgresql")
+        self.assertTrue(result["still_serves"])
+
+
 if __name__ == "__main__":
     unittest.main()

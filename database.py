@@ -386,7 +386,11 @@ class Connection:
         surtout rien à simuler.
         """
         if self.dialect == SQLITE:
-            self._raw.execute("BEGIN IMMEDIATE")
+            # `in_transaction` evite « cannot start a transaction within a
+            # transaction » quand une ecriture a deja ouvert la transaction
+            # implicite du module.
+            if not self._raw.in_transaction:
+                self._raw.execute("BEGIN IMMEDIATE")
 
     def commit(self) -> None:
         self._raw.commit()
@@ -396,6 +400,22 @@ class Connection:
 
     def close(self) -> None:
         self._raw.close()
+
+    def lock_rows(self, sql: str, parameters: Sequence[Any] = ()) -> None:
+        """Verrouille les lignes que `sql` selectionne, jusqu'a la fin de la transaction.
+
+        Sert aux invariants qui se lisent avant de s'ecrire — « reste-t-il un
+        administrateur ? ». Sans verrou, deux transactions lisent toutes deux
+        « il en reste deux », et chacune en retire un.
+
+        Sous PostgreSQL c'est `FOR UPDATE`. Sous SQLite il n'existe pas de
+        verrou de ligne, mais un seul ecrivain a la fois : prendre le verrou
+        d'ecriture tout de suite produit la meme serialisation.
+        """
+        if self.dialect == SQLITE:
+            self.begin_immediate()
+            return
+        self.execute(sql.rstrip().rstrip(";") + " FOR UPDATE", parameters)
 
     # -- introspection
 

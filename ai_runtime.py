@@ -897,7 +897,12 @@ def router_from_environment() -> OrganizationAIRouter:
     speech_model = os.getenv(
         "NOVA_AI_SPEECH_MODEL", os.getenv("NOVA_WHISPER_MODEL", "")
     )
-    token = os.getenv("NOVA_AI_RUNTIME_TOKEN", "")
+    # Reference ou valeur : `env://NOM`, `file:///run/secrets/nom`, ou la
+    # valeur elle-meme. Resolue a chaque appel, pour qu'une rotation du
+    # fichier monte prenne effet sans redemarrer le service.
+    import secrets_provider
+
+    token = secrets_provider.resolve_value(os.getenv("NOVA_AI_RUNTIME_TOKEN", "")) or ""
     try:
         profile = ModelProfile(os.getenv("NOVA_AI_PROFILE", "standard").lower())
     except ValueError as error:

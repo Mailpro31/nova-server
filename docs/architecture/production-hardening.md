@@ -224,6 +224,32 @@ Deux défauts réels trouvés par ces tests et corrigés :
    est donc ordonnée topologiquement — et ces relations sont désormais
    réellement appliquées.
 
+### Livré par la continuation B — sécurité runtime et exploitation
+
+| Élément | Preuve |
+| --- | --- |
+| Limiteur branché sur les routes | les deux compteurs process-local retirés |
+| Quota partagé sur une **vraie route HTTP** | 2 processus, quota total = quota, pas son double |
+| Panne Redis : fail-closed / fail-open | testé quota par quota, reprise sans redémarrage |
+| Secrets par référence | Google, OIDC, SMTP, jeton runtime IA |
+| Validation de configuration production | 25 tests, tous les problèmes collectés d'un coup |
+| `/api/livez` indépendant de la base | testé base coupée |
+| `/api/readyz` sans détail d'infrastructure | testé |
+| Métriques Prometheus | aucune étiquette non bornée, testé |
+| Journaux structurés + `request_id` | champs sensibles caviardés, sentinelles |
+| En-têtes de sécurité, proxy de confiance | testés sur de vraies réponses |
+| Sauvegarde / restauration PostgreSQL | exercice complet sur PostgreSQL 16 réel |
+| Course du dernier administrateur | **défaut réel corrigé**, voir ci-dessous |
+| `AdminPrincipal.is_legacy_token` | supprimé, aucun appelant |
+
+Un défaut réel trouvé et corrigé : **la garde du dernier gestionnaire
+d'identités ne protégeait rien sous concurrence.** Elle lisait la liste des
+administrateurs puis comparait ; deux transactions retirant chacune un des deux
+derniers lisaient toutes deux « il en reste deux » et concluaient toutes deux
+que ce n'était pas le dernier. La garde verrouille désormais les comptes
+d'administration avant de compter — `SELECT … FOR UPDATE` sous PostgreSQL,
+verrou d'écriture immédiat sous SQLite.
+
 ### Non livré
 
 Le portage effectif de `main.py` vers la couche d'accès n'est **pas** fait. Le

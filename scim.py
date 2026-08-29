@@ -12,7 +12,7 @@ import json
 import re
 import secrets
 import database
-import threading
+import ratelimit
 import time
 import uuid
 from dataclasses import dataclass
@@ -41,9 +41,12 @@ MAX_EMAILS = 5
 MAX_NAME = 200
 MAX_IDENTIFIER = 320
 MAX_EXTERNAL_ID = 255
-RATE_WINDOW_SECONDS = 60.0
-RATE_PER_CREDENTIAL = 300
-RATE_PER_TENANT = 900
+# Les quotas viennent de `ratelimit` : une seule declaration, pour que la
+# politique ne puisse pas diverger entre le module qui l'applique et celui qui
+# la decrit. Les valeurs sont celles de la Phase 36, inchangees.
+RATE_WINDOW_SECONDS = ratelimit.SCIM_PER_CREDENTIAL.window_seconds
+RATE_PER_CREDENTIAL = ratelimit.SCIM_PER_CREDENTIAL
+RATE_PER_TENANT = ratelimit.SCIM_PER_TENANT
 
 
 def install_schema(conn: database.Connection) -> None:
@@ -188,6 +191,11 @@ class Backend:
     require_organization_access: Callable[[Any, str], None]
     admin_read_guard: Callable[..., Any]
     admin_manage_guard: Callable[..., Any]
+    # `scope`, `identite`, `quota`. Leve une erreur HTTP si le quota est
+    # depasse ou si le compteur partage est injoignable sur une route
+    # fail-closed. Injectee plutot qu'importee : ce module ne connait ni Redis
+    # ni FastAPI, et n'a pas a les connaitre.
+    rate_limit: Callable[[str, str, Any], None]
 
 
 class CredentialCreate(BaseModel):
@@ -198,18 +206,10 @@ class CredentialCreate(BaseModel):
     expires_at: float | None = None
 
 
-_rate_lock = threading.Lock()
-_rate_buckets: dict[str, list[float]] = {}
-
-
-def _rate_limit(key: str, limit: int, now: float) -> None:
-    with _rate_lock:
-        bucket = _rate_buckets.setdefault(key, [])
-        cutoff = now - RATE_WINDOW_SECONDS
-        bucket[:] = [seen for seen in bucket if seen >= cutoff]
-        if len(bucket) >= limit:
-            raise ScimError(429, "Provisioning rate limit exceeded.", code="RATE_LIMITED")
-        bucket.append(now)
+# Le compteur en memoire de processus qui vivait ici a ete retire. Derriere
+# quatre workers, il autorisait quatre fois la limite annoncee — et la console
+# presentait la protection comme appliquee. La limitation passe desormais par
+# `ratelimit`, partage entre tous les workers, injecte par le backend.
 
 
 def _json(payload: Any, status: int = 200, headers: dict[str, str] | None = None):
@@ -756,8 +756,8 @@ def install_routes(app: Any, backend: Backend) -> None:
             principal = SCIMPrincipal(
                 row["credential_id"], row["organization_id"], row["name"], row["provider_context"]
             )
-            _rate_limit(f"credential:{principal.credential_id}", RATE_PER_CREDENTIAL, now)
-            _rate_limit(f"tenant:{principal.organization_id}", RATE_PER_TENANT, now)
+            backend.rate_limit("credential", principal.credential_id, RATE_PER_CREDENTIAL)
+            backend.rate_limit("tenant", principal.organization_id, RATE_PER_TENANT)
             conn.execute(
                 "UPDATE scim_credentials SET last_used_at=? WHERE credential_id=?",
                 (now, principal.credential_id),
@@ -1425,6 +1425,13 @@ def install_routes(app: Any, backend: Backend) -> None:
         principal: Any = Depends(backend.admin_manage_guard),
     ):
         backend.require_organization_access(principal, organization_id)
+        # La creation d'un credential est un chemin d'authentification : elle
+        # produit un secret. Une console compromise ne doit pas pouvoir en
+        # fabriquer mille.
+        backend.rate_limit(
+            "principal", getattr(principal, "user_id", "unknown"),
+            ratelimit.ADMIN_CREDENTIAL_CREATE,
+        )
         provider_context = body.provider_context.strip().lower()
         if not re.fullmatch(r"[a-z0-9_.-]{1,80}", provider_context):
             raise ScimError(400, "provider_context is invalid.", "invalidValue", "PROVIDER_CONTEXT_INVALID")

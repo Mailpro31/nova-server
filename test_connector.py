@@ -47,7 +47,10 @@ class ConnectorTestCase(AdminTestCase):
     def setUp(self):
         super().setUp()
         clear_connectors()
-        main._CONNECTOR_CALLS.clear()
+        # Le compteur en memoire de processus a disparu : la limitation passe
+        # par `ratelimit`, partage entre workers. On remet le compteur a zero
+        # comme on repart d'une base vierge.
+        main.rate_limiter().reset()
 
     def auth(self, token):
         return {"Authorization": f"Bearer {token}"}
