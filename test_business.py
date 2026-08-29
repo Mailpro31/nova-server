@@ -599,6 +599,11 @@ class BusinessPolicyAndPackageTests(AdminTestCase):
                 "voice_commands_enabled",
                 "engineering_notes_enabled",
                 "file_import_enabled",
+                # Cle Core apportee par Learn, pas par Business : elle ferme
+                # Learn pour une organisation quelle que soit sa nature. La
+                # liste reste exhaustive pour continuer a refuser l'ajout
+                # d'une clef propre a l'entreprise.
+                "learning_enabled",
             },
         )
 
