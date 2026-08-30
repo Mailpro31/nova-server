@@ -22,6 +22,12 @@ COPY learning/ ./learning/
 # Les fichiers SQL que `migrations.py` decouvre au runtime dans `migrations/`.
 COPY migrations/ ./migrations/
 
+# Le mode Lab. Ces fichiers vivent dans l'image plutot que sur le poste
+# client : ils heritent ainsi de la verification de digest OCI que
+# l'installateur applique deja, et le Lab n'ajoute aucun telechargement.
+# Rien ici n'est monte ni execute tant que le Lab n'est pas active.
+COPY tools/organization-lab/lab/ /opt/nova-lab/
+
 ENV NOVA_DB=/data/nova.db
 
 # `serve.py`, pas `uvicorn main:app` : le serveur sert l'API publique **et** le
