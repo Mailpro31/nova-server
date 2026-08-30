@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('install','analyze','resume','status','repair','update','reconfigure','selftest')]
+    [ValidateSet('install','analyze','resume','status','repair','update','reconfigure','selftest',
+                 'lab-enable','lab-invite','lab-disable','lab-status')]
     [string]$Action = 'install',
     [switch]$Headless,
     [string]$OrganizationName = 'Nova Lab',
@@ -21,6 +22,11 @@ $script:Secrets = Join-Path $script:Root 'secrets'
 $script:ManifestCache = Join-Path $script:Root 'state\last-known-good-manifest.json'
 $script:BundledProfiles = Join-Path $PSScriptRoot 'profiles.manifest.json'
 $script:AllowedManifestOrigin = 'https://releases.novaspeak.app'
+# Lab lives apart from everything the production install writes. Nothing
+# below this path is read by a normal install, and enabling the Lab never
+# rewrites production configuration.
+$script:LabRoot = Join-Path $script:Root 'lab'
+$script:LabPort = 8443
 
 function Initialize-Directories {
     foreach ($path in @($script:Root, (Split-Path $script:LogPath), $script:Generated,
@@ -492,7 +498,11 @@ $llmEnvironment
       NOVA_AI_MAX_CONCURRENT_TEXT: "$($Profile.max_concurrent_text)"
       NOVA_AI_MAX_CONCURRENT_SPEECH: "$($Profile.max_concurrent_speech)"
       NOVA_AI_MAX_QUEUE: "$($Profile.queue_size)"
-    ports: ["8080:8000"]
+    # Loopback only. The API speaks plain HTTP, so publishing it on every
+    # interface put dictation and transcripts on the network in clear text. The
+    # only way in from another machine is the Lab gateway, which terminates TLS
+    # and admits enrolled devices.
+    ports: ["127.0.0.1:8080:8000"]
     secrets: [postgres_password]
     depends_on:
       migrate: { condition: service_completed_successfully }
@@ -645,6 +655,16 @@ function Get-FailureAdvice([string]$Message) {
             return "Ce GPU est trop ancien pour le runtime IA local (calcul 7.5 minimum).`nAucun service cloud n est utilise en remplacement." }
         '^LLM_COMPAT_PROBE_FAILED' {
             return "Le test de compatibilite GPU n a pas pu s executer.`nVerifiez que Docker Desktop expose le GPU, puis relancez." }
+        '^LAB_NOT_ENABLED' {
+            return "Le mode Lab n est pas actif sur ce serveur.`nLancez l action 'lab-enable' avant de generer une invitation." }
+        '^LAB_NO_LAN_ADDRESS' {
+            return "Aucune adresse reseau utilisable n a ete trouvee.`nConnectez la machine au reseau local, puis relancez." }
+        '^LAB_GATEWAY_FAILED' {
+            return "La passerelle Lab redemarre en boucle.`nSon journal figure ci-dessus; verifiez que le serveur Nova fonctionne." }
+        '^LAB_CERTIFICATE_NOT_READY' {
+            return "La passerelle Lab n a pas encore produit son certificat.`nAttendez quelques secondes puis relancez 'lab-status'." }
+        '^LAB_COMPOSE_FAILED' {
+            return "La passerelle Lab n a pas pu demarrer.`nVerifiez que le serveur Nova fonctionne, puis relancez." }
         '^SERVICE_FAILED' {
             return "Un conteneur s est arrete en erreur ou est devenu unhealthy.`nLes journaux du conteneur concerne figurent ci-dessus." }
         '^SERVICE_START_TIMEOUT' {
@@ -673,6 +693,182 @@ function Show-Result([string]$Title, [string]$Text, [bool]$Error = $false) {
     if ($Headless) { Write-Output $Text; return }
     Add-Type -AssemblyName System.Windows.Forms
     [Windows.Forms.MessageBox]::Show($Text, $Title, 'OK', $(if ($Error) {'Error'} else {'Information'})) | Out-Null
+}
+
+# ─────────────────────────────────────────────────────────────── Lab mode
+#
+# The Lab exists so a second machine can be a real client without anyone typing
+# an address into a production Desktop. It is off unless explicitly enabled, it
+# has its own directory, and it is the only thing this installer ever puts on a
+# network interface.
+
+function Get-LabAddress {
+    # The address another machine on the same network can actually reach.
+    # Virtual switches (WSL, Hyper-V, Docker) answer locally and would produce a
+    # code that works on this machine and nowhere else, so they are excluded.
+    $candidates = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.IPAddress -notlike '127.*' -and
+            $_.IPAddress -notlike '169.254.*' -and
+            $_.InterfaceAlias -notmatch 'vEthernet|Loopback|WSL|Hyper-V|Docker|VirtualBox|VMware'
+        }
+    $chosen = @($candidates | Sort-Object -Property SkipAsSource, InterfaceMetric | Select-Object -First 1)
+    if ($chosen.Count -eq 0) { throw 'LAB_NO_LAN_ADDRESS' }
+    return $chosen[0].IPAddress
+}
+
+function Get-LabSettings {
+    $path = Join-Path $script:LabRoot 'lab.json'
+    if (-not (Test-Path -LiteralPath $path)) { return $null }
+    try { return Get-Content -LiteralPath $path -Raw | ConvertFrom-Json } catch { throw 'LAB_SETTINGS_UNREADABLE' }
+}
+
+function Write-LabCompose($Manifest, $Settings) {
+    # A separate compose file, in the Lab directory, for a separate project.
+    # The production stack is not redefined and not restarted by enabling Lab.
+    $labData = ($Settings.data_dir).Replace('\','/')
+    $network = 'nova-organization-lab_default'
+    $compose = @"
+name: nova-organization-lab-gateway
+services:
+  lab-gateway:
+    image: $($Manifest.images.server)
+    entrypoint: ["python", "/opt/nova-lab/nova_lab_gateway.py"]
+    environment:
+      NOVA_LAB_DIR: /lab
+      NOVA_LAB_HOST: "$($Settings.host)"
+      NOVA_LAB_PORT: "$($Settings.port)"
+      NOVA_LAB_UPSTREAM: http://api:8000
+      NOVA_LAB_ORGANIZATION_ID: "$($Settings.organization_id)"
+      NOVA_LAB_ORGANIZATION_NAME: "$($Settings.organization_name)"
+    volumes: ["$($labData):/lab"]
+    ports: ["$($Settings.host):$($Settings.port):$($Settings.port)"]
+    networks: [lab]
+    restart: unless-stopped
+networks:
+  lab:
+    name: $network
+    external: true
+"@
+    $path = Join-Path $script:LabRoot 'compose.lab.yml'
+    [IO.File]::WriteAllText($path, $compose, (New-Object Text.UTF8Encoding($false)))
+    return $path
+}
+
+function Invoke-LabCompose([string[]]$Arguments) {
+    $compose = Join-Path $script:LabRoot 'compose.lab.yml'
+    if (-not (Test-Path $compose)) { throw 'LAB_NOT_ENABLED' }
+    $result = Run-Captured 'docker.exe' (@('compose','--file',$compose) + $Arguments)
+    if ($result.ExitCode -ne 0) { throw "LAB_COMPOSE_FAILED: exit $($result.ExitCode). $($result.Output)" }
+    return $result.Output
+}
+
+function Set-LabFirewallRule([int]$Port) {
+    # Private profile only. A Lab is a LAN experiment; opening it on a public
+    # network profile would follow the machine to places the operator did not
+    # intend.
+    $name = 'Nova Organization Lab (TLS)'
+    Get-NetFirewallRule -DisplayName $name -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue
+    New-NetFirewallRule -DisplayName $name -Direction Inbound -Action Allow `
+        -Protocol TCP -LocalPort $Port -Profile Private -ErrorAction Stop | Out-Null
+}
+
+function Enable-Lab {
+    Initialize-Directories
+    New-Item -ItemType Directory -Force -Path $script:LabRoot | Out-Null
+    $dataDir = Join-Path $script:LabRoot 'data'
+    New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
+
+    $manifest = Get-VerifiedReleaseManifest
+    $address = Get-LabAddress
+    $settings = [pscustomobject]@{
+        schema_version    = 1
+        enabled           = $true
+        host              = $address
+        port              = $script:LabPort
+        organization_id   = 'lab-' + ([Guid]::NewGuid().ToString('N').Substring(0, 12))
+        organization_name = $OrganizationName
+        data_dir          = $dataDir
+        enabled_at        = (Get-Date).ToUniversalTime().ToString('o')
+    }
+    $settings | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $script:LabRoot 'lab.json') -Encoding UTF8
+
+    Write-LabCompose $manifest $settings | Out-Null
+    Set-LabFirewallRule $script:LabPort
+    Invoke-LabCompose @('up','-d') | Out-Null
+
+    $fingerprint = Wait-LabCertificate 60
+    Write-SafeLog ("lab_enabled host={0} port={1}" -f $address, $script:LabPort)
+    return [pscustomobject]@{ Host = $address; Port = $script:LabPort; Fingerprint = $fingerprint }
+}
+
+function Wait-LabCertificate([int]$TimeoutSeconds) {
+    # The gateway prints the fingerprint once the certificate exists. Reading it
+    # from the log avoids a second implementation of the same hash.
+    $container = 'nova-organization-lab-gateway-lab-gateway-1'
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        $logs = Run-Captured 'docker.exe' @('logs',$container)
+        $match = [regex]::Match($logs.Output, 'LAB_CERT_SHA256 ([0-9a-f]{64})')
+        if ($match.Success) { return $match.Groups[1].Value }
+        # A gateway that keeps dying will never print a fingerprint. Say so now,
+        # with its own output, instead of waiting out the whole deadline.
+        $state = Get-ServiceState $container
+        if ($state.State -eq 'failed' -or $state.Status -eq 'restarting') {
+            throw ("LAB_GATEWAY_FAILED: {0}`n{1}" -f $state.Status, $logs.Output)
+        }
+        Start-Sleep -Seconds 2
+    }
+    throw 'LAB_CERTIFICATE_NOT_READY'
+}
+
+function New-LabInvitation([double]$Hours, [int]$Uses) {
+    $settings = Get-LabSettings
+    if (-not $settings -or -not $settings.enabled) { throw 'LAB_NOT_ENABLED' }
+    $result = Run-Captured 'docker.exe' @(
+        'exec','-e',"NOVA_LAB_DIR=/lab",'-e',"NOVA_LAB_HOST=$($settings.host)",
+        'nova-organization-lab-gateway-lab-gateway-1',
+        'python','/opt/nova-lab/nova_lab_invite.py',
+        '--hours',"$Hours",'--uses',"$Uses",'--port',"$($settings.port)")
+    if ($result.ExitCode -ne 0) { throw "LAB_INVITATION_FAILED: $($result.Output)" }
+    # The code is the last line: everything else the tool prints goes to stderr.
+    $code = @($result.Output -split "`n" | ForEach-Object { $_.Trim() } |
+              Where-Object { $_ -match '^NOVA-LAB1-' })
+    if ($code.Count -ne 1) { throw 'LAB_INVITATION_FAILED' }
+    # Deliberately not written to disk. An invitation that cannot be recovered
+    # from the machine is the point; issue another one instead.
+    return $code[0]
+}
+
+function Disable-Lab {
+    $settings = Get-LabSettings
+    if (-not $settings) { return 'lab-not-enabled' }
+    try { Invoke-LabCompose @('down') | Out-Null } catch { }
+    Get-NetFirewallRule -DisplayName 'Nova Organization Lab (TLS)' -ErrorAction SilentlyContinue |
+        Remove-NetFirewallRule -ErrorAction SilentlyContinue
+    $settings.enabled = $false
+    $settings | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $script:LabRoot 'lab.json') -Encoding UTF8
+    Write-SafeLog 'lab_disabled'
+    # Certificates and enrolled devices are kept: disabling is not forgetting,
+    # and re-enabling should not silently invalidate every enrolled Desktop.
+    return 'lab-disabled'
+}
+
+function Get-LabStatus {
+    $settings = Get-LabSettings
+    if (-not $settings) { return [pscustomobject]@{ Enabled = $false } }
+    $state = Get-ServiceState 'nova-organization-lab-gateway-lab-gateway-1'
+    $devices = 0
+    $statePath = Join-Path $settings.data_dir 'lab-state.json'
+    if (Test-Path -LiteralPath $statePath) {
+        try { $devices = @((Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json).devices).Count } catch { }
+    }
+    return [pscustomobject]@{
+        Enabled = [bool]$settings.enabled
+        Endpoint = "https://$($settings.host):$($settings.port)"
+        Gateway = $state.State
+        EnrolledDevices = $devices
+    }
 }
 
 function Invoke-Install {
@@ -779,6 +975,18 @@ try {
         'repair' { Invoke-Compose @('up','-d','--force-recreate') | Out-Null; Show-Result 'Nova Server Repair' (Get-Health | Format-List | Out-String) }
         'update' { Invoke-Install }
         'reconfigure' { Invoke-Install }
+        'lab-enable' {
+            $lab = Enable-Lab
+            Show-Result 'Nova Organization Server — Lab' (
+                "Le mode Lab est actif.`n`nAdresse: https://{0}:{1}`nEmpreinte du certificat:`n{2}`n`nGenerez une invitation avec l action 'lab-invite'." -f $lab.Host, $lab.Port, $lab.Fingerprint)
+        }
+        'lab-invite' {
+            $code = New-LabInvitation 2 1
+            Show-Result 'Nova Organization Server — Invitation Lab' (
+                "Code d enrolement, valable 2 heures, utilisable une seule fois:`n`n{0}`n`nSaisissez-le dans Nova Desktop (build Lab) sur le poste client.`nCe code n est pas conserve: s il est perdu, generez-en un autre." -f $code)
+        }
+        'lab-disable' { Show-Result 'Nova Organization Server — Lab' (Disable-Lab) }
+        'lab-status' { Show-Result 'Nova Organization Server — Lab' (Get-LabStatus | Format-List | Out-String) }
     }
 } catch {
     Write-SafeLog ("failure code={0}" -f $_.Exception.Message)
