@@ -1,7 +1,7 @@
 FROM fedirz/faster-whisper-server:latest-cuda
 
 ARG WHISPER_MODEL=small
-RUN python -c "from faster_whisper.utils import download_model; download_model('${WHISPER_MODEL}', output_dir='/models/whisper-${WHISPER_MODEL}')"
+RUN uv run python -c "from faster_whisper.utils import download_model; download_model('${WHISPER_MODEL}', output_dir='/models/whisper-${WHISPER_MODEL}')"
 
 ENV HF_HUB_OFFLINE=1 \
     WHISPER__MODEL=/models/whisper-small \
