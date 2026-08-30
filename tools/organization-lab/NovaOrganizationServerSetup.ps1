@@ -160,7 +160,10 @@ function Get-OrCreateSecret([string]$Name) {
         $bytes = New-Object byte[] 32
         $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
         try { $rng.GetBytes($bytes) } finally { $rng.Dispose() }
-        [IO.File]::WriteAllText($path, [Convert]::ToBase64String($bytes))
+        # URL-safe alphabet: this value is interpolated into a connection
+        # URL, and '/' or '+' from standard base64 corrupt it.
+        $secret = [Convert]::ToBase64String($bytes).Replace('+','-').Replace('/','_').TrimEnd('=')
+        [IO.File]::WriteAllText($path, $secret)
         & icacls.exe $path '/inheritance:r' "/grant:r:$env:USERNAME:(R,W)" | Out-Null
     }
     return $path
@@ -433,7 +436,7 @@ services:
   migrate:
     image: $($Manifest.images.server)
     entrypoint: ["/bin/sh", "-ec"]
-    command: ["export NOVA_DATABASE_URL=postgresql://nova:`$(cat /run/secrets/postgres_password)@postgres:5432/nova; python -m migrations migrate"]
+    command: ["export NOVA_DATABASE_URL=postgresql://nova:`$(python -c 'import urllib.parse;print(urllib.parse.quote(open(\"/run/secrets/postgres_password\").read().strip(), safe=\"\"))')@postgres:5432/nova; python -m migrations migrate"]
     secrets: [postgres_password]
     depends_on: { postgres: { condition: service_healthy } }
   whisper:
@@ -456,7 +459,7 @@ $llmEnvironment
   api:
     image: $($Manifest.images.server)
     entrypoint: ["/bin/sh", "-ec"]
-    command: ["export NOVA_DATABASE_URL=postgresql://nova:`$(cat /run/secrets/postgres_password)@postgres:5432/nova; exec python serve.py"]
+    command: ["export NOVA_DATABASE_URL=postgresql://nova:`$(python -c 'import urllib.parse;print(urllib.parse.quote(open(\"/run/secrets/postgres_password\").read().strip(), safe=\"\"))')@postgres:5432/nova; exec python serve.py"]
     environment:
       NOVA_ENV: development
       NOVA_REDIS_URL: redis://redis:6379/0
