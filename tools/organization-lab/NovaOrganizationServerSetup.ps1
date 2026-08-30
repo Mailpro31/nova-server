@@ -30,9 +30,16 @@ function Initialize-Directories {
 }
 
 function Write-SafeLog([string]$Message) {
-    Initialize-Directories
-    $clean = $Message -replace '(?i)(password|token|secret|credential)\s*[=:]\s*\S+', '$1=[REDACTED]'
-    Add-Content -LiteralPath $script:LogPath -Value ("{0:o} {1}" -f (Get-Date), $clean)
+    # Logging must never abort the operation it is describing. This is called
+    # from catch blocks, so a failure to write would otherwise replace the real
+    # error with an unrelated one.
+    try {
+        Initialize-Directories
+        $clean = $Message -replace '(?i)(password|token|secret|credential)\s*[=:]\s*\S+', '$1=[REDACTED]'
+        Add-Content -LiteralPath $script:LogPath -Value ("{0:o} {1}" -f (Get-Date), $clean)
+    } catch {
+        # deliberately swallowed: diagnostics are best effort
+    }
 }
 
 function Run-Captured([string]$File, [string[]]$Arguments) {
@@ -75,6 +82,7 @@ function Get-Hardware {
         NvidiaDriver = $driver; CudaCapability = $cuda
         WslAvailable = ($wsl.ExitCode -eq 0); WslVersion = $wslVersion.Output
         DockerAvailable = ($docker.ExitCode -eq 0); DockerVersion = $docker.Output
+        DockerInstalled = (Test-DockerInstalled); DockerDesktopPath = (Get-DockerDesktopPath)
         ComposeAvailable = ($compose.ExitCode -eq 0); ComposeVersion = $compose.Output
     }
 }
@@ -173,6 +181,94 @@ function Register-Resume {
     New-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce' -Name 'NovaOrganizationServerSetup' -Value $command -PropertyType String -Force | Out-Null
 }
 
+function Get-DockerDesktopPath {
+    $candidates = @(
+        (Join-Path $env:ProgramFiles 'Docker\Docker\Docker Desktop.exe'),
+        (Join-Path ${env:ProgramFiles(x86)} 'Docker\Docker\Docker Desktop.exe'),
+        (Join-Path $env:LOCALAPPDATA 'Docker\Docker Desktop.exe')
+    )
+    foreach ($candidate in $candidates) {
+        if ($candidate -and (Test-Path -LiteralPath $candidate)) { return $candidate }
+    }
+    return $null
+}
+
+function Test-DockerInstalled {
+    # Installed is not the same thing as running. Any one of these is proof that
+    # Docker Desktop is already on the machine, so nothing should be installed.
+    if (Get-DockerDesktopPath) { return $true }
+    if (Get-Service -Name 'com.docker.service' -ErrorAction SilentlyContinue) { return $true }
+    if (Get-Command 'docker.exe' -ErrorAction SilentlyContinue) { return $true }
+    return $false
+}
+
+function Get-DockerServerVersion {
+    $probe = Run-Captured 'docker.exe' @('version','--format','{{.Server.Version}}')
+    if ($probe.ExitCode -eq 0 -and $probe.Output.Trim()) { return $probe.Output.Trim() }
+    return $null
+}
+
+function Start-DockerDesktop {
+    $service = Get-Service -Name 'com.docker.service' -ErrorAction SilentlyContinue
+    if ($service -and $service.Status -ne 'Running') {
+        try { Start-Service -Name 'com.docker.service' -ErrorAction Stop }
+        catch { Write-SafeLog ("docker_service_start_failed {0}" -f $_.Exception.Message) }
+    }
+    $desktop = Get-DockerDesktopPath
+    if (-not $desktop) { return $false }
+    if (-not (Get-Process -Name 'Docker Desktop' -ErrorAction SilentlyContinue)) {
+        try { Start-Process -FilePath $desktop | Out-Null }
+        catch { Write-SafeLog ("docker_desktop_start_failed {0}" -f $_.Exception.Message); return $false }
+    }
+    return $true
+}
+
+function Wait-DockerDaemon([int]$TimeoutMinutes) {
+    $deadline = (Get-Date).AddMinutes($TimeoutMinutes)
+    while ($true) {
+        $version = Get-DockerServerVersion
+        if ($version) { return $version }
+        if ((Get-Date) -gt $deadline) { return $null }
+        Start-Sleep -Seconds 5
+    }
+}
+
+function Ensure-DockerReady([string]$ProfileId) {
+    # 1. The daemon already answers. Docker is ready by definition; install nothing.
+    $version = Get-DockerServerVersion
+    if ($version) { Write-SafeLog "docker_ready_existing version=$version"; return "ready:$version" }
+
+    # 2. Installed but not answering: start it and wait, never reinstall.
+    if (Test-DockerInstalled) {
+        Write-SafeLog 'docker_installed_daemon_down starting'
+        Start-DockerDesktop | Out-Null
+        $version = Wait-DockerDaemon 5
+        if ($version) { Write-SafeLog "docker_started version=$version"; return "started:$version" }
+        Register-Resume
+        throw 'DOCKER_PRESENT_BUT_DAEMON_NOT_RESPONDING'
+    }
+
+    # 3. Genuinely absent: install it.
+    if (-not (Get-Command winget.exe -ErrorAction SilentlyContinue)) { throw 'WINGET_REQUIRED' }
+    Save-State 'docker-install' $ProfileId
+    $result = Run-Captured 'winget.exe' @('install','--id','Docker.DockerDesktop','--exact','--silent','--accept-package-agreements','--accept-source-agreements')
+    if ($result.ExitCode -ne 0) {
+        # winget reports "already installed" and "no applicable upgrade" as
+        # failures. Those mean Docker is present, so re-detect before deciding
+        # rather than aborting on the exit code alone.
+        Write-SafeLog ("winget_docker_exit={0}" -f $result.ExitCode)
+        if (-not (Test-DockerInstalled)) {
+            throw "DOCKER_INSTALL_FAILED: winget exit $($result.ExitCode). $($result.Output)"
+        }
+        Write-SafeLog 'winget_reported_failure_but_docker_present continuing'
+    }
+    Start-DockerDesktop | Out-Null
+    $version = Wait-DockerDaemon 5
+    if ($version) { Write-SafeLog "docker_installed version=$version"; return "installed:$version" }
+    Register-Resume
+    throw 'DOCKER_INSTALLED_STARTUP_PENDING'
+}
+
 function Ensure-Prerequisites($Hardware, [string]$ProfileId) {
     if (-not [Environment]::Is64BitOperatingSystem) { throw 'WINDOWS_X64_REQUIRED' }
     if (-not $Hardware.Virtualization) { throw 'VIRTUALIZATION_DISABLED_IN_FIRMWARE' }
@@ -183,21 +279,12 @@ function Ensure-Prerequisites($Hardware, [string]$ProfileId) {
         Register-Resume
         return 'reboot-required'
     }
-    if (-not (Get-Command winget.exe -ErrorAction SilentlyContinue)) { throw 'WINGET_REQUIRED' }
-    if (-not $Hardware.DockerAvailable) {
-        Save-State 'docker-install' $ProfileId
-        $result = Run-Captured 'winget.exe' @('install','--id','Docker.DockerDesktop','--exact','--silent','--accept-package-agreements','--accept-source-agreements')
-        if ($result.ExitCode -ne 0) { throw "DOCKER_INSTALL_FAILED: $($result.Output)" }
-        $desktop = Join-Path $env:ProgramFiles 'Docker\Docker\Docker Desktop.exe'
-        if (Test-Path $desktop) { Start-Process -FilePath $desktop }
-        $deadline = (Get-Date).AddMinutes(5)
-        do { Start-Sleep -Seconds 5; $probe = Run-Captured 'docker.exe' @('version','--format','{{.Server.Version}}') } until ($probe.ExitCode -eq 0 -or (Get-Date) -gt $deadline)
-        if ($probe.ExitCode -ne 0) {
-            Register-Resume
-            throw 'DOCKER_INSTALLED_STARTUP_PENDING'
-        }
-    }
-    if (-not $Hardware.ComposeAvailable) { throw 'DOCKER_COMPOSE_UNAVAILABLE' }
+    Ensure-DockerReady $ProfileId | Out-Null
+
+    # Re-probe compose now that the daemon is up: the value captured during
+    # hardware detection predates starting or installing Docker.
+    $compose = Run-Captured 'docker.exe' @('compose','version','--short')
+    if ($compose.ExitCode -ne 0) { throw 'DOCKER_COMPOSE_UNAVAILABLE' }
     return 'ready'
 }
 
@@ -385,6 +472,30 @@ function Restore-PreviousConfiguration {
     return $true
 }
 
+function Get-FailureAdvice([string]$Message) {
+    switch -Regex ($Message) {
+        '^DOCKER_PRESENT_BUT_DAEMON_NOT_RESPONDING' {
+            return "Docker Desktop est installe mais son moteur ne repond pas.`nOuvrez Docker Desktop, attendez l etat 'Engine running', puis relancez l installation." }
+        '^DOCKER_INSTALLED_STARTUP_PENDING' {
+            return "Docker Desktop a ete installe mais n a pas fini de demarrer.`nUn redemarrage peut etre necessaire; l installation reprendra automatiquement." }
+        '^DOCKER_INSTALL_FAILED' {
+            return "L installation de Docker Desktop a echoue.`nInstallez Docker Desktop manuellement, demarrez-le, puis relancez cet installateur." }
+        '^DOCKER_COMPOSE_UNAVAILABLE' {
+            return "Docker fonctionne mais 'docker compose' est indisponible.`nMettez Docker Desktop a jour." }
+        '^WINGET_REQUIRED' {
+            return "winget est requis pour installer Docker Desktop.`nInstallez 'App Installer' depuis le Microsoft Store, ou installez Docker Desktop manuellement." }
+        '^WSL_INSTALL_FAILED' {
+            return "L installation de WSL2 a echoue.`nVerifiez Windows Update, puis relancez." }
+        '^VIRTUALIZATION_DISABLED_IN_FIRMWARE' {
+            return "La virtualisation est desactivee dans le BIOS/UEFI.`nActivez SVM (AMD) ou VT-x (Intel), puis relancez." }
+        '^OCI_' {
+            return "La verification cryptographique d une image a echoue.`nAucune image non verifiee n a ete installee. Relancez; si l erreur persiste, signalez ce code." }
+        '^MANIFEST_' {
+            return "Le manifeste de release n a pas pu etre verifie.`nAucune installation n a eu lieu. Verifiez la connexion, puis relancez." }
+        default { return '' }
+    }
+}
+
 function Show-Result([string]$Title, [string]$Text, [bool]$Error = $false) {
     if ($Headless) { Write-Output $Text; return }
     Add-Type -AssemblyName System.Windows.Forms
@@ -456,6 +567,8 @@ try {
     }
 } catch {
     Write-SafeLog ("failure code={0}" -f $_.Exception.Message)
-    Show-Result 'Nova Organization Server — Installation interrompue' ("{0}`n`nAucun fallback cloud n a ete utilise. Ouvrez Diagnostics ou reessayez." -f $_.Exception.Message) $true
+    $advice = Get-FailureAdvice $_.Exception.Message
+    $detail = if ($advice) { "{0}`n`n{1}" -f $_.Exception.Message, $advice } else { $_.Exception.Message }
+    Show-Result 'Nova Organization Server — Installation interrompue' ("{0}`n`nAucun fallback cloud n a ete utilise. Ouvrez Diagnostics ou reessayez." -f $detail) $true
     exit 1
 }

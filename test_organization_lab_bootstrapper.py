@@ -222,3 +222,79 @@ def test_image_verifier_checks_manifest_config_and_layers():
     assert "layer {index} hashes to" in verifier
     assert "is an image index, not a platform manifest" in verifier
     assert "REQUIRED_NOVA_IMAGES" in verifier
+
+
+def test_docker_detection_does_not_depend_only_on_the_daemon():
+    # DockerAvailable is "docker version" succeeding, which needs the daemon.
+    # With Docker Desktop installed but stopped that is false, and the installer
+    # used to run winget, get "already installed / no upgrade available" back as
+    # a non-zero exit, and throw DOCKER_INSTALL_FAILED.
+    source = setup_source()
+    assert "function Test-DockerInstalled" in source
+    assert "Get-DockerDesktopPath" in source
+    assert "com.docker.service" in source
+    assert "Get-Command 'docker.exe'" in source
+
+
+def test_winget_install_runs_only_when_docker_is_absent():
+    source = setup_source()
+    body = source[source.index("function Ensure-DockerReady"):]
+    body = body[:body.index("\nfunction ")]
+    installed_branch = body.index("if (Test-DockerInstalled)")
+    winget_install = body.index("winget.exe' @('install'")
+    assert installed_branch < winget_install, (
+        "the installed-already branch must short-circuit before any install")
+    # and the daemon probe comes before both
+    assert body.index("Get-DockerServerVersion") < installed_branch
+
+
+def test_winget_failure_is_rechecked_before_being_fatal():
+    source = setup_source()
+    body = source[source.index("function Ensure-DockerReady"):]
+    body = body[:body.index("\nfunction ")]
+    recheck = body.index("if (-not (Test-DockerInstalled)) {")
+    fatal = body.index("DOCKER_INSTALL_FAILED")
+    assert recheck < fatal, "a non-zero winget exit must be re-detected, not thrown straight away"
+
+
+def test_docker_is_started_and_awaited():
+    source = setup_source()
+    assert "function Start-DockerDesktop" in source
+    assert "function Wait-DockerDaemon" in source
+    assert "Start-Service -Name 'com.docker.service'" in source
+    assert "DOCKER_PRESENT_BUT_DAEMON_NOT_RESPONDING" in source
+
+
+def test_compose_is_reprobed_after_docker_becomes_ready():
+    source = setup_source()
+    body = source[source.index("function Ensure-Prerequisites"):]
+    body = body[:body.index("\nfunction ")]
+    # the stale hardware snapshot must no longer decide this
+    assert "$Hardware.ComposeAvailable" not in body
+    assert body.index("Ensure-DockerReady") < body.index("'compose','version','--short'")
+
+
+def test_failures_carry_user_facing_advice():
+    source = setup_source()
+    assert "function Get-FailureAdvice" in source
+    for code in ("DOCKER_PRESENT_BUT_DAEMON_NOT_RESPONDING", "DOCKER_INSTALL_FAILED",
+                 "DOCKER_INSTALLED_STARTUP_PENDING", "WINGET_REQUIRED",
+                 "VIRTUALIZATION_DISABLED_IN_FIRMWARE"):
+        assert code in source
+    assert "Get-FailureAdvice $_.Exception.Message" in source
+
+
+def test_logging_cannot_abort_the_installation():
+    source = setup_source()
+    body = source[source.index("function Write-SafeLog"):]
+    body = body[:body.index("\nfunction ")]
+    assert "try {" in body and "catch {" in body, (
+        "Write-SafeLog is called from catch blocks; it must not raise")
+
+
+def test_supply_chain_checks_survive_the_docker_changes():
+    source = setup_source()
+    for code in ("MANIFEST_ORIGIN_NOT_PINNED", "MANIFEST_SIGNATURE_INVALID",
+                 "RELEASE_PUBLIC_KEY_NOT_CONFIGURED", "OCI_DIGEST_VERIFICATION_FAILED",
+                 "OCI_REFERENCE_NOT_IMMUTABLE", "OCI_PLATFORM_UNEXPECTED"):
+        assert code in source
