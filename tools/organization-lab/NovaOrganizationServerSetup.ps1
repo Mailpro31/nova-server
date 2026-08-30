@@ -12,7 +12,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$script:Version = '0.1.0'
+$script:Version = '0.4.0'
 $script:Root = Join-Path $env:ProgramData 'Nova\OrganizationServer'
 $script:StatePath = Join-Path $script:Root 'setup-state.json'
 $script:LogPath = Join-Path $script:Root 'logs\setup.log'
@@ -365,10 +365,52 @@ function Import-ReleaseImages($Manifest, $Profile) {
     }
 }
 
-function Write-LabCompose($Manifest, $Profile) {
+function Resolve-LlmRuntimeMode($Profile) {
+    # Ask the GPU, do not assume. The probe ships inside the pinned language
+    # image and runs on the client's real card before anything is configured.
+    $image = $Profile.language.image
+    $probe = Run-Captured 'docker.exe' @(
+        'run','--rm','--gpus','all','--network','none',
+        '--entrypoint','python3',$image,'/opt/nova/nova-llm-compat.py')
+
+    $json = $null
+    foreach ($line in ($probe.Output -split "`n")) {
+        $candidate = $line.Trim()
+        if ($candidate.StartsWith('{') -and $candidate.EndsWith('}')) {
+            try { $json = $candidate | ConvertFrom-Json } catch { }
+        }
+    }
+    if (-not $json) { throw 'LLM_COMPAT_PROBE_FAILED' }
+
+    Write-SafeLog ("llm_compat gpu={0} cc={1} vram={2} uva_default={3} mode={4}" -f `
+        $json.gpu, $json.compute_capability, $json.vram_mib, $json.uva_available_by_default, $json.mode)
+
+    if ($probe.ExitCode -ne 0 -or -not $json.mode) {
+        # Fail closed. No remote or cloud runtime is ever substituted.
+        if ($json.error -eq 'NO_CUDA_GPU') { throw 'LLM_GPU_NOT_VISIBLE_TO_DOCKER' }
+        if ($json.error -eq 'COMPUTE_CAPABILITY_TOO_LOW') { throw "LLM_GPU_TOO_OLD: $($json.compute_capability)" }
+        throw 'LLM_RUNTIME_INCOMPATIBLE'
+    }
+
+    switch ($json.mode) {
+        # Preferred: the runner that needs no UVA at all, so the WSL2 pinned
+        # memory restriction cannot apply.
+        'no_uva'     { return @{ Mode = 'no_uva';     Environment = @{ 'VLLM_USE_V2_MODEL_RUNNER' = '0' } } }
+        # Only reachable when the probe actually exercised pinned memory and the
+        # accelerator view UvaBuffer relies on.
+        'uva_pinned' { return @{ Mode = 'uva_pinned'; Environment = @{ 'VLLM_WSL2_ENABLE_PIN_MEMORY' = '1' } } }
+        default      { throw "LLM_RUNTIME_MODE_UNKNOWN: $($json.mode)" }
+    }
+}
+
+function Write-LabCompose($Manifest, $Profile, $Runtime) {
     Initialize-Directories
     $dbSecret = Get-OrCreateSecret 'postgres-password.txt'
     $orgId = 'org-' + ([Guid]::NewGuid().ToString('N'))
+    if (-not $Runtime -or -not $Runtime.Mode) { throw 'LLM_RUNTIME_NOT_RESOLVED' }
+    $llmEnvironment = (($Runtime.Environment.GetEnumerator() | Sort-Object Name | ForEach-Object {
+        '      {0}: "{1}"' -f $_.Key, $_.Value
+    }) -join "`n")
     $deploymentId = 'dpl-' + ([Guid]::NewGuid().ToString('N'))
     $compose = @"
 name: nova-organization-lab
@@ -403,7 +445,12 @@ services:
     restart: unless-stopped
   llm:
     image: $($Profile.language.image)
-    command: ["--model", "$($Profile.language.model_path)", "--max-model-len", "$($Profile.language.max_model_len)", "--gpu-memory-utilization", "$($Profile.language.gpu_memory_utilization)"]
+    # --served-model-name matters: without it vLLM advertises the model under
+    # its on-disk path, while the API asks for NOVA_AI_TEXT_MODEL, and every
+    # completion comes back 404.
+    command: ["--model", "$($Profile.language.model_path)", "--served-model-name", "$($Profile.language.model_id)", "--max-model-len", "$($Profile.language.max_model_len)", "--gpu-memory-utilization", "$($Profile.language.gpu_memory_utilization)"]
+    environment:
+$llmEnvironment
     gpus: all
     restart: unless-stopped
   api:
@@ -480,6 +527,14 @@ function Get-FailureAdvice([string]$Message) {
             return "Docker Desktop a ete installe mais n a pas fini de demarrer.`nUn redemarrage peut etre necessaire; l installation reprendra automatiquement." }
         '^DOCKER_INSTALL_FAILED' {
             return "L installation de Docker Desktop a echoue.`nInstallez Docker Desktop manuellement, demarrez-le, puis relancez cet installateur." }
+        '^LLM_RUNTIME_INCOMPATIBLE' {
+            return "Aucun runtime IA local compatible avec ce GPU n a ete trouve.`nL installation s arrete: aucun service cloud n est utilise en remplacement." }
+        '^LLM_GPU_NOT_VISIBLE_TO_DOCKER' {
+            return "Docker ne voit pas la carte NVIDIA.`nMettez a jour le pilote NVIDIA, activez le support GPU dans Docker Desktop, puis relancez." }
+        '^LLM_GPU_TOO_OLD' {
+            return "Ce GPU est trop ancien pour le runtime IA local (calcul 7.5 minimum).`nAucun service cloud n est utilise en remplacement." }
+        '^LLM_COMPAT_PROBE_FAILED' {
+            return "Le test de compatibilite GPU n a pas pu s executer.`nVerifiez que Docker Desktop expose le GPU, puis relancez." }
         '^DOCKER_COMPOSE_UNAVAILABLE' {
             return "Docker fonctionne mais 'docker compose' est indisponible.`nMettez Docker Desktop a jour." }
         '^WINGET_REQUIRED' {
@@ -514,7 +569,10 @@ function Invoke-Install {
     $releaseProfile = @($manifest.profiles | Where-Object { $_.id -eq $profile.id })[0]
     if (-not $releaseProfile) { throw 'PROFILE_NOT_IN_SIGNED_RELEASE_MANIFEST' }
     Import-ReleaseImages $manifest $releaseProfile
-    $compose = Write-LabCompose $manifest $releaseProfile
+    # Decided on the real GPU, after the verified image is on disk and before
+    # any configuration is written.
+    $runtime = Resolve-LlmRuntimeMode $releaseProfile
+    $compose = Write-LabCompose $manifest $releaseProfile $runtime
     Save-State 'starting' $profile.id $manifest.release_id
     try {
         Invoke-Compose @('up','-d') | Out-Null
@@ -528,7 +586,7 @@ function Invoke-Install {
         throw
     }
     Save-State 'ready' $profile.id $manifest.release_id
-    Show-Result 'Nova Organization Server — READY' "Organization: $OrganizationName`nProfile: $($profile.id)`nNova API: http://127.0.0.1:8080`nPostgreSQL, Redis, Speech, Language and Nova Server are running."
+    Show-Result 'Nova Organization Server — READY' "Organization: $OrganizationName`nProfile: $($profile.id)`nNova API: http://127.0.0.1:8080`nLanguage runtime: $($runtime.Mode)`nPostgreSQL, Redis, Speech, Language and Nova Server are running."
 }
 
 if ($LibraryMode) { return }

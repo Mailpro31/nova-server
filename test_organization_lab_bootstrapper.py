@@ -298,3 +298,129 @@ def test_supply_chain_checks_survive_the_docker_changes():
                  "RELEASE_PUBLIC_KEY_NOT_CONFIGURED", "OCI_DIGEST_VERIFICATION_FAILED",
                  "OCI_REFERENCE_NOT_IMMUTABLE", "OCI_PLATFORM_UNEXPECTED"):
         assert code in source
+
+
+# --- LLM runtime compatibility -------------------------------------------------
+#
+# vLLM 0.28's default model runner allocates UvaBuffer, which raises
+# "UVA is not available" whenever vLLM reports pinned memory unavailable. vLLM
+# disables pinned memory under WSL2 by default, and Docker Desktop always runs
+# under WSL2, so the engine could not start on the RTX 2060 at all.
+
+def compat_probe_source():
+    return (ROOT / "images" / "nova-llm-compat.py").read_text(encoding="utf-8")
+
+
+def workflow_source():
+    return (Path(__file__).parent / ".github" / "workflows"
+            / "organization-lab-release.yml").read_text(encoding="utf-8")
+
+
+def test_the_runtime_mode_is_probed_on_the_real_gpu_before_anything_is_written():
+    source = setup_source()
+    body = source[source.index("function Invoke-Install"):]
+    assert body.index("Resolve-LlmRuntimeMode") < body.index("Write-LabCompose"), (
+        "the GPU must decide the runtime before any configuration is generated")
+    probe = source[source.index("function Resolve-LlmRuntimeMode"):]
+    probe = probe[:probe.index("\nfunction ")]
+    # the probe runs the pinned language image against the real card
+    assert "'--gpus','all'" in probe
+    assert "nova-llm-compat.py" in probe
+
+
+def test_vllm_is_never_selected_when_no_local_mode_works():
+    probe = setup_source()[setup_source().index("function Resolve-LlmRuntimeMode"):]
+    probe = probe[:probe.index("\nfunction ")]
+    assert "LLM_RUNTIME_INCOMPATIBLE" in probe
+    assert "LLM_GPU_NOT_VISIBLE_TO_DOCKER" in probe
+    assert "LLM_GPU_TOO_OLD" in probe
+    # fail closed: an unrecognised mode is refused rather than guessed at
+    assert "LLM_RUNTIME_MODE_UNKNOWN" in probe
+
+
+def test_the_probe_offers_no_remote_runtime():
+    probe = compat_probe_source()
+    for forbidden in ("openai.com", "anthropic.com", "api_key", "http://", "https://"):
+        assert forbidden not in probe, f"the compatibility probe must stay local: {forbidden}"
+    # exactly two local modes, ordered UVA-free first
+    assert 'MODES = ("no_uva", "uva_pinned")' in probe
+
+
+def test_the_uva_mode_is_only_offered_after_a_real_memory_check():
+    probe = compat_probe_source()
+    body = probe[probe.index("def _probe_uva_pinned"):]
+    body = body[:body.index("\nPROBES")]
+    # it must actually allocate and read back, not merely consult a flag
+    assert "pin_memory=True" in body
+    assert "get_accelerator_view_from_cpu_tensor" in body
+    assert "did not observe the host write" in body
+
+
+def test_the_no_uva_mode_is_refused_if_vllm_drops_the_opt_out():
+    body = compat_probe_source()
+    body = body[body.index("def _probe_no_uva"):]
+    body = body[:body.index("\ndef _probe_uva_pinned")]
+    assert "VLLM_USE_V2_MODEL_RUNNER" in body
+    assert "is not supported by this vLLM build" in body
+
+
+def test_the_resolved_mode_reaches_the_llm_service():
+    source = setup_source()
+    compose = source[source.index("function Write-LabCompose"):]
+    compose = compose[:compose.index("\n    $path = Join-Path")]
+    assert "$llmEnvironment" in compose
+    assert "LLM_RUNTIME_NOT_RESOLVED" in compose, (
+        "compose must refuse to render without a probed runtime mode")
+    assert "VLLM_USE_V2_MODEL_RUNNER" in source
+    assert "VLLM_WSL2_ENABLE_PIN_MEMORY" in source
+
+
+def test_the_language_image_pins_the_verified_vllm_and_ships_the_probe():
+    dockerfile = (ROOT / "images" / "llm.Dockerfile").read_text(encoding="utf-8")
+    froms = [l.strip() for l in dockerfile.splitlines() if l.startswith("FROM ")]
+    assert froms == ["FROM vllm/vllm-openai:v0.28.0"], (
+        "the runtime mode decision is only meaningful against a known vLLM")
+    assert "/opt/nova/nova-llm-compat.py" in dockerfile
+
+
+def test_the_speech_model_is_named_by_path_so_the_client_never_calls_hugging_face():
+    # nova-server sends NOVA_AI_SPEECH_MODEL as the 'model' form field. A bare
+    # name such as 'small' sends faster-whisper to huggingface_hub, which fails
+    # offline and would reach Hugging Face from the client machine.
+    workflow = workflow_source()
+    assert "'model_id': '/models/whisper-small'" in workflow
+    assert "'model_id': 'small'" not in workflow
+    dockerfile = (ROOT / "images" / "whisper.Dockerfile").read_text(encoding="utf-8")
+    assert "WHISPER__MODEL=/models/whisper-small" in dockerfile
+    assert "HF_HUB_OFFLINE=1" in dockerfile
+    assert "GRADIO_ANALYTICS_ENABLED=0" in dockerfile
+
+
+def test_llm_failures_carry_user_facing_advice_and_never_offer_the_cloud():
+    source = setup_source()
+    advice = source[source.index("function Get-FailureAdvice"):]
+    advice = advice[:advice.index("\nfunction ")]
+    for code in ("LLM_RUNTIME_INCOMPATIBLE", "LLM_GPU_NOT_VISIBLE_TO_DOCKER",
+                 "LLM_GPU_TOO_OLD", "LLM_COMPAT_PROBE_FAILED"):
+        assert code in advice
+    assert "aucun service cloud n est utilise en remplacement" in advice
+
+
+def test_supply_chain_checks_survive_the_runtime_changes():
+    source = setup_source()
+    for code in ("MANIFEST_ORIGIN_NOT_PINNED", "MANIFEST_SIGNATURE_INVALID",
+                 "OCI_DIGEST_VERIFICATION_FAILED", "OCI_PLATFORM_UNEXPECTED",
+                 "DOCKER_PRESENT_BUT_DAEMON_NOT_RESPONDING"):
+        assert code in source
+
+
+def test_the_llm_answers_to_the_name_the_api_asks_for():
+    # Without --served-model-name vLLM advertises the on-disk path, while the
+    # API sends NOVA_AI_TEXT_MODEL, and every completion returns 404.
+    source = setup_source()
+    compose = source[source.index("function Write-LabCompose"):]
+    compose = compose[:compose.index("\n    $path = Join-Path")]
+    served = compose.index('"--served-model-name", "$($Profile.language.model_id)"')
+    assert served > 0
+    assert 'NOVA_AI_TEXT_MODEL: "$($Profile.language.model_id)"' in compose, (
+        "the served name and the name the API asks for must be the same field")
