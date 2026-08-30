@@ -1,7 +1,7 @@
 FROM vllm/vllm-openai:latest
 
 ARG LLM_MODEL=Qwen/Qwen2.5-1.5B-Instruct-AWQ
-RUN python -c "from huggingface_hub import snapshot_download; snapshot_download('${LLM_MODEL}', local_dir='/models/qwen2.5-1.5b-instruct-awq')"
+RUN python3 -c "from huggingface_hub import snapshot_download; snapshot_download('${LLM_MODEL}', local_dir='/models/qwen2.5-1.5b-instruct-awq')"
 
 ENV HF_HUB_OFFLINE=1 \
     TRANSFORMERS_OFFLINE=1
