@@ -183,3 +183,15 @@ def test_certificate_bootstrap_exposes_only_the_certificate(monkeypatch):
     assert response.body == certificate
     assert response.media_type == "application/pkix-cert"
     assert response.headers["cache-control"] == "no-store"
+
+
+def test_firewall_rule_is_scoped_to_the_selected_lab_interface():
+    """A Public-classified lab LAN works without opening every Public network."""
+    installer = (LAB.parent / "NovaOrganizationServerSetup.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert "Set-LabFirewallRule $script:LabPort $address" in installer
+    assert "-LocalAddress $Address" in installer
+    assert "-InterfaceAlias $interface.InterfaceAlias" in installer
+    assert "-Profile Private" not in installer

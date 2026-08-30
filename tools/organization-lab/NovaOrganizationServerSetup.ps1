@@ -763,14 +763,19 @@ function Invoke-LabCompose([string[]]$Arguments) {
     return $result.Output
 }
 
-function Set-LabFirewallRule([int]$Port) {
-    # Private profile only. A Lab is a LAN experiment; opening it on a public
-    # network profile would follow the machine to places the operator did not
-    # intend.
+function Set-LabFirewallRule([int]$Port, [string]$Address) {
+    # The operator explicitly enabled this one LAN endpoint. Bind the firewall
+    # exception to the exact address and interface chosen for the gateway, not
+    # to a Windows profile: a legitimate lab LAN is sometimes classified
+    # Public, while a profile-wide rule would follow the machine elsewhere.
+    $interface = Get-NetIPAddress -AddressFamily IPv4 -IPAddress $Address -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if (-not $interface) { throw 'LAB_NO_LAN_ADDRESS' }
     $name = 'Nova Organization Lab (TLS)'
     Get-NetFirewallRule -DisplayName $name -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue
     New-NetFirewallRule -DisplayName $name -Direction Inbound -Action Allow `
-        -Protocol TCP -LocalPort $Port -Profile Private -ErrorAction Stop | Out-Null
+        -Protocol TCP -LocalPort $Port -LocalAddress $Address `
+        -InterfaceAlias $interface.InterfaceAlias -Profile Any -ErrorAction Stop | Out-Null
 }
 
 function Enable-Lab {
@@ -794,7 +799,7 @@ function Enable-Lab {
     $settings | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $script:LabRoot 'lab.json') -Encoding UTF8
 
     Write-LabCompose $manifest $settings | Out-Null
-    Set-LabFirewallRule $script:LabPort
+    Set-LabFirewallRule $script:LabPort $address
     Invoke-LabCompose @('up','-d') | Out-Null
 
     $fingerprint = Wait-LabCertificate 60
