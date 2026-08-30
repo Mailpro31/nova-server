@@ -439,3 +439,99 @@ def test_the_database_password_cannot_break_the_connection_url():
         "migrate and api must both percent-encode the password")
     assert "postgresql://nova:`$(cat /run/secrets/postgres_password)" not in source, (
         "the raw secret must never be interpolated into the URL")
+
+
+# --- compose output interpretation ---------------------------------------------
+#
+# `COMPOSE_FAILED: Container nova-organization-lab-postgres-1 Running` on a
+# container that was genuinely running, and the same for Whisper before it.
+# $ErrorActionPreference is 'Stop' script-wide, and under 'Stop' a `2>&1`
+# redirection on a native command turns the FIRST stderr line into a terminating
+# NativeCommandError. Run-Captured's catch then returned exit code 127 and that
+# line as the message, so the real exit code was never read -- and docker compose
+# writes all of its progress to stderr.
+
+def test_stderr_from_a_successful_command_is_not_a_failure():
+    body = setup_source()
+    body = body[body.index("function Run-Captured"):]
+    body = body[:body.index("\nfunction ")]
+    assert "$ErrorActionPreference = 'Continue'" in body, (
+        "under 'Stop', the first stderr line aborts the call before the exit "
+        "code can be read")
+    assert "$code = $LASTEXITCODE" in body
+    # the old shape must be gone
+    assert "$text = & $File @Arguments 2>&1 | Out-String" not in body
+
+
+def test_compose_success_is_decided_by_the_exit_code_alone():
+    body = setup_source()
+    body = body[body.index("function Invoke-Compose"):]
+    body = body[:body.index("\nfunction ")]
+    assert "if ($result.ExitCode -ne 0)" in body
+    # nothing may test the text of compose's output to decide success
+    for forbidden in ("Running", "-match", "Select-String"):
+        assert forbidden not in body, (
+            "compose progress text must never decide success: " + forbidden)
+
+
+def test_running_and_healthy_are_never_failures():
+    # postgres and redis declare healthchecks; whisper, llm and api do not.
+    # Both shapes must count as up.
+    body = setup_source()
+    body = body[body.index("function ConvertTo-ServiceState"):]
+    body = body[:body.index("\nfunction ")]
+    assert "'healthy'   { 'healthy' }" in body
+    assert "'starting'  { 'starting' }" in body
+    assert "'unhealthy' { 'unhealthy' }" in body
+    # a running container with no healthcheck -- whisper, the first false failure
+    assert "default     { 'running' }" in body
+    # a container that exited 0 -- migrate, which is meant to end
+    assert "'exited'     { if ($exit -eq 0) { 'completed' } else { 'failed' } }" in body
+
+
+def test_the_state_comes_from_docker_inspect():
+    body = setup_source()
+    body = body[body.index("function Get-ServiceState"):]
+    body = body[:body.index("\nfunction ")]
+    assert "'inspect','--format'" in body
+    assert "{{.State.Status}}" in body
+    assert "{{.State.ExitCode}}" in body
+    assert ".State.Health" in body
+
+
+def test_the_installer_waits_for_services_before_asking_the_api():
+    body = setup_source()
+    install = body[body.index("function Invoke-Install"):]
+    assert install.index("Invoke-Compose @('up','-d')") < install.index("Wait-ComposeServices"), (
+        "the wait belongs after the up")
+    assert install.index("Wait-ComposeServices") < install.index("Get-Health"), (
+        "container state is checked before the HTTP health probe")
+
+
+def test_logs_are_read_only_for_a_container_that_actually_broke():
+    body = setup_source()
+    body = body[body.index("function Wait-ComposeServices"):]
+    body = body[:body.index("\nfunction ")]
+    logs = body.index("'logs','--tail'")
+    guard = body.index("if ($broken.Count -gt 0)")
+    assert guard < logs, "logs must be collected only inside the failure branch"
+    # starting is patience, not failure
+    assert "'starting'  { $pending += $name }" in body
+    assert "SERVICE_START_TIMEOUT" in body
+
+
+def test_service_failures_carry_advice():
+    body = setup_source()
+    advice = body[body.index("function Get-FailureAdvice"):]
+    advice = advice[:advice.index("\nfunction ")]
+    for code in ("SERVICE_FAILED", "SERVICE_START_TIMEOUT",
+                 "COMPOSE_NO_CONTAINERS", "COMPOSE_FAILED"):
+        assert code in advice
+
+
+def test_supply_chain_and_runtime_checks_survive_the_compose_changes():
+    body = setup_source()
+    for code in ("MANIFEST_ORIGIN_NOT_PINNED", "MANIFEST_SIGNATURE_INVALID",
+                 "OCI_DIGEST_VERIFICATION_FAILED", "OCI_PLATFORM_UNEXPECTED",
+                 "LLM_RUNTIME_INCOMPATIBLE", "DOCKER_PRESENT_BUT_DAEMON_NOT_RESPONDING"):
+        assert code in body
