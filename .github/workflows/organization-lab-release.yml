@@ -83,6 +83,32 @@ jobs:
           if ($hash -notmatch '^[a-f0-9]{64}$') { throw 'Installer hash is invalid.' }
           "sha256=$hash" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           Write-Output "Installer SHA-256: $hash"
+      - name: Run the compiled installer in a clean directory
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # The installer requests administrator elevation in its manifest, which
+          # hosted Windows runners already satisfy. selftest reads the embedded
+          # release key and exits; it touches no network and no install location.
+          $resultDir = Join-Path ([IO.Path]::GetTempPath()) 'NovaOrganizationServerSelfTest'
+          Remove-Item $resultDir -Recurse -Force -ErrorAction SilentlyContinue
+          $clean = Join-Path $env:RUNNER_TEMP ('nova-cleanroom-' + [Guid]::NewGuid().ToString('N'))
+          New-Item -ItemType Directory -Force -Path $clean | Out-Null
+          Copy-Item tools/organization-lab/dist/NovaOrganizationServerSetup.exe (Join-Path $clean 'NovaOrganizationServerSetup.exe')
+          Push-Location $clean
+          try {
+            & .\NovaOrganizationServerSetup.exe selftest | Out-Null
+            $code = $LASTEXITCODE
+          } finally { Pop-Location }
+          $resultFile = Join-Path $resultDir 'selftest-result.txt'
+          if (-not (Test-Path $resultFile)) { throw "The installer produced no selftest result at $resultFile (exit $code)." }
+          $result = (Get-Content -Raw $resultFile).Trim()
+          Write-Output "exit=$code"
+          Write-Output $result
+          if ($result -match 'RELEASE_PUBLIC_KEY_NOT_CONFIGURED') { throw 'The installer cannot read its embedded release key.' }
+          if ($code -ne 0) { throw "Installer selftest failed with exit code $code." }
+          if ($result -notmatch 'RELEASE_PUBLIC_KEY_OK bits=3072') { throw 'The installer did not confirm the pinned 3072-bit release key.' }
+          if ($result -notmatch 'origin=https://releases\.novaspeak\.app') { throw 'The installer did not report the pinned manifest origin.' }
       - uses: actions/upload-artifact@v4
         with:
           name: organization-lab-${{ inputs.version }}-installer

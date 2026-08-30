@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('install','analyze','resume','status','repair','update','reconfigure')]
+    [ValidateSet('install','analyze','resume','status','repair','update','reconfigure','selftest')]
     [string]$Action = 'install',
     [switch]$Headless,
     [string]$OrganizationName = 'Nova Lab',
@@ -98,8 +98,19 @@ function Select-HardwareProfile($Hardware, $Manifest) {
     return $matches[0]
 }
 
+function Assert-ReleasePublicKeyConfigured {
+    # Deliberately a positive test on the shape of the key rather than a
+    # comparison against the build placeholder: build-installer.ps1 substitutes
+    # every occurrence of that placeholder, so a comparison here would be
+    # rewritten into a comparison of the key against itself and would throw
+    # precisely when the key is correct.
+    if ($ReleasePublicKeyXml -notmatch '<RSAKeyValue>\s*<Modulus>[A-Za-z0-9+/=]{256,}</Modulus>') {
+        throw 'RELEASE_PUBLIC_KEY_NOT_CONFIGURED'
+    }
+}
+
 function Test-ReleaseManifestSignature([byte[]]$Bytes, [string]$SignatureBase64) {
-    if ($ReleasePublicKeyXml -eq '__NOVA_RELEASE_PUBLIC_KEY_XML__') { throw 'RELEASE_PUBLIC_KEY_NOT_CONFIGURED' }
+    Assert-ReleasePublicKeyConfigured
     $rsa = New-Object System.Security.Cryptography.RSACryptoServiceProvider
     try {
         $rsa.PersistKeyInCsp = $false
@@ -389,6 +400,26 @@ function Invoke-Install {
 }
 
 if ($LibraryMode) { return }
+
+if ($Action -eq 'selftest') {
+    try {
+        Assert-ReleasePublicKeyConfigured
+        $rsa = New-Object System.Security.Cryptography.RSACryptoServiceProvider
+        try {
+            $rsa.PersistKeyInCsp = $false
+            $rsa.FromXmlString($ReleasePublicKeyXml)
+            $probe = [Text.Encoding]::UTF8.GetBytes('nova-release-key-selftest')
+            $empty = New-Object byte[] ($rsa.KeySize / 8)
+            $oid = [Security.Cryptography.CryptoConfig]::MapNameToOID('SHA256')
+            if ($rsa.VerifyData($probe, $oid, $empty)) { throw 'RELEASE_PUBLIC_KEY_ACCEPTS_INVALID_SIGNATURE' }
+            Write-Output ('RELEASE_PUBLIC_KEY_OK bits={0} origin={1} installer={2}' -f $rsa.KeySize, $script:AllowedManifestOrigin, $script:Version)
+            exit 0
+        } finally { $rsa.Dispose() }
+    } catch {
+        Write-Output ('SELFTEST_FAILED {0}' -f $_.Exception.Message)
+        exit 1
+    }
+}
 
 try {
     Initialize-Directories
