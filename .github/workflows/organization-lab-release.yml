@@ -71,7 +71,6 @@ jobs:
     runs-on: ubuntu-latest
     environment: organization-lab-release
     steps:
-      - uses: docker/setup-buildx-action@v3
       - name: Validate release inputs and secrets
         env:
           VERSION: ${{ inputs.version }}
@@ -86,10 +85,38 @@ jobs:
         id: dependencies
         run: |
           set -euo pipefail
-          postgres=$(docker buildx imagetools inspect docker.io/library/postgres:16-alpine | awk '/^Digest:/ {print $2; exit}')
-          redis=$(docker buildx imagetools inspect docker.io/library/redis:7-alpine | awk '/^Digest:/ {print $2; exit}')
-          [[ "$postgres" =~ ^sha256:[a-f0-9]{64}$ ]]
-          [[ "$redis" =~ ^sha256:[a-f0-9]{64}$ ]]
+          resolve_digest() {
+            repo="$1"; tag="$2"
+            headers="$(mktemp)"; body="$(mktemp)"
+            for attempt in 1 2 3 4 5; do
+              if curl -fsS --max-time 30 -o "$body" \
+                "https://auth.docker.io/token?service=registry.docker.io&scope=repository:${repo}:pull"; then
+                token=$(sed -n 's/.*"token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$body")
+                if [ -n "$token" ] && curl -fsS --max-time 30 -o /dev/null -D "$headers" \
+                  -H "Authorization: Bearer ${token}" \
+                  -H 'Accept: application/vnd.oci.image.index.v1+json' \
+                  -H 'Accept: application/vnd.docker.distribution.manifest.list.v2+json' \
+                  -H 'Accept: application/vnd.docker.distribution.manifest.v2+json' \
+                  "https://registry-1.docker.io/v2/${repo}/manifests/${tag}"; then
+                  digest=$(tr -d '\r' < "$headers" | awk 'tolower($1) == "docker-content-digest:" {print $2}' | head -n 1)
+                  if printf '%s' "$digest" | grep -qE '^sha256:[a-f0-9]{64}$'; then
+                    rm -f "$headers" "$body"
+                    printf '%s' "$digest"
+                    return 0
+                  fi
+                fi
+              fi
+              echo "Digest resolution failed for ${repo}:${tag} (attempt ${attempt})" >&2
+              sleep $(( attempt * 5 ))
+            done
+            rm -f "$headers" "$body"
+            echo "DEPENDENCY_DIGEST_UNRESOLVED: ${repo}:${tag}" >&2
+            return 1
+          }
+          postgres=$(resolve_digest library/postgres 16-alpine)
+          redis=$(resolve_digest library/redis 7-alpine)
+          echo "Resolved postgres:16-alpine $postgres"
+          echo "Resolved redis:7-alpine $redis"
           echo "postgres=$postgres" >> "$GITHUB_OUTPUT"
           echo "redis=$redis" >> "$GITHUB_OUTPUT"
       - name: Generate signed public manifest
