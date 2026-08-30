@@ -66,8 +66,32 @@ jobs:
           push: true
           tags: ghcr.io/mailpro31/nova-quick-lab-language:${{ inputs.version }}
 
+  installer:
+    runs-on: windows-latest
+    outputs:
+      sha256: ${{ steps.build.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: build
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & tools/organization-lab/build-installer.ps1
+          $exe = 'tools/organization-lab/dist/NovaOrganizationServerSetup.exe'
+          if (-not (Test-Path $exe)) { throw 'Installer build produced no executable.' }
+          $hash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -notmatch '^[a-f0-9]{64}$') { throw 'Installer hash is invalid.' }
+          "sha256=$hash" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Output "Installer SHA-256: $hash"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: organization-lab-${{ inputs.version }}-installer
+          path: tools/organization-lab/dist/NovaOrganizationServerSetup.exe
+          retention-days: 90
+          if-no-files-found: error
+
   publish:
-    needs: [server, speech, language]
+    needs: [server, speech, language, installer]
     runs-on: ubuntu-latest
     environment: organization-lab-release
     steps:
@@ -119,6 +143,20 @@ jobs:
           echo "Resolved redis:7-alpine $redis"
           echo "postgres=$postgres" >> "$GITHUB_OUTPUT"
           echo "redis=$redis" >> "$GITHUB_OUTPUT"
+      - name: Stage the Windows installer for publication
+        uses: actions/download-artifact@v4
+        with:
+          name: organization-lab-${{ inputs.version }}-installer
+          path: release-site/public/server/quick-lab
+      - name: Verify the staged installer matches the built hash
+        env:
+          INSTALLER_SHA256: ${{ needs.installer.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          exe=release-site/public/server/quick-lab/NovaOrganizationServerSetup.exe
+          test -s "$exe"
+          actual=$(sha256sum "$exe" | awk '{print $1}')
+          test "$actual" = "$INSTALLER_SHA256"
       - name: Generate signed public manifest
         env:
           VERSION: ${{ inputs.version }}
@@ -127,6 +165,7 @@ jobs:
           LANGUAGE_DIGEST: ${{ needs.language.outputs.digest }}
           POSTGRES_DIGEST: ${{ steps.dependencies.outputs.postgres }}
           REDIS_DIGEST: ${{ steps.dependencies.outputs.redis }}
+          INSTALLER_SHA256: ${{ needs.installer.outputs.sha256 }}
           SIGNING_KEY: ${{ secrets.NOVA_RELEASE_SIGNING_KEY_PEM }}
         run: |
           set -euo pipefail
@@ -143,7 +182,12 @@ jobs:
           ]
           manifest = {
             'schema_version': 1, 'release_id': f'quick-lab-{version}',
-            'installer': {'version': version, 'minimum_version': '0.1.0'},
+            'installer': {
+              'version': version, 'minimum_version': '0.1.0',
+              'url': 'https://releases.novaspeak.app/server/quick-lab/NovaOrganizationServerSetup.exe',
+              'sha256': os.environ['INSTALLER_SHA256'],
+              'authenticode_signed': False,
+            },
             'images': {'server': f'nova-local/server:{version}', 'postgres': 'nova-local/postgres:16', 'redis': 'nova-local/redis:7'},
             'artifacts': [{'id': i, 'kind': 'oci_image', 'image': image, 'local_image': local, 'license': license_name} for i, image, local, license_name in artifacts],
             'profiles': [{
