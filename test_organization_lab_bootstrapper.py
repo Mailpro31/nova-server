@@ -95,3 +95,62 @@ def test_logs_redact_sensitive_assignments():
     setup = (ROOT / "NovaOrganizationServerSetup.ps1").read_text(encoding="utf-8")
     assert re.search(r"password\|token\|secret\|credential", setup, re.IGNORECASE)
     assert "[REDACTED]" in setup
+
+
+def build_substituted_setup(key: str = "<RSAKeyValue><Modulus>" + "A" * 512 + "</Modulus><Exponent>AQAB</Exponent></RSAKeyValue>") -> str:
+    """Apply the substitution build-installer.ps1 performs, so the tests below
+    inspect the script as it is actually shipped rather than as it is stored."""
+    source = (ROOT / "NovaOrganizationServerSetup.ps1").read_text(encoding="utf-8")
+    return source.replace("__NOVA_RELEASE_PUBLIC_KEY_XML__", key)
+
+
+def test_release_key_placeholder_has_exactly_one_substitution_site():
+    # The build replaces every occurrence. A second occurrence anywhere means
+    # live logic gets rewritten to contain the key. That is what shipped in
+    # 0.1.0: the guard became a comparison of the key against itself and threw
+    # RELEASE_PUBLIC_KEY_NOT_CONFIGURED precisely when the key was correct.
+    source = (ROOT / "NovaOrganizationServerSetup.ps1").read_text(encoding="utf-8")
+    assert source.count("__NOVA_RELEASE_PUBLIC_KEY_XML__") == 1
+
+
+def test_shipped_guard_does_not_compare_the_key_against_itself():
+    shipped = build_substituted_setup()
+    assert "-eq '<RSAKeyValue>" not in shipped
+    assert "RELEASE_PUBLIC_KEY_NOT_CONFIGURED" in shipped
+
+
+def test_shipped_script_embeds_the_key_exactly_once():
+    key = "<RSAKeyValue><Modulus>" + "A" * 512 + "</Modulus><Exponent>AQAB</Exponent></RSAKeyValue>"
+    assert build_substituted_setup(key).count(key) == 1
+
+
+def test_key_guard_is_a_structural_check_not_a_placeholder_comparison():
+    source = (ROOT / "NovaOrganizationServerSetup.ps1").read_text(encoding="utf-8")
+    assert "function Assert-ReleasePublicKeyConfigured" in source
+    assert "$ReleasePublicKeyXml -notmatch" in source
+    # still fails closed when unbuilt: the placeholder is not a key
+    assert "$ReleasePublicKeyXml -eq '__NOVA_RELEASE_PUBLIC_KEY_XML__'" not in source
+
+
+def test_selftest_action_exists_and_needs_no_network_or_key_file():
+    source = (ROOT / "NovaOrganizationServerSetup.ps1").read_text(encoding="utf-8")
+    assert "'selftest'" in source
+    assert "RELEASE_PUBLIC_KEY_OK" in source
+    # the selftest must run before any privileged directory work
+    assert source.index("$Action -eq 'selftest'") < source.index("try {\n    Initialize-Directories")
+
+
+def test_build_refuses_to_ship_an_installer_without_an_embedded_key():
+    build = (ROOT / "build-installer.ps1").read_text(encoding="utf-8")
+    assert "Expected exactly one release key placeholder" in build
+    assert "Release key placeholder survived substitution." in build
+    assert "Compiled installer compares the release key against itself." in build
+    assert "GetManifestResourceStream('Nova.Setup.ps1')" in build
+
+
+def test_signature_verification_is_not_bypassable():
+    source = (ROOT / "NovaOrganizationServerSetup.ps1").read_text(encoding="utf-8")
+    # the verified-manifest path must still reject a bad signature outright
+    assert "MANIFEST_SIGNATURE_INVALID" in source
+    assert "Assert-ReleasePublicKeyConfigured" in source
+    assert "VerifyData" in source
