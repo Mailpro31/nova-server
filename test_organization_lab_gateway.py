@@ -169,3 +169,17 @@ def test_the_fingerprint_is_the_full_digest_of_the_certificate():
     der = b"a certificate, as bytes"
     assert codes.fingerprint_of(der) == hashlib.sha256(der).digest()
     assert len(codes.fingerprint_of(der)) == 32
+
+
+def test_certificate_bootstrap_exposes_only_the_certificate(monkeypatch):
+    """The unauthenticated bootstrap must not leak an invitation or state."""
+    gateway = _load("nova_lab_gateway")
+    certificate = b"a lab certificate"
+    monkeypatch.setattr(gateway, "ensure_certificate", lambda: certificate)
+
+    response = gateway.lab_certificate()
+
+    assert response.status_code == 200
+    assert response.body == certificate
+    assert response.media_type == "application/pkix-cert"
+    assert response.headers["cache-control"] == "no-store"

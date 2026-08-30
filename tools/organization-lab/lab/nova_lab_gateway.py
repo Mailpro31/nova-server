@@ -170,6 +170,23 @@ def lab_health():
     return {"lab": True, "contract_version": codes.CODE_VERSION}
 
 
+@app.get("/lab/certificate")
+def lab_certificate():
+    """Publish the Lab certificate without publishing an invitation.
+
+    A Desktop first obtains these bytes over an untrusted connection, checks
+    their SHA-256 against the pin carried by its invitation, then creates a
+    TLS client which trusts *only* this certificate.  This endpoint therefore
+    contains no secret: an on-path attacker can replace its response, but can
+    never make the replacement match the invitation's 128-bit pin.
+    """
+    return Response(
+        content=ensure_certificate(),
+        media_type="application/pkix-cert",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @app.post("/lab/enroll")
 def lab_enroll(body: EnrollRequest):
     """Redeem an invitation once, and return what the Desktop needs to join."""
