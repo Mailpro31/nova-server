@@ -424,3 +424,18 @@ def test_the_llm_answers_to_the_name_the_api_asks_for():
     assert served > 0
     assert 'NOVA_AI_TEXT_MODEL: "$($Profile.language.model_id)"' in compose, (
         "the served name and the name the API asks for must be the same field")
+
+
+def test_the_database_password_cannot_break_the_connection_url():
+    # Convert::ToBase64String's alphabet includes '/', which ends the authority
+    # of postgresql://nova:<pw>@postgres:5432/nova. libpq then resolved the host
+    # as 'nova' and the install died -- at random, on about half of all runs.
+    source = setup_source()
+    secret = source[source.index("function Get-OrCreateSecret"):]
+    secret = secret[:secret.index("\nfunction ")]
+    assert ".Replace('+','-').Replace('/','_')" in secret, "new secrets must be URL-safe"
+    # and a password written by an earlier version is encoded at the point of use
+    assert source.count("urllib.parse.quote(open(") == 2, (
+        "migrate and api must both percent-encode the password")
+    assert "postgresql://nova:`$(cat /run/secrets/postgres_password)" not in source, (
+        "the raw secret must never be interpolated into the URL")
