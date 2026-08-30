@@ -109,6 +109,11 @@ jobs:
           if ($code -ne 0) { throw "Installer selftest failed with exit code $code." }
           if ($result -notmatch 'RELEASE_PUBLIC_KEY_OK bits=3072') { throw 'The installer did not confirm the pinned 3072-bit release key.' }
           if ($result -notmatch 'origin=https://releases\.novaspeak\.app') { throw 'The installer did not report the pinned manifest origin.' }
+          # A tool that exits 0 while writing to stderr must not read as failed:
+          # docker compose writes its progress there, which is how a running
+          # PostgreSQL and a running Whisper were both reported as COMPOSE_FAILED.
+          if ($result -notmatch 'COMPOSE_OUTPUT_OK stderr_is_not_failure=1 exit_code_is_read=1') { throw 'The installer still treats stderr as failure.' }
+          if ($result -notmatch 'SERVICE_STATE_OK') { throw 'The installer does not classify container states correctly.' }
       - uses: actions/upload-artifact@v4
         with:
           name: organization-lab-${{ inputs.version }}-installer

@@ -12,7 +12,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$script:Version = '0.4.0'
+$script:Version = '0.4.2'
 $script:Root = Join-Path $env:ProgramData 'Nova\OrganizationServer'
 $script:StatePath = Join-Path $script:Root 'setup-state.json'
 $script:LogPath = Join-Path $script:Root 'logs\setup.log'
@@ -43,11 +43,29 @@ function Write-SafeLog([string]$Message) {
 }
 
 function Run-Captured([string]$File, [string[]]$Arguments) {
+    # Native tools write progress and warnings to stderr. $ErrorActionPreference
+    # is 'Stop' for this script, and under 'Stop' a `2>&1` redirection turns the
+    # FIRST stderr line into a terminating NativeCommandError -- so the exit code
+    # was never read. `docker compose up -d` writes its whole progress log to
+    # stderr, which is why "Container ... Running" surfaced as COMPOSE_FAILED.
+    #
+    # Output on stderr is not failure. Only the exit code is.
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
     try {
-        $text = & $File @Arguments 2>&1 | Out-String
-        return [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = $text.Trim() }
+        $global:LASTEXITCODE = 0
+        $lines = & $File @Arguments 2>&1
+        $code = $LASTEXITCODE
+        if ($null -eq $code) { $code = 0 }
+        $text = (@($lines) | ForEach-Object {
+            if ($_ -is [Management.Automation.ErrorRecord]) { $_.ToString() } else { [string]$_ }
+        }) -join "`n"
+        return [pscustomobject]@{ ExitCode = $code; Output = $text.Trim() }
     } catch {
+        # Reached when the executable itself cannot be started.
         return [pscustomobject]@{ ExitCode = 127; Output = $_.Exception.Message }
+    } finally {
+        $ErrorActionPreference = $previous
     }
 }
 
@@ -498,11 +516,100 @@ x-nova-lab:
     return $path
 }
 
+function ConvertTo-ServiceState([string]$Inspect) {
+    # One line of `docker inspect`: status|health|exitcode. Kept separate from the
+    # docker call so the classification itself is directly testable.
+    $parts = @($Inspect.Trim() -split '\|')
+    if ($parts.Count -lt 3) {
+        return [pscustomobject]@{ State = 'unknown'; Status = $Inspect.Trim(); Health = ''; ExitCode = $null }
+    }
+    $status = $parts[0].Trim(); $health = $parts[1].Trim()
+    $exit = 0; [int]::TryParse($parts[2].Trim(), [ref]$exit) | Out-Null
+    $state = switch ($status) {
+        'created'    { 'starting' }
+        'restarting' { 'starting' }
+        'removing'   { 'failed' }
+        'paused'     { 'failed' }
+        'dead'       { 'failed' }
+        # A container that exited 0 did its job: `migrate` is meant to end.
+        'exited'     { if ($exit -eq 0) { 'completed' } else { 'failed' } }
+        'running'    {
+            switch ($health) {
+                'healthy'   { 'healthy' }
+                'starting'  { 'starting' }
+                'unhealthy' { 'unhealthy' }
+                # No healthcheck declared: running is as good as it gets.
+                default     { 'running' }
+            }
+        }
+        default { 'unknown' }
+    }
+    return [pscustomobject]@{ State = $state; Status = $status; Health = $health; ExitCode = $exit }
+}
+
+function Get-ServiceState([string]$Container) {
+    $probe = Run-Captured 'docker.exe' @('inspect','--format',
+        '{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}|{{.State.ExitCode}}',
+        $Container)
+    if ($probe.ExitCode -ne 0) {
+        return [pscustomobject]@{ State = 'absent'; Status = ''; Health = ''; ExitCode = $null }
+    }
+    return ConvertTo-ServiceState $probe.Output
+}
+
+function Get-LabContainers {
+    $probe = Run-Captured 'docker.exe' @('ps','--all','--filter',
+        'label=com.docker.compose.project=nova-organization-lab','--format','{{.Names}}')
+    if ($probe.ExitCode -ne 0) { return @() }
+    return @($probe.Output -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+}
+
+function Wait-ComposeServices([int]$TimeoutMinutes = 10) {
+    $deadline = (Get-Date).AddMinutes($TimeoutMinutes)
+    while ($true) {
+        $names = Get-LabContainers
+        if ($names.Count -eq 0) { throw 'COMPOSE_NO_CONTAINERS' }
+        $pending = @(); $broken = @()
+        foreach ($name in $names) {
+            $state = Get-ServiceState $name
+            switch ($state.State) {
+                'healthy'   { }
+                'running'   { }
+                'completed' { }
+                'starting'  { $pending += $name }
+                'absent'    { $pending += $name }
+                'unknown'   { $pending += $name }
+                'unhealthy' { $broken += ('{0}: unhealthy' -f $name) }
+                'failed'    { $broken += ('{0}: {1} (exit {2})' -f $name, $state.Status, $state.ExitCode) }
+            }
+        }
+        if ($broken.Count -gt 0) {
+            # Logs are read here and nowhere else: a container that exited with a
+            # non-zero code, or went unhealthy. Running is never a failure.
+            $detail = foreach ($line in $broken) {
+                $container = ($line -split ':')[0]
+                $log = Run-Captured 'docker.exe' @('logs','--tail','40',$container)
+                "{0}`n{1}" -f $line, $log.Output
+            }
+            Write-SafeLog ('service_failed {0}' -f ($broken -join '; '))
+            throw ('SERVICE_FAILED: ' + ($detail -join "`n`n"))
+        }
+        if ($pending.Count -eq 0) {
+            Write-SafeLog ('services_ready count={0}' -f $names.Count)
+            return 'services-ready'
+        }
+        if ((Get-Date) -gt $deadline) { throw ('SERVICE_START_TIMEOUT: ' + ($pending -join ', ')) }
+        Start-Sleep -Seconds 5
+    }
+}
+
 function Invoke-Compose([string[]]$Arguments) {
     $compose = Join-Path $script:Generated 'compose.quick-lab.yml'
     if (-not (Test-Path $compose)) { throw 'LAB_CONFIGURATION_MISSING' }
     $result = Run-Captured 'docker.exe' (@('compose','--file',$compose) + $Arguments)
-    if ($result.ExitCode -ne 0) { throw "COMPOSE_FAILED: $($result.Output)" }
+    # Only the exit code decides. compose reports normal progress on stderr, so
+    # its output says nothing at all about success.
+    if ($result.ExitCode -ne 0) { throw "COMPOSE_FAILED: exit $($result.ExitCode). $($result.Output)" }
     return $result.Output
 }
 
@@ -538,6 +645,14 @@ function Get-FailureAdvice([string]$Message) {
             return "Ce GPU est trop ancien pour le runtime IA local (calcul 7.5 minimum).`nAucun service cloud n est utilise en remplacement." }
         '^LLM_COMPAT_PROBE_FAILED' {
             return "Le test de compatibilite GPU n a pas pu s executer.`nVerifiez que Docker Desktop expose le GPU, puis relancez." }
+        '^SERVICE_FAILED' {
+            return "Un conteneur s est arrete en erreur ou est devenu unhealthy.`nLes journaux du conteneur concerne figurent ci-dessus." }
+        '^SERVICE_START_TIMEOUT' {
+            return "Des conteneurs n ont pas fini de demarrer dans le delai imparti.`nLe premier demarrage charge les modeles et peut etre long; relancez l installation." }
+        '^COMPOSE_NO_CONTAINERS' {
+            return "Aucun conteneur n a ete cree.`nVerifiez que Docker Desktop fonctionne, puis relancez." }
+        '^COMPOSE_FAILED' {
+            return "Docker Compose a retourne un code d erreur.`nLe detail figure ci-dessus; relancez apres correction." }
         '^DOCKER_COMPOSE_UNAVAILABLE' {
             return "Docker fonctionne mais 'docker compose' est indisponible.`nMettez Docker Desktop a jour." }
         '^WINGET_REQUIRED' {
@@ -579,6 +694,9 @@ function Invoke-Install {
     Save-State 'starting' $profile.id $manifest.release_id
     try {
         Invoke-Compose @('up','-d') | Out-Null
+        # Containers first: tell starting from running, healthy, exited and
+        # failed before asking the API anything.
+        Wait-ComposeServices 10 | Out-Null
         $deadline = (Get-Date).AddMinutes(10)
         do { Start-Sleep -Seconds 5; $health = Get-Health } until ($health.Readyz -or (Get-Date) -gt $deadline)
         if (-not $health.Livez) { throw 'NOVA_LIVEZ_FAILED' }
@@ -606,8 +724,44 @@ if ($Action -eq 'selftest') {
             $oid = [Security.Cryptography.CryptoConfig]::MapNameToOID('SHA256')
             if ($rsa.VerifyData($probe, $oid, $empty)) { throw 'RELEASE_PUBLIC_KEY_ACCEPTS_INVALID_SIGNATURE' }
             Write-Output ('RELEASE_PUBLIC_KEY_OK bits={0} origin={1} installer={2}' -f $rsa.KeySize, $script:AllowedManifestOrigin, $script:Version)
-            exit 0
         } finally { $rsa.Dispose() }
+
+        # A tool that exits 0 while writing to stderr must not be read as having
+        # failed. This is what reported "Container ... Running" as COMPOSE_FAILED:
+        # docker compose writes all of its progress to stderr.
+        $noisy = Run-Captured 'cmd.exe' @('/c','echo Container nova-organization-lab-postgres-1 Running 1>&2 & exit /b 0')
+        if ($noisy.ExitCode -ne 0) { throw ('STDERR_TREATED_AS_FAILURE exit={0}' -f $noisy.ExitCode) }
+        $failing = Run-Captured 'cmd.exe' @('/c','exit /b 3')
+        if ($failing.ExitCode -ne 3) { throw ('EXIT_CODE_NOT_REPORTED exit={0}' -f $failing.ExitCode) }
+        Write-Output 'COMPOSE_OUTPUT_OK stderr_is_not_failure=1 exit_code_is_read=1'
+
+        # Running and healthy are not failures; only a non-zero exit or an
+        # unhealthy healthcheck is. postgres and redis declare a healthcheck,
+        # whisper, llm and api do not, and migrate is meant to exit 0.
+        $expected = @{
+            'running|healthy|0'   = 'healthy'
+            'running|none|0'      = 'running'
+            'running|starting|0'  = 'starting'
+            'running|unhealthy|0' = 'unhealthy'
+            'exited|none|0'       = 'completed'
+            'exited|none|1'       = 'failed'
+        }
+        foreach ($case in $expected.Keys) {
+            $got = (ConvertTo-ServiceState $case).State
+            if ($got -ne $expected[$case]) { throw ('SERVICE_STATE_WRONG {0} -> {1}' -f $case, $got) }
+        }
+        Write-Output 'SERVICE_STATE_OK running=ok healthy=ok starting=ok unhealthy=ok exited0=ok exited1=ok'
+
+        # If Docker is up, report what the real lab containers look like. This
+        # reads state only: nothing is started, stopped or removed.
+        if (Get-DockerServerVersion) {
+            foreach ($name in Get-LabContainers) {
+                $state = Get-ServiceState $name
+                Write-Output ('SERVICE {0} status={1} health={2} exit={3} -> {4}' -f `
+                    $name, $state.Status, $state.Health, $state.ExitCode, $state.State)
+            }
+        }
+        exit 0
     } catch {
         Write-Output ('SELFTEST_FAILED {0}' -f $_.Exception.Message)
         exit 1
