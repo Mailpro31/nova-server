@@ -1,0 +1,157 @@
+name: Organization Lab release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Immutable release version (for example 0.1.0)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: organization-lab-release
+  cancel-in-progress: false
+
+jobs:
+  build-publish:
+    runs-on: ubuntu-latest
+    environment: organization-lab-release
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Validate release inputs and secrets
+        env:
+          VERSION: ${{ inputs.version }}
+          SIGNING_KEY: ${{ secrets.NOVA_RELEASE_SIGNING_KEY_PEM }}
+          VERCEL_TOKEN: ${{ secrets.NOVA_RELEASE_VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?$ ]]
+          test -n "$SIGNING_KEY"
+          test -n "$VERCEL_TOKEN"
+
+      - name: Build and publish Nova Server
+        id: server
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ghcr.io/mailpro31/nova-server:${{ inputs.version }}
+
+      - name: Build and publish speech runtime with model
+        id: speech
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: tools/organization-lab/images/whisper.Dockerfile
+          push: true
+          tags: ghcr.io/mailpro31/nova-quick-lab-speech:${{ inputs.version }}
+
+      - name: Build and publish language runtime with model
+        id: language
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: tools/organization-lab/images/llm.Dockerfile
+          push: true
+          tags: ghcr.io/mailpro31/nova-quick-lab-language:${{ inputs.version }}
+
+      - name: Resolve approved dependency digests
+        id: dependencies
+        run: |
+          set -euo pipefail
+          postgres=$(docker buildx imagetools inspect docker.io/library/postgres:16-alpine | awk '/^Digest:/ {print $2; exit}')
+          redis=$(docker buildx imagetools inspect docker.io/library/redis:7-alpine | awk '/^Digest:/ {print $2; exit}')
+          [[ "$postgres" =~ ^sha256:[a-f0-9]{64}$ ]]
+          [[ "$redis" =~ ^sha256:[a-f0-9]{64}$ ]]
+          echo "postgres=$postgres" >> "$GITHUB_OUTPUT"
+          echo "redis=$redis" >> "$GITHUB_OUTPUT"
+
+      - name: Generate signed public manifest
+        env:
+          VERSION: ${{ inputs.version }}
+          SERVER_DIGEST: ${{ steps.server.outputs.digest }}
+          SPEECH_DIGEST: ${{ steps.speech.outputs.digest }}
+          LANGUAGE_DIGEST: ${{ steps.language.outputs.digest }}
+          POSTGRES_DIGEST: ${{ steps.dependencies.outputs.postgres }}
+          REDIS_DIGEST: ${{ steps.dependencies.outputs.redis }}
+          SIGNING_KEY: ${{ secrets.NOVA_RELEASE_SIGNING_KEY_PEM }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-site/public/server/quick-lab
+          python - <<'PY'
+          import json, os
+          version = os.environ['VERSION']
+          artifacts = [
+            ('nova-server', f'ghcr.io/mailpro31/nova-server@{os.environ["SERVER_DIGEST"]}', f'nova-local/server:{version}', 'Proprietary-Nova'),
+            ('postgres', f'docker.io/library/postgres@{os.environ["POSTGRES_DIGEST"]}', 'nova-local/postgres:16', 'PostgreSQL'),
+            ('redis', f'docker.io/library/redis@{os.environ["REDIS_DIGEST"]}', 'nova-local/redis:7', 'RSALv2 OR SSPLv1'),
+            ('speech-6gb', f'ghcr.io/mailpro31/nova-quick-lab-speech@{os.environ["SPEECH_DIGEST"]}', f'nova-local/speech:{version}', 'MIT AND Apache-2.0'),
+            ('language-6gb', f'ghcr.io/mailpro31/nova-quick-lab-language@{os.environ["LANGUAGE_DIGEST"]}', f'nova-local/language:{version}', 'Apache-2.0'),
+          ]
+          manifest = {
+            'schema_version': 1,
+            'release_id': f'quick-lab-{version}',
+            'installer': {'version': version, 'minimum_version': '0.1.0'},
+            'images': {
+              'server': f'nova-local/server:{version}', 'postgres': 'nova-local/postgres:16', 'redis': 'nova-local/redis:7'
+            },
+            'artifacts': [
+              {'id': i, 'kind': 'oci_image', 'image': image, 'local_image': local, 'license': license_name}
+              for i, image, local, license_name in artifacts
+            ],
+            'profiles': [{
+              'id': 'LAB_GPU_6GB', 'minimum_ram_gib': 16, 'minimum_vram_mib': 5120,
+              'maximum_vram_mib': 7167, 'estimated_disk_gib': 25,
+              'max_concurrent_text': 1, 'max_concurrent_speech': 1, 'queue_size': 2,
+              'speech': {
+                'artifact_id': 'speech-6gb', 'image': f'nova-local/speech:{version}',
+                'model_id': 'small', 'model_path': '/models/whisper-small', 'compute_type': 'int8_float16'
+              },
+              'language': {
+                'artifact_id': 'language-6gb', 'image': f'nova-local/language:{version}',
+                'model_id': 'Qwen/Qwen2.5-1.5B-Instruct-AWQ',
+                'model_path': '/models/qwen2.5-1.5b-instruct-awq',
+                'quantization': 'AWQ', 'max_model_len': 2048, 'gpu_memory_utilization': 0.55
+              }
+            }]
+          }
+          with open('release-site/public/server/quick-lab/manifest.json', 'w', encoding='utf-8', newline='\n') as handle:
+              json.dump(manifest, handle, ensure_ascii=False, separators=(',', ':'))
+          PY
+          printf '%s' "$SIGNING_KEY" > "$RUNNER_TEMP/nova-release-signing.pem"
+          chmod 600 "$RUNNER_TEMP/nova-release-signing.pem"
+          openssl dgst -sha256 -sign "$RUNNER_TEMP/nova-release-signing.pem" \
+            -out "$RUNNER_TEMP/manifest.sig.bin" release-site/public/server/quick-lab/manifest.json
+          base64 -w0 "$RUNNER_TEMP/manifest.sig.bin" > release-site/public/server/quick-lab/manifest.json.sig
+          rm -f "$RUNNER_TEMP/nova-release-signing.pem" "$RUNNER_TEMP/manifest.sig.bin"
+          printf '{"status":"ready","release":"%s"}\n' "$VERSION" > release-site/public/index.json
+          cat > release-site/vercel.json <<'JSON'
+          {"headers":[{"source":"/server/(.*)","headers":[{"key":"Cache-Control","value":"public, max-age=300, must-revalidate"},{"key":"X-Content-Type-Options","value":"nosniff"}]}]}
+          JSON
+
+      - name: Deploy manifest to releases.novaspeak.app
+        working-directory: release-site
+        env:
+          VERCEL_TOKEN: ${{ secrets.NOVA_RELEASE_VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ vars.NOVA_RELEASE_VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ vars.NOVA_RELEASE_VERCEL_PROJECT_ID }}
+        run: npx --yes vercel@48 deploy --prod --yes --token "$VERCEL_TOKEN"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: organization-lab-${{ inputs.version }}-manifest
+          path: release-site/public/server/quick-lab/
+          retention-days: 90

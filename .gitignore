@@ -15,6 +15,9 @@ nova.db
 
 # Variables d'environnement
 .env
+tools/organization-lab/generated/
+tools/organization-lab/state/
+tools/organization-lab/dist/
 .env.local
 
 # Divers

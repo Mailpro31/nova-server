@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Nova Organization Server Quick Lab release manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "release_id", "installer", "images", "artifacts", "profiles"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "release_id": { "type": "string", "pattern": "^[A-Za-z0-9._-]{1,64}$" },
+    "installer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "minimum_version"],
+      "properties": {
+        "version": { "type": "string" },
+        "minimum_version": { "type": "string" }
+      }
+    },
+    "images": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["server", "postgres", "redis"],
+      "properties": {
+        "server": { "type": "string", "pattern": "^nova-local/" },
+        "postgres": { "type": "string", "pattern": "^nova-local/" },
+        "redis": { "type": "string", "pattern": "^nova-local/" }
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "minItems": 5,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "kind", "license"],
+        "properties": {
+          "id": { "type": "string" },
+          "kind": { "enum": ["oci_image", "file"] },
+          "url": { "type": "string", "pattern": "^https://releases\\.novaspeak\\.app/" },
+          "file_name": { "type": "string", "pattern": "^[A-Za-z0-9._-]+$" },
+          "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "image": { "type": "string", "pattern": "^(ghcr\\.io|docker\\.io)/.+@sha256:[a-f0-9]{64}$" },
+          "local_image": { "type": "string", "pattern": "^nova-local/" },
+          "license": { "type": "string", "minLength": 1 }
+        },
+        "allOf": [
+          { "if": { "properties": { "kind": { "const": "oci_image" } } }, "then": { "required": ["image", "local_image"] } },
+          { "if": { "properties": { "kind": { "const": "file" } } }, "then": { "required": ["url", "file_name", "sha256"] } }
+        ]
+      }
+    },
+    "profiles": { "type": "array", "minItems": 1 }
+  }
+}
