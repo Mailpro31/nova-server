@@ -154,3 +154,71 @@ def test_signature_verification_is_not_bypassable():
     assert "MANIFEST_SIGNATURE_INVALID" in source
     assert "Assert-ReleasePublicKeyConfigured" in source
     assert "VerifyData" in source
+
+
+def setup_source() -> str:
+    return (ROOT / "NovaOrganizationServerSetup.ps1").read_text(encoding="utf-8")
+
+
+def test_docker_inspect_format_has_no_backtick():
+    # A backtick opens a raw quoted string in a Go template. The previous format
+    # was {{join .RepoDigests "<backtick>n"}}, intended as a PowerShell newline
+    # escape but sitting in a single-quoted string, so docker exited 64 with
+    # "unterminated raw quoted string" and the caller reported that as
+    # OCI_DIGEST_VERIFICATION_FAILED on every machine.
+    source = setup_source()
+    for line in source.splitlines():
+        if "--format" in line and "docker.exe" in line:
+            assert "`" not in line, f"backtick in a docker template: {line.strip()}"
+
+
+def test_inspect_failure_is_distinct_from_digest_mismatch():
+    source = setup_source()
+    assert "OCI_INSPECT_FAILED" in source
+    # the mismatch branch must no longer double as the inspect-failed branch
+    assert "$digests.ExitCode -ne 0 -or" not in source
+
+
+def test_oci_verification_still_fails_closed():
+    source = setup_source()
+    for code in ("OCI_REFERENCE_NOT_IMMUTABLE", "OCI_REGISTRY_NOT_APPROVED",
+                 "OCI_PULL_FAILED", "OCI_DIGEST_VERIFICATION_FAILED",
+                 "OCI_PLATFORM_UNEXPECTED", "OCI_TAG_FAILED"):
+        assert code in source
+    # the pull must still be by immutable digest, never a tag
+    assert "@sha256:" in source
+
+
+def test_client_requires_a_single_platform_image():
+    source = setup_source()
+    assert "'{{.Os}}/{{.Architecture}}'" in source
+    assert "linux/amd64" in source
+
+
+def test_release_workflow_pins_platform_manifest_digests():
+    workflow = (Path(__file__).parent / ".github" / "workflows"
+                / "organization-lab-release.yml").read_text(encoding="utf-8")
+    assert "Resolve linux/amd64 manifest digests" in workflow
+    # the manifest must be built from the resolved platform digests, not the
+    # index digests the build step emits
+    assert "SERVER_DIGEST: ${{ steps.dependencies.outputs.server }}" in workflow
+    assert "SPEECH_DIGEST: ${{ steps.dependencies.outputs.speech }}" in workflow
+    assert "LANGUAGE_DIGEST: ${{ steps.dependencies.outputs.language }}" in workflow
+    assert "SERVER_DIGEST: ${{ needs.server.outputs.digest }}" not in workflow
+
+
+def test_release_workflow_verifies_published_images():
+    workflow = (Path(__file__).parent / ".github" / "workflows"
+                / "organization-lab-release.yml").read_text(encoding="utf-8")
+    assert "verify-release-images.py" in workflow
+    assert "needs: publish" in workflow
+
+
+def test_image_verifier_checks_manifest_config_and_layers():
+    verifier = (ROOT / "verify-release-images.py").read_text(encoding="utf-8")
+    assert "anonymous_token" in verifier
+    assert "manifest bytes hash to" in verifier
+    assert "config blob hashes to" in verifier
+    assert "layer {index} hashes to" in verifier
+    assert "is an image index, not a platform manifest" in verifier
+    assert "REQUIRED_NOVA_IMAGES" in verifier

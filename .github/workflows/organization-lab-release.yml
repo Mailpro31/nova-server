@@ -131,44 +131,80 @@ jobs:
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?$ ]]
           test -n "$SIGNING_KEY"
           test -n "$VERCEL_TOKEN"
-      - name: Resolve approved dependency digests
+      - name: Resolve linux/amd64 manifest digests
         id: dependencies
+        env:
+          VERSION: ${{ inputs.version }}
+          SERVER_INDEX: ${{ needs.server.outputs.digest }}
+          SPEECH_INDEX: ${{ needs.speech.outputs.digest }}
+          LANGUAGE_INDEX: ${{ needs.language.outputs.digest }}
         run: |
           set -euo pipefail
-          resolve_digest() {
-            repo="$1"; tag="$2"
-            headers="$(mktemp)"; body="$(mktemp)"
+
+          PYTHON=$(command -v python3 || command -v python)
+          test -n "$PYTHON"
+
+          # Every push produces an OCI index: one linux/amd64 manifest plus a
+          # buildx attestation manifest. Pinning the index digest would leave the
+          # platform choice to the client and make what docker reports afterwards
+          # depend on its image store. The client runs linux containers under
+          # WSL2, so the release pins the linux/amd64 manifest directly.
+          registry_token() {
+            case "$1" in
+              ghcr.io) curl -fsS --max-time 30 "https://ghcr.io/token?scope=repository:$2:pull&service=ghcr.io" ;;
+              *)       curl -fsS --max-time 30 "https://auth.docker.io/token?service=registry.docker.io&scope=repository:$2:pull" ;;
+            esac | sed -n 's/.*"token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'
+          }
+
+          registry_host() {
+            case "$1" in
+              ghcr.io) echo "https://ghcr.io" ;;
+              *)       echo "https://registry-1.docker.io" ;;
+            esac
+          }
+
+          accept='application/vnd.oci.image.index.v1+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.docker.distribution.manifest.v2+json'
+
+          # Prints the linux/amd64 manifest digest for a tag or an index digest.
+          amd64_digest() {
+            registry="$1"; repo="$2"; reference="$3"
             for attempt in 1 2 3 4 5; do
-              if curl -fsS --max-time 30 -o "$body" \
-                "https://auth.docker.io/token?service=registry.docker.io&scope=repository:${repo}:pull"; then
-                token=$(sed -n 's/.*"token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$body")
-                if [ -n "$token" ] && curl -fsS --max-time 30 -o /dev/null -D "$headers" \
-                  -H "Authorization: Bearer ${token}" \
-                  -H 'Accept: application/vnd.oci.image.index.v1+json' \
-                  -H 'Accept: application/vnd.docker.distribution.manifest.list.v2+json' \
-                  -H 'Accept: application/vnd.docker.distribution.manifest.v2+json' \
-                  "https://registry-1.docker.io/v2/${repo}/manifests/${tag}"; then
-                  digest=$(tr -d '\r' < "$headers" | awk 'tolower($1) == "docker-content-digest:" {print $2}' | head -n 1)
-                  if printf '%s' "$digest" | grep -qE '^sha256:[a-f0-9]{64}$'; then
-                    rm -f "$headers" "$body"
+              token=$(registry_token "$registry" "$repo") || token=""
+              if [ -n "$token" ]; then
+                body=$(mktemp)
+                if curl -fsS --max-time 60 -o "$body" -H "Authorization: Bearer $token" -H "Accept: $accept" \
+                    "$(registry_host "$registry")/v2/${repo}/manifests/${reference}"; then
+                  digest=$("$PYTHON" -c 'import json,sys;d=json.load(open(sys.argv[1],encoding="utf-8"));c=[e["digest"] for e in d.get("manifests",[]) if (e.get("platform") or {}).get("os")=="linux" and (e.get("platform") or {}).get("architecture")=="amd64" and not (e.get("platform") or {}).get("variant")];print(c[0] if c else "")' "$body")
+                  rm -f "$body"
+                  if [ -n "$digest" ]; then
                     printf '%s' "$digest"
                     return 0
                   fi
+                  echo "No linux/amd64 manifest in ${registry}/${repo}@${reference}" >&2
+                  return 1
                 fi
+                rm -f "$body"
               fi
-              echo "Digest resolution failed for ${repo}:${tag} (attempt ${attempt})" >&2
+              echo "Manifest fetch failed for ${registry}/${repo}:${reference} (attempt ${attempt})" >&2
               sleep $(( attempt * 5 ))
             done
-            rm -f "$headers" "$body"
-            echo "DEPENDENCY_DIGEST_UNRESOLVED: ${repo}:${tag}" >&2
+            echo "PLATFORM_DIGEST_UNRESOLVED: ${registry}/${repo}@${reference}" >&2
             return 1
           }
-          postgres=$(resolve_digest library/postgres 16-alpine)
-          redis=$(resolve_digest library/redis 7-alpine)
-          echo "Resolved postgres:16-alpine $postgres"
-          echo "Resolved redis:7-alpine $redis"
-          echo "postgres=$postgres" >> "$GITHUB_OUTPUT"
-          echo "redis=$redis" >> "$GITHUB_OUTPUT"
+
+          emit() {
+            name="$1"; value="$2"
+            [[ "$value" =~ ^sha256:[a-f0-9]{64}$ ]]
+            echo "${name}=${value}" >> "$GITHUB_OUTPUT"
+            echo "Pinned ${name} ${value}"
+          }
+
+          emit postgres "$(amd64_digest docker.io library/postgres 16-alpine)"
+          emit redis    "$(amd64_digest docker.io library/redis 7-alpine)"
+          emit server   "$(amd64_digest ghcr.io mailpro31/nova-server   "$SERVER_INDEX")"
+          emit speech   "$(amd64_digest ghcr.io mailpro31/nova-quick-lab-speech   "$SPEECH_INDEX")"
+          emit language "$(amd64_digest ghcr.io mailpro31/nova-quick-lab-language "$LANGUAGE_INDEX")"
+
       - name: Stage the Windows installer for publication
         uses: actions/download-artifact@v4
         with:
@@ -186,11 +222,14 @@ jobs:
       - name: Generate signed public manifest
         env:
           VERSION: ${{ inputs.version }}
-          SERVER_DIGEST: ${{ needs.server.outputs.digest }}
-          SPEECH_DIGEST: ${{ needs.speech.outputs.digest }}
-          LANGUAGE_DIGEST: ${{ needs.language.outputs.digest }}
+          SERVER_DIGEST: ${{ steps.dependencies.outputs.server }}
+          SPEECH_DIGEST: ${{ steps.dependencies.outputs.speech }}
+          LANGUAGE_DIGEST: ${{ steps.dependencies.outputs.language }}
           POSTGRES_DIGEST: ${{ steps.dependencies.outputs.postgres }}
           REDIS_DIGEST: ${{ steps.dependencies.outputs.redis }}
+          SERVER_INDEX: ${{ needs.server.outputs.digest }}
+          SPEECH_INDEX: ${{ needs.speech.outputs.digest }}
+          LANGUAGE_INDEX: ${{ needs.language.outputs.digest }}
           INSTALLER_SHA256: ${{ needs.installer.outputs.sha256 }}
           SIGNING_KEY: ${{ secrets.NOVA_RELEASE_SIGNING_KEY_PEM }}
         run: |
@@ -215,7 +254,15 @@ jobs:
               'authenticode_signed': False,
             },
             'images': {'server': f'nova-local/server:{version}', 'postgres': 'nova-local/postgres:16', 'redis': 'nova-local/redis:7'},
-            'artifacts': [{'id': i, 'kind': 'oci_image', 'image': image, 'local_image': local, 'license': license_name} for i, image, local, license_name in artifacts],
+            'artifacts': [{'id': i, 'kind': 'oci_image', 'image': image, 'local_image': local, 'license': license_name, 'platform': 'linux/amd64'} for i, image, local, license_name in artifacts],
+            'provenance': {
+              'index_digests': {
+                'nova-server': os.environ['SERVER_INDEX'],
+                'speech-6gb': os.environ['SPEECH_INDEX'],
+                'language-6gb': os.environ['LANGUAGE_INDEX'],
+              },
+              'note': 'artifacts pin the linux/amd64 manifest digest; these are the index digests the release built',
+            },
             'profiles': [{
               'id': 'LAB_GPU_6GB', 'minimum_ram_gib': 16, 'minimum_vram_mib': 5120, 'maximum_vram_mib': 7167,
               'estimated_disk_gib': 25, 'max_concurrent_text': 1, 'max_concurrent_speech': 1, 'queue_size': 2,
@@ -245,3 +292,17 @@ jobs:
           name: organization-lab-${{ inputs.version }}-manifest
           path: release-site/public/server/quick-lab/
           retention-days: 90
+
+  verify:
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify the published images against the signed manifest
+        run: |
+          set -euo pipefail
+          # No credentials: this is the client's view of the registry. Every
+          # manifest, config and layer is re-hashed and compared with what the
+          # signed manifest pins.
+          unset GITHUB_TOKEN GH_TOKEN
+          python3 tools/organization-lab/verify-release-images.py             https://releases.novaspeak.app/server/quick-lab/manifest.json

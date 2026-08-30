@@ -230,10 +230,31 @@ function Import-OciArtifact($Artifact) {
     }
     $result = Run-Captured 'docker.exe' @('pull',$Artifact.image)
     if ($result.ExitCode -ne 0) { throw "OCI_PULL_FAILED: $($Artifact.id)" }
-    $digests = Run-Captured 'docker.exe' @('image','inspect',$Artifact.image,'--format','{{join .RepoDigests "`n"}}')
+
+    # {{json .RepoDigests}} rather than {{join ...}}: a backtick inside a Go
+    # template opens a raw quoted string, so the previous format failed to parse
+    # and docker exited non-zero, which this function then misreported as a
+    # digest mismatch.
+    $digests = Run-Captured 'docker.exe' @('image','inspect',$Artifact.image,'--format','{{json .RepoDigests}}')
+    if ($digests.ExitCode -ne 0) { throw "OCI_INSPECT_FAILED: $($Artifact.id)" }
+    $identity = Run-Captured 'docker.exe' @('image','inspect',$Artifact.image,'--format','{{.Id}}')
+    if ($identity.ExitCode -ne 0) { throw "OCI_INSPECT_FAILED: $($Artifact.id)" }
+
+    # The manifest pins the linux/amd64 manifest digest, which is what was
+    # pulled, so the reference and what docker reports are the same value on
+    # both the classic and the containerd image store.
     $wantedDigest = $Artifact.image.Substring($Artifact.image.IndexOf('@sha256:') + 1)
-    if ($digests.ExitCode -ne 0 -or $digests.Output -notmatch [regex]::Escape($wantedDigest)) {
+    $reported = "{0}`n{1}" -f $digests.Output, $identity.Output
+    if ($reported -notmatch [regex]::Escape($wantedDigest)) {
         throw "OCI_DIGEST_VERIFICATION_FAILED: $($Artifact.id)"
+    }
+
+    # The pinned digest must address one platform image, never an index: an
+    # index would leave the platform choice to the client and put bytes on disk
+    # that the signed manifest never named.
+    $platform = Run-Captured 'docker.exe' @('image','inspect',$Artifact.image,'--format','{{.Os}}/{{.Architecture}}')
+    if ($platform.ExitCode -ne 0 -or $platform.Output.Trim() -ne 'linux/amd64') {
+        throw "OCI_PLATFORM_UNEXPECTED: $($Artifact.id)"
     }
     if ($Artifact.local_image -notmatch '^nova-local/[a-z0-9._-]+:[a-z0-9._-]+$') {
         throw "OCI_LOCAL_NAME_INVALID: $($Artifact.id)"
