@@ -266,7 +266,7 @@ jobs:
             'profiles': [{
               'id': 'LAB_GPU_6GB', 'minimum_ram_gib': 16, 'minimum_vram_mib': 5120, 'maximum_vram_mib': 7167,
               'estimated_disk_gib': 25, 'max_concurrent_text': 1, 'max_concurrent_speech': 1, 'queue_size': 2,
-              'speech': {'artifact_id': 'speech-6gb', 'image': f'nova-local/speech:{version}', 'model_id': 'small', 'model_path': '/models/whisper-small', 'compute_type': 'int8_float16'},
+              'speech': {'artifact_id': 'speech-6gb', 'image': f'nova-local/speech:{version}', 'model_id': '/models/whisper-small', 'model_path': '/models/whisper-small', 'compute_type': 'int8_float16'},
               'language': {'artifact_id': 'language-6gb', 'image': f'nova-local/language:{version}', 'model_id': 'Qwen/Qwen2.5-1.5B-Instruct-AWQ', 'model_path': '/models/qwen2.5-1.5b-instruct-awq', 'quantization': 'AWQ', 'max_model_len': 2048, 'gpu_memory_utilization': 0.55}
             }]
           }

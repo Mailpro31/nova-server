@@ -10,7 +10,17 @@ RUN pip install --no-cache-dir -r requirements.txt
 # `admin.html` a disparu avec l'ancienne console (ffc812f) ; le Dockerfile ne
 # l'avait pas suivi, et la construction echouait depuis. Nova Admin est une
 # application separee, servie ailleurs.
+# La liste suivante est la fermeture des imports de `serve.py` : elle a ete
+# calculee, pas devinee. Elle etait incomplete, et l'image publiee ne pouvait
+# meme pas faire `import serve` (`ModuleNotFoundError: connector_release`).
+# Le conteneur `migrate` echouait pour la meme raison (`No module named
+# migrations`), donc la pile ne demarrait pas du tout.
 COPY main.py ai_runtime.py local_channel.py serve.py connector.py ./
+COPY connector_release.py database.py deployment.py migrations.py ./
+COPY observability.py production_config.py ratelimit.py scim.py secrets_provider.py ./
+COPY learning/ ./learning/
+# Les fichiers SQL que `migrations.py` decouvre au runtime dans `migrations/`.
+COPY migrations/ ./migrations/
 
 ENV NOVA_DB=/data/nova.db
 
