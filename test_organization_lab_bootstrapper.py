@@ -1,6 +1,10 @@
 import json
 import re
+import shutil
+import subprocess
 from pathlib import Path
+
+import pytest
 
 
 ROOT = Path(__file__).parent / "tools" / "organization-lab"
@@ -319,7 +323,7 @@ def workflow_source():
 def test_the_runtime_mode_is_probed_on_the_real_gpu_before_anything_is_written():
     source = setup_source()
     body = source[source.index("function Invoke-Install"):]
-    assert body.index("Resolve-LlmRuntimeMode") < body.index("Write-LabCompose"), (
+    assert body.index("Resolve-LlmRuntimeMode") < body.index("Write-StackCompose"), (
         "the GPU must decide the runtime before any configuration is generated")
     probe = source[source.index("function Resolve-LlmRuntimeMode"):]
     probe = probe[:probe.index("\nfunction ")]
@@ -366,7 +370,7 @@ def test_the_no_uva_mode_is_refused_if_vllm_drops_the_opt_out():
 
 def test_the_resolved_mode_reaches_the_llm_service():
     source = setup_source()
-    compose = source[source.index("function Write-LabCompose"):]
+    compose = source[source.index("function Write-StackCompose"):]
     compose = compose[:compose.index("\n    $path = Join-Path")]
     assert "$llmEnvironment" in compose
     assert "LLM_RUNTIME_NOT_RESOLVED" in compose, (
@@ -418,7 +422,7 @@ def test_the_llm_answers_to_the_name_the_api_asks_for():
     # Without --served-model-name vLLM advertises the on-disk path, while the
     # API sends NOVA_AI_TEXT_MODEL, and every completion returns 404.
     source = setup_source()
-    compose = source[source.index("function Write-LabCompose"):]
+    compose = source[source.index("function Write-StackCompose"):]
     compose = compose[:compose.index("\n    $path = Join-Path")]
     served = compose.index('"--served-model-name", "$($Profile.language.model_id)"')
     assert served > 0
@@ -535,3 +539,126 @@ def test_supply_chain_and_runtime_checks_survive_the_compose_changes():
                  "OCI_DIGEST_VERIFICATION_FAILED", "OCI_PLATFORM_UNEXPECTED",
                  "LLM_RUNTIME_INCOMPATIBLE", "DOCKER_PRESENT_BUT_DAEMON_NOT_RESPONDING"):
         assert code in body
+
+
+def test_the_stack_and_the_gateway_composers_do_not_share_a_name():
+    # Deux fonctions du meme nom : PowerShell garde la derniere definie. La
+    # pile de production etait ecrite par la fonction de la passerelle, avec
+    # trois arguments pour deux parametres.
+    body = setup_source()
+    assert body.count("function Write-StackCompose") == 1
+    assert body.count("function Write-LabGatewayCompose") == 1
+    assert "function Write-LabCompose" not in body
+
+
+def test_the_installer_writes_the_stack_compose_with_its_three_arguments():
+    body = setup_source()
+    assert re.search(
+        r"\$compose = Write-StackCompose \$manifest \$releaseProfile \$runtime", body
+    )
+    assert re.search(r"Write-LabGatewayCompose \$manifest \$settings", body)
+
+
+def test_a_regeneration_reuses_the_existing_organization_and_deployment():
+    # Une reparation ou une mise a jour ne doit pas rendre invisible la base
+    # deja indexee par l'identifiant d'organisation.
+    body = setup_source()
+    assert "function Get-GeneratedIdentity" in body
+    assert '$identity = Get-GeneratedIdentity' in body
+    assert re.search(
+        r"\$orgId = if \(\$identity\.OrganizationId\) \{ \$identity\.OrganizationId \}"
+        r" else \{ 'org-' \+", body)
+    assert re.search(
+        r"\$deploymentId = if \(\$identity\.DeploymentId\) \{ \$identity\.DeploymentId \}"
+        r" else \{ 'dpl-' \+", body)
+
+
+def test_the_identity_is_read_from_the_generated_compose_not_invented():
+    body = setup_source()
+    identity = body[body.index("function Get-GeneratedIdentity"):]
+    identity = identity[:identity.index("\nfunction ")]
+    assert "compose.quick-lab.yml" in identity
+    assert "NOVA_ORGANIZATION_ID" in identity
+    assert "deployment_id" in identity
+    # Aucune ecriture : cette fonction lit, elle ne repare pas.
+    assert "WriteAllText" not in identity
+    assert "Set-Content" not in identity
+
+
+def test_the_generator_never_hardcodes_a_server_image_tag():
+    # L'identite d'image vient du manifeste signe, jamais d'une constante du
+    # script : c'est ce qui rend une mise a jour verifiable.
+    body = setup_source()
+    assert "nova-local/server:" not in body
+    assert "image: $($Manifest.images.server)" in body
+
+
+def test_the_release_manifest_versions_the_local_tag_and_pins_the_digest():
+    body = workflow_source()
+    assert "f'nova-local/server:{version}'" in body
+    assert "ghcr.io/mailpro31/nova-server@{os.environ[\"SERVER_DIGEST\"]}" in body
+    assert "'images': {'server': f'nova-local/server:{version}'" in body
+
+
+def test_the_regeneration_test_is_shipped_and_offline():
+    # Le test de regeneration doit rester executable sans Docker, sans reseau
+    # et sans toucher au ProgramData reel : c'est ce qui permet de le lancer
+    # sur un poste en service.
+    script = (ROOT / "test-regeneration.ps1").read_text(encoding="utf-8")
+    assert "-LibraryMode" in script
+    assert "Write-StackCompose" in script
+    assert "GetTempPath" in script
+    for forbidden in ("docker", "Invoke-WebRequest", "Invoke-Compose"):
+        assert forbidden not in script
+
+
+def test_a_regeneration_can_be_verified_on_this_machine():
+    # Execute pour de vrai quand PowerShell est disponible ; ignore ailleurs,
+    # le generateur etant un script Windows.
+    powershell = shutil.which("powershell") or shutil.which("pwsh")
+    if not powershell:
+        pytest.skip("PowerShell absent")
+    completed = subprocess.run(
+        [powershell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+         "-File", str(ROOT / "test-regeneration.ps1")],
+        capture_output=True, text=True, timeout=300,
+    )
+    assert "REGENERATION_TEST_OK" in completed.stdout, completed.stdout + completed.stderr
+    assert completed.returncode == 0
+
+
+def test_the_database_secret_restricts_its_access_for_real():
+    # Deux erreurs cumulees rendaient la restriction inoperante : `$env:USERNAME:`
+    # se lit comme une variable qualifiee par un lecteur, et `/grant:r:` n'est
+    # pas la syntaxe d'icacls. L'echec partait dans Out-Null.
+    body = setup_source()
+    secret = body[body.index("function Get-OrCreateSecret"):]
+    secret = secret[:secret.index("\nfunction ")]
+    # Le commentaire cite les deux formes fautives : seul le code compte.
+    secret = "\n".join(
+        line for line in secret.splitlines() if not line.strip().startswith("#")
+    )
+    assert "$env:USERNAME" not in secret
+    assert "/grant:r:" not in secret
+    assert "'/grant:r'" in secret
+    assert "WindowsIdentity]::GetCurrent()).User.Value" in secret
+    assert "icacls.exe" in secret and "Out-Null" not in secret
+
+
+def test_a_secret_that_could_not_be_protected_is_not_kept():
+    body = setup_source()
+    secret = body[body.index("function Get-OrCreateSecret"):]
+    secret = secret[:secret.index("\nfunction ")]
+    assert "$acl.ExitCode -ne 0" in secret
+    assert "Remove-Item" in secret
+    assert "throw 'SECRET_ACL_NOT_APPLIED'" in secret
+    assert "SECRET_ACL_NOT_APPLIED" in body[body.index("function Get-FailureAdvice"):]
+
+
+def test_the_regeneration_test_checks_the_secret_acl():
+    script = (ROOT / "test-regeneration.ps1").read_text(encoding="utf-8")
+    assert "AreAccessRulesProtected" in script
+    # S-1-1-0 Everyone, S-1-5-32-545 Users : ni l'un ni l'autre ne doit
+    # figurer dans les droits du fichier.
+    assert "S-1-1-0" in script and "S-1-5-32-545" in script
+    assert "SECRET_OWNER_NOT_GRANTED" in script

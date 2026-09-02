@@ -13,7 +13,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$script:Version = '0.4.2'
+$script:Version = '0.4.3'
 $script:Root = Join-Path $env:ProgramData 'Nova\OrganizationServer'
 $script:StatePath = Join-Path $script:Root 'setup-state.json'
 $script:LogPath = Join-Path $script:Root 'logs\setup.log'
@@ -188,7 +188,24 @@ function Get-OrCreateSecret([string]$Name) {
         # URL, and '/' or '+' from standard base64 corrupt it.
         $secret = [Convert]::ToBase64String($bytes).Replace('+','-').Replace('/','_').TrimEnd('=')
         [IO.File]::WriteAllText($path, $secret)
-        & icacls.exe $path '/inheritance:r' "/grant:r:$env:USERNAME:(R,W)" | Out-Null
+        # Deux erreurs se cumulaient ici, et l'echec partait dans Out-Null.
+        # `"$env:USERNAME:(R,W)"` se lit comme une variable qualifiee par un
+        # lecteur : PowerShell rendait une chaine vide. Et `/grant:r:` n'est
+        # pas la syntaxe d'icacls, qui attend `/grant:r` puis l'entree en
+        # argument distinct. Le mot de passe PostgreSQL heritait donc des ACL
+        # du dossier parent, sur toutes les installations. Le SID est prefere
+        # au nom : il survit a un compte renomme, localise ou joint a un
+        # domaine. SYSTEM est conserve, faute de quoi le service qui monte le
+        # secret dans le conteneur ne pourrait plus le lire.
+        $sid = ([Security.Principal.WindowsIdentity]::GetCurrent()).User.Value
+        $acl = Run-Captured 'icacls.exe' @(
+            $path, '/inheritance:r', '/grant:r', "*${sid}:(R,W)", '/grant:r', '*S-1-5-18:(R,W)')
+        if ($acl.ExitCode -ne 0) {
+            # Fail closed : mieux vaut pas de secret qu'un secret lisible par
+            # tout le monde. Le prochain appel en regenerera un.
+            Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+            throw 'SECRET_ACL_NOT_APPLIED'
+        }
     }
     return $path
 }
@@ -430,15 +447,32 @@ function Resolve-LlmRuntimeMode($Profile) {
     }
 }
 
-function Write-LabCompose($Manifest, $Profile, $Runtime) {
+function Get-GeneratedIdentity {
+    # Une reparation ou une mise a jour regenere ce fichier. Si elle tirait une
+    # nouvelle organisation au sort, la base PostgreSQL existante ne serait pas
+    # detruite : elle deviendrait invisible, indexee sous un identifiant que
+    # plus personne ne demande. L'identite se relit, elle ne se reinvente pas.
+    $path = Join-Path $script:Generated 'compose.quick-lab.yml'
+    $identity = @{ OrganizationId = $null; DeploymentId = $null }
+    if (-not (Test-Path -LiteralPath $path)) { return $identity }
+    $text = Get-Content -Raw -LiteralPath $path
+    $organization = [regex]::Match($text, 'NOVA_ORGANIZATION_ID:\s*"(?<value>org-[0-9a-fA-F]{32})"')
+    if ($organization.Success) { $identity.OrganizationId = $organization.Groups['value'].Value }
+    $deployment = [regex]::Match($text, 'deployment_id:\s*"(?<value>dpl-[0-9a-fA-F]{32})"')
+    if ($deployment.Success) { $identity.DeploymentId = $deployment.Groups['value'].Value }
+    return $identity
+}
+
+function Write-StackCompose($Manifest, $Profile, $Runtime) {
     Initialize-Directories
     $dbSecret = Get-OrCreateSecret 'postgres-password.txt'
-    $orgId = 'org-' + ([Guid]::NewGuid().ToString('N'))
+    $identity = Get-GeneratedIdentity
+    $orgId = if ($identity.OrganizationId) { $identity.OrganizationId } else { 'org-' + ([Guid]::NewGuid().ToString('N')) }
     if (-not $Runtime -or -not $Runtime.Mode) { throw 'LLM_RUNTIME_NOT_RESOLVED' }
     $llmEnvironment = (($Runtime.Environment.GetEnumerator() | Sort-Object Name | ForEach-Object {
         '      {0}: "{1}"' -f $_.Key, $_.Value
     }) -join "`n")
-    $deploymentId = 'dpl-' + ([Guid]::NewGuid().ToString('N'))
+    $deploymentId = if ($identity.DeploymentId) { $identity.DeploymentId } else { 'dpl-' + ([Guid]::NewGuid().ToString('N')) }
     $compose = @"
 name: nova-organization-lab
 services:
@@ -641,6 +675,8 @@ function Restore-PreviousConfiguration {
 
 function Get-FailureAdvice([string]$Message) {
     switch -Regex ($Message) {
+        '^SECRET_ACL_NOT_APPLIED' {
+            return "Les droits d acces au mot de passe de la base n ont pas pu etre restreints.`nLe secret n a pas ete conserve. Relancez l installateur depuis une session Windows disposant des droits d administration." }
         '^DOCKER_PRESENT_BUT_DAEMON_NOT_RESPONDING' {
             return "Docker Desktop est installe mais son moteur ne repond pas.`nOuvrez Docker Desktop, attendez l etat 'Engine running', puis relancez l installation." }
         '^DOCKER_INSTALLED_STARTUP_PENDING' {
@@ -723,8 +759,12 @@ function Get-LabSettings {
     try { return Get-Content -LiteralPath $path -Raw | ConvertFrom-Json } catch { throw 'LAB_SETTINGS_UNREADABLE' }
 }
 
-function Write-LabCompose($Manifest, $Settings) {
+function Write-LabGatewayCompose($Manifest, $Settings) {
     # A separate compose file, in the Lab directory, for a separate project.
+    # The name matters: while this function was also called Write-LabCompose,
+    # PowerShell kept whichever definition was parsed last, and the installer's
+    # call for the production stack landed here instead — three arguments into a
+    # two-parameter function, and no stack compose written at all.
     # The production stack is not redefined and not restarted by enabling Lab.
     $labData = ($Settings.data_dir).Replace('\','/')
     $network = 'nova-organization-lab_default'
@@ -798,7 +838,7 @@ function Enable-Lab {
     }
     $settings | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $script:LabRoot 'lab.json') -Encoding UTF8
 
-    Write-LabCompose $manifest $settings | Out-Null
+    Write-LabGatewayCompose $manifest $settings | Out-Null
     Set-LabFirewallRule $script:LabPort $address
     Invoke-LabCompose @('up','-d') | Out-Null
 
@@ -891,7 +931,7 @@ function Invoke-Install {
     # Decided on the real GPU, after the verified image is on disk and before
     # any configuration is written.
     $runtime = Resolve-LlmRuntimeMode $releaseProfile
-    $compose = Write-LabCompose $manifest $releaseProfile $runtime
+    $compose = Write-StackCompose $manifest $releaseProfile $runtime
     Save-State 'starting' $profile.id $manifest.release_id
     try {
         Invoke-Compose @('up','-d') | Out-Null

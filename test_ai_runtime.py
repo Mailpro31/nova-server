@@ -19,6 +19,8 @@ import ai_runtime
 import main
 from ai_runtime import (
     AI_MODEL_NOT_READY,
+    AI_PROMPT_TOO_LONG,
+    AI_RUNTIME_FAILED,
     AI_RUNTIME_BUSY,
     AI_RUNTIME_CONFIG_INVALID,
     AI_RUNTIME_TIMEOUT,
@@ -1002,6 +1004,230 @@ class AIRuntimeAdminTests(AdminTestCase):
             ).fetchone()
         metadata = json.loads(row["metadata"])
         self.assertEqual(set(metadata), {"old_revision", "new_revision", "apply_mode"})
+
+
+
+class ContextWindowBoundTests(unittest.IsolatedAsyncioTestCase):
+    """La sortie demandee doit tenir dans ce que le moteur annonce.
+
+    Un moteur borne `prompt + max_tokens` par sa fenetre. Sans cette borne,
+    le profil `standard` (2048 jetons) sur une fenetre de 2048 produit une
+    requete que le moteur refuse en 400 — quelle que soit la dictee.
+    """
+
+    def _engine(self, *, window=2048, prompt_tokens=None, tokenize=True, seen=None):
+        def handler(request: httpx.Request):
+            path = request.url.path
+            if path == "/tokenize":
+                if not tokenize:
+                    return httpx.Response(404, json={"detail": "Not Found"})
+                body = json.loads(request.content)
+                count = prompt_tokens
+                if count is None:
+                    count = sum(len(m["content"]) for m in body["messages"]) // 4
+                return httpx.Response(
+                    200, json={"count": count, "max_model_len": window}
+                )
+            if path == "/v1/models":
+                return httpx.Response(
+                    200,
+                    json={"data": [{"id": "engine-model", "max_model_len": window}]},
+                )
+            if seen is not None:
+                seen.append(json.loads(request.content))
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {"message": {"content": "ok"}, "finish_reason": "stop"}
+                    ]
+                },
+            )
+
+        return OpenAICompatibleTextBackend(
+            "http://127.0.0.1:8001/v1",
+            "engine-model",
+            transport=httpx.MockTransport(handler),
+        )
+
+    def _request(self, text, max_output_tokens=2048):
+        return TextInferenceRequest(
+            "r",
+            TaskType.STYLE_TRANSFORM,
+            text,
+            "instruction",
+            TextInferenceOptions(max_output_tokens, 0.3, ReasoningMode.OFF),
+            30,
+        )
+
+    async def test_a_short_prompt_keeps_room_for_the_whole_answer(self):
+        seen = []
+        backend = self._engine(prompt_tokens=116, seen=seen)
+        await backend.generate(self._request("Bonjour."))
+        # 2048 demandes ; 2048 - 116 - 8 reellement disponibles.
+        self.assertEqual(seen[0]["max_tokens"], 1924)
+
+    async def test_a_long_prompt_shrinks_the_answer_instead_of_failing(self):
+        seen = []
+        backend = self._engine(prompt_tokens=1800, seen=seen)
+        await backend.generate(self._request("mot " * 2000))
+        self.assertEqual(seen[0]["max_tokens"], 240)
+
+    async def test_a_request_never_exceeds_what_the_profile_asked_for(self):
+        seen = []
+        backend = self._engine(prompt_tokens=10, seen=seen)
+        await backend.generate(self._request("court", max_output_tokens=256))
+        self.assertEqual(seen[0]["max_tokens"], 256)
+
+    async def test_too_little_room_is_an_explicit_error_not_a_bad_request(self):
+        seen = []
+        backend = self._engine(prompt_tokens=2000, seen=seen)
+        with self.assertRaises(AIRuntimeError) as raised:
+            await backend.generate(self._request("mot " * 5000))
+        self.assertEqual(raised.exception.code, AI_PROMPT_TOO_LONG)
+        # Rien n'est parti vers le moteur : la requete aurait ete invalide.
+        self.assertEqual(seen, [])
+
+    async def test_exactly_the_minimum_room_is_still_served(self):
+        seen = []
+        backend = self._engine(prompt_tokens=2048 - 8 - 64, seen=seen)
+        await backend.generate(self._request("limite"))
+        self.assertEqual(seen[0]["max_tokens"], 64)
+
+    async def test_without_tokenize_the_fallback_never_overstates_capacity(self):
+        seen = []
+        backend = self._engine(tokenize=False, seen=seen)
+        text = "x" * 400
+        await backend.generate(self._request(text))
+        characters = len(text) + len("instruction")
+        estimated = characters // 2 + 8 * 2 + 8
+        self.assertEqual(seen[0]["max_tokens"], 2048 - estimated - 8)
+        self.assertLess(seen[0]["max_tokens"], 2048)
+
+    async def test_an_unknown_window_changes_nothing(self):
+        seen = []
+
+        def handler(request: httpx.Request):
+            if request.url.path in {"/tokenize", "/v1/models"}:
+                return httpx.Response(404, json={"detail": "Not Found"})
+            seen.append(json.loads(request.content))
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {"message": {"content": "ok"}, "finish_reason": "stop"}
+                    ]
+                },
+            )
+
+        backend = OpenAICompatibleTextBackend(
+            "http://127.0.0.1:8001/v1",
+            "engine-model",
+            transport=httpx.MockTransport(handler),
+        )
+        await backend.generate(self._request("texte"))
+        self.assertEqual(seen[0]["max_tokens"], 2048)
+
+    async def test_the_window_is_read_once_and_then_reused(self):
+        calls = []
+
+        def handler(request: httpx.Request):
+            calls.append(request.url.path)
+            if request.url.path == "/tokenize":
+                return httpx.Response(404, json={"detail": "Not Found"})
+            if request.url.path == "/v1/models":
+                return httpx.Response(
+                    200,
+                    json={"data": [{"id": "engine-model", "max_model_len": 2048}]},
+                )
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {"message": {"content": "ok"}, "finish_reason": "stop"}
+                    ]
+                },
+            )
+
+        backend = OpenAICompatibleTextBackend(
+            "http://127.0.0.1:8001/v1",
+            "engine-model",
+            transport=httpx.MockTransport(handler),
+        )
+        await backend.generate(self._request("un"))
+        await backend.generate(self._request("deux"))
+        self.assertEqual(calls.count("/v1/models"), 1)
+
+
+class EngineRefusalLogTests(unittest.IsolatedAsyncioTestCase):
+    """Un refus du moteur doit rester lisible sans exposer de contenu."""
+
+    async def test_the_refusal_logs_status_and_type_but_never_the_message(self):
+        dictated = "phrase dictee par un membre"
+
+        def handler(request: httpx.Request):
+            if request.url.path == "/tokenize":
+                return httpx.Response(200, json={"count": 5, "max_model_len": 2048})
+            return httpx.Response(
+                400,
+                json={
+                    "error": {
+                        "message": "refused: " + dictated,
+                        "type": "BadRequestError",
+                    }
+                },
+            )
+
+        backend = OpenAICompatibleTextBackend(
+            "http://127.0.0.1:8001/v1",
+            "engine-model",
+            transport=httpx.MockTransport(handler),
+        )
+        with self.assertLogs("nova", level="ERROR") as captured:
+            with self.assertRaises(AIRuntimeError) as raised:
+                await backend.generate(
+                    TextInferenceRequest(
+                        "r",
+                        TaskType.STYLE_TRANSFORM,
+                        dictated,
+                        "instruction",
+                        TextInferenceOptions(256, 0.3, ReasoningMode.OFF),
+                        30,
+                    )
+                )
+        self.assertEqual(raised.exception.code, AI_RUNTIME_FAILED)
+        record = captured.records[0]
+        self.assertEqual(record.getMessage(), "ai.engine_refused")
+        self.assertEqual(record.fields["status"], 400)
+        self.assertEqual(record.fields["error_type"], "BadRequestError")
+        self.assertNotIn(dictated, json.dumps(record.fields))
+
+    async def test_an_unreadable_refusal_still_logs_its_status(self):
+        def handler(request: httpx.Request):
+            if request.url.path == "/tokenize":
+                return httpx.Response(200, json={"count": 5, "max_model_len": 2048})
+            return httpx.Response(500, content=b"<html>engine crashed</html>")
+
+        backend = OpenAICompatibleTextBackend(
+            "http://127.0.0.1:8001/v1",
+            "engine-model",
+            transport=httpx.MockTransport(handler),
+        )
+        with self.assertLogs("nova", level="ERROR") as captured:
+            with self.assertRaises(AIRuntimeError):
+                await backend.generate(
+                    TextInferenceRequest(
+                        "r",
+                        TaskType.REFORMULATION,
+                        "texte",
+                        "instruction",
+                        TextInferenceOptions(256, 0.3, ReasoningMode.OFF),
+                        30,
+                    )
+                )
+        self.assertEqual(captured.records[0].fields["error_type"], "unknown")
+        self.assertEqual(captured.records[0].fields["status"], 500)
+
 
 
 if __name__ == "__main__":
