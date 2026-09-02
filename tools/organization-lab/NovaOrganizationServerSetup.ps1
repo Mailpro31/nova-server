@@ -188,7 +188,24 @@ function Get-OrCreateSecret([string]$Name) {
         # URL, and '/' or '+' from standard base64 corrupt it.
         $secret = [Convert]::ToBase64String($bytes).Replace('+','-').Replace('/','_').TrimEnd('=')
         [IO.File]::WriteAllText($path, $secret)
-        & icacls.exe $path '/inheritance:r' "/grant:r:$env:USERNAME:(R,W)" | Out-Null
+        # Deux erreurs se cumulaient ici, et l'echec partait dans Out-Null.
+        # `"$env:USERNAME:(R,W)"` se lit comme une variable qualifiee par un
+        # lecteur : PowerShell rendait une chaine vide. Et `/grant:r:` n'est
+        # pas la syntaxe d'icacls, qui attend `/grant:r` puis l'entree en
+        # argument distinct. Le mot de passe PostgreSQL heritait donc des ACL
+        # du dossier parent, sur toutes les installations. Le SID est prefere
+        # au nom : il survit a un compte renomme, localise ou joint a un
+        # domaine. SYSTEM est conserve, faute de quoi le service qui monte le
+        # secret dans le conteneur ne pourrait plus le lire.
+        $sid = ([Security.Principal.WindowsIdentity]::GetCurrent()).User.Value
+        $acl = Run-Captured 'icacls.exe' @(
+            $path, '/inheritance:r', '/grant:r', "*${sid}:(R,W)", '/grant:r', '*S-1-5-18:(R,W)')
+        if ($acl.ExitCode -ne 0) {
+            # Fail closed : mieux vaut pas de secret qu'un secret lisible par
+            # tout le monde. Le prochain appel en regenerera un.
+            Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+            throw 'SECRET_ACL_NOT_APPLIED'
+        }
     }
     return $path
 }
@@ -658,6 +675,8 @@ function Restore-PreviousConfiguration {
 
 function Get-FailureAdvice([string]$Message) {
     switch -Regex ($Message) {
+        '^SECRET_ACL_NOT_APPLIED' {
+            return "Les droits d acces au mot de passe de la base n ont pas pu etre restreints.`nLe secret n a pas ete conserve. Relancez l installateur depuis une session Windows disposant des droits d administration." }
         '^DOCKER_PRESENT_BUT_DAEMON_NOT_RESPONDING' {
             return "Docker Desktop est installe mais son moteur ne repond pas.`nOuvrez Docker Desktop, attendez l etat 'Engine running', puis relancez l installation." }
         '^DOCKER_INSTALLED_STARTUP_PENDING' {

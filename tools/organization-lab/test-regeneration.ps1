@@ -19,9 +19,6 @@ $ErrorActionPreference = 'Stop'
 $setup = Join-Path $PSScriptRoot 'NovaOrganizationServerSetup.ps1'
 if (-not (Test-Path -LiteralPath $setup)) { throw 'SETUP_SCRIPT_NOT_FOUND' }
 
-# icacls, appele par Get-OrCreateSecret, a besoin d'un nom d'utilisateur.
-if (-not $env:USERNAME) { $env:USERNAME = 'nova-regen-test' }
-
 $originalProgramData = $env:ProgramData
 $scratch = @()
 
@@ -99,6 +96,23 @@ try {
     if ($two.ServerImage -ne 'nova-local/server:9.9.9') { $failures += 'IMAGE_NOT_FROM_MANIFEST' }
     if (-not (Test-Path -LiteralPath (Join-Path $script:Generated 'compose.previous.yml'))) {
         $failures += 'PREVIOUS_NOT_KEPT'
+    }
+
+    # Le mot de passe de la base est ecrit par la meme fonction. Ses droits
+    # doivent etre restreints pour de vrai, pas seulement demandes.
+    $secret = Join-Path $script:Secrets 'postgres-password.txt'
+    if (-not (Test-Path -LiteralPath $secret)) {
+        $failures += 'SECRET_NOT_CREATED'
+    } else {
+        $acl = Get-Acl -LiteralPath $secret
+        $sid = ([Security.Principal.WindowsIdentity]::GetCurrent()).User.Value
+        if (-not $acl.AreAccessRulesProtected) { $failures += 'SECRET_STILL_INHERITS' }
+        $granted = @($acl.Access | ForEach-Object {
+            $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value })
+        if ($granted -notcontains $sid) { $failures += 'SECRET_OWNER_NOT_GRANTED' }
+        foreach ($open in @('S-1-1-0', 'S-1-5-32-545')) {
+            if ($granted -contains $open) { $failures += 'SECRET_ACL_TOO_OPEN' }
+        }
     }
 
     Use-Scratch (New-Scratch)

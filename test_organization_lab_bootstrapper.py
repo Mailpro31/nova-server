@@ -625,3 +625,40 @@ def test_a_regeneration_can_be_verified_on_this_machine():
     )
     assert "REGENERATION_TEST_OK" in completed.stdout, completed.stdout + completed.stderr
     assert completed.returncode == 0
+
+
+def test_the_database_secret_restricts_its_access_for_real():
+    # Deux erreurs cumulees rendaient la restriction inoperante : `$env:USERNAME:`
+    # se lit comme une variable qualifiee par un lecteur, et `/grant:r:` n'est
+    # pas la syntaxe d'icacls. L'echec partait dans Out-Null.
+    body = setup_source()
+    secret = body[body.index("function Get-OrCreateSecret"):]
+    secret = secret[:secret.index("\nfunction ")]
+    # Le commentaire cite les deux formes fautives : seul le code compte.
+    secret = "\n".join(
+        line for line in secret.splitlines() if not line.strip().startswith("#")
+    )
+    assert "$env:USERNAME" not in secret
+    assert "/grant:r:" not in secret
+    assert "'/grant:r'" in secret
+    assert "WindowsIdentity]::GetCurrent()).User.Value" in secret
+    assert "icacls.exe" in secret and "Out-Null" not in secret
+
+
+def test_a_secret_that_could_not_be_protected_is_not_kept():
+    body = setup_source()
+    secret = body[body.index("function Get-OrCreateSecret"):]
+    secret = secret[:secret.index("\nfunction ")]
+    assert "$acl.ExitCode -ne 0" in secret
+    assert "Remove-Item" in secret
+    assert "throw 'SECRET_ACL_NOT_APPLIED'" in secret
+    assert "SECRET_ACL_NOT_APPLIED" in body[body.index("function Get-FailureAdvice"):]
+
+
+def test_the_regeneration_test_checks_the_secret_acl():
+    script = (ROOT / "test-regeneration.ps1").read_text(encoding="utf-8")
+    assert "AreAccessRulesProtected" in script
+    # S-1-1-0 Everyone, S-1-5-32-545 Users : ni l'un ni l'autre ne doit
+    # figurer dans les droits du fichier.
+    assert "S-1-1-0" in script and "S-1-5-32-545" in script
+    assert "SECRET_OWNER_NOT_GRANTED" in script
