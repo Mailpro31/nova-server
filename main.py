@@ -42,6 +42,7 @@ import scim
 import secrets_provider
 from ai_runtime import (
     AI_MODEL_NOT_READY,
+    AI_PROMPT_TOO_LONG,
     AI_RUNTIME_BUSY,
     AI_RUNTIME_CONFIG_INVALID,
     AI_RUNTIME_FAILED,
@@ -9353,6 +9354,10 @@ def runtime_http_error(error: AIRuntimeError, task_type: TaskType) -> HTTPExcept
         AI_RUNTIME_STARTING: 503,
         AI_MODEL_NOT_READY: 503,
         AI_RUNTIME_CONFIG_INVALID: 503,
+        # Le texte soumis ne laisse pas la place d'une reponse dans la
+        # fenetre du moteur. C'est la requete qu'il faut reduire, pas le
+        # serveur qu'il faut reessayer : 413, jamais 502.
+        AI_PROMPT_TOO_LONG: 413,
     }
     detail = {"code": error.code, "task_type": task_type.value}
     if error.retry_after is not None:

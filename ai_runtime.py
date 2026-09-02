@@ -12,6 +12,7 @@ import ipaddress
 import json
 import os
 import platform
+import re
 import socket
 import subprocess
 import time
@@ -23,6 +24,8 @@ from typing import Any, Protocol
 from urllib.parse import urlparse
 
 import httpx
+
+import observability
 
 
 class TaskType(str, Enum):
@@ -84,6 +87,19 @@ AI_RUNTIME_TIMEOUT = "AI_RUNTIME_TIMEOUT"
 AI_RUNTIME_FAILED = "AI_RUNTIME_FAILED"
 AI_MODEL_NOT_READY = "AI_MODEL_NOT_READY"
 AI_RUNTIME_CONFIG_INVALID = "AI_RUNTIME_CONFIG_INVALID"
+AI_PROMPT_TOO_LONG = "AI_PROMPT_TOO_LONG"
+
+# Un moteur borne `prompt + max_tokens` par sa fenetre. Demander la sortie
+# du profil sans regarder ce que le prompt a deja consomme produit une
+# requete invalide que le moteur refuse en 400, quelle que soit sa taille.
+MIN_OUTPUT_TOKENS = 64
+CONTEXT_SAFETY_MARGIN_TOKENS = 8
+
+# Repli utilise seulement si le moteur n'expose pas `/tokenize`. Il doit
+# surestimer le cout du prompt : sous-estimer rendrait la requete invalide,
+# ce que ce correctif existe precisement pour empecher.
+_FALLBACK_CHARS_PER_TOKEN = 2.0
+_FALLBACK_MESSAGE_OVERHEAD_TOKENS = 8
 
 
 class AIRuntimeError(RuntimeError):
@@ -216,6 +232,34 @@ def _auth_headers(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"} if token else {}
 
 
+_ENGINE_ERROR_TYPE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
+
+
+def _log_engine_refusal(adapter: str, response: httpx.Response) -> None:
+    """Code HTTP et type d'erreur du moteur, jamais son message.
+
+    Sans cette ligne, un refus du moteur arrive au client en
+    `AI_RUNTIME_FAILED` sans rien qui permette d'en trouver la cause.
+    """
+    error_type = None
+    try:
+        body = response.json()
+        if isinstance(body, dict):
+            error = body.get("error")
+            candidate = error.get("type") if isinstance(error, dict) else None
+            if isinstance(candidate, str) and _ENGINE_ERROR_TYPE.match(candidate):
+                error_type = candidate
+    except (ValueError, json.JSONDecodeError):
+        error_type = None
+    observability.log(
+        "ai.engine_refused",
+        level="error",
+        adapter=adapter,
+        status=response.status_code,
+        error_type=error_type or "unknown",
+    )
+
+
 class OpenAICompatibleTextBackend:
     adapter_name = "openai_compatible"
 
@@ -235,6 +279,99 @@ class OpenAICompatibleTextBackend:
         self.health_timeout = health_timeout
         self.reasoning_supported = reasoning_supported
         self.transport = transport
+        self._context_window: int | None = None
+
+    @property
+    def _engine_root(self) -> str:
+        """Racine du moteur. `/tokenize` est un voisin de `/v1`, pas un enfant."""
+        if self.base_url.endswith("/v1"):
+            return self.base_url[:-3].rstrip("/")
+        return self.base_url
+
+    async def _tokenize(
+        self, client: httpx.AsyncClient, messages: list[dict[str, str]]
+    ) -> tuple[int | None, int | None]:
+        """Cout reel du prompt, et fenetre si le moteur l'annonce ici.
+
+        Retourne `(None, None)` si l'endpoint est absent ou illisible : c'est
+        au repli conservateur de prendre le relais, jamais a une supposition.
+        """
+        try:
+            response = await client.post(
+                f"{self._engine_root}/tokenize",
+                headers=_auth_headers(self.token),
+                json={
+                    "model": self.model,
+                    "messages": messages,
+                    "add_generation_prompt": True,
+                },
+            )
+            if response.status_code != 200:
+                return None, None
+            body = response.json()
+        except (httpx.HTTPError, ValueError, json.JSONDecodeError):
+            return None, None
+        count = body.get("count")
+        window = body.get("max_model_len")
+        return (
+            count if isinstance(count, int) and count >= 0 else None,
+            window if isinstance(window, int) and window > 0 else None,
+        )
+
+    async def _advertised_window(self, client: httpx.AsyncClient) -> int | None:
+        """Fenetre annoncee par `/models`, mise en cache une fois connue."""
+        if self._context_window is not None:
+            return self._context_window
+        try:
+            response = await client.get(
+                f"{self.base_url}/models", headers=_auth_headers(self.token)
+            )
+            if response.status_code != 200:
+                return None
+            body = response.json()
+        except (httpx.HTTPError, ValueError, json.JSONDecodeError):
+            return None
+        for item in body.get("data", []):
+            if not isinstance(item, dict):
+                continue
+            window = item.get("max_model_len")
+            if item.get("id") == self.model and isinstance(window, int) and window > 0:
+                self._context_window = window
+                return window
+        return None
+
+    @staticmethod
+    def _fallback_prompt_tokens(messages: list[dict[str, str]]) -> int:
+        characters = sum(len(message.get("content") or "") for message in messages)
+        return (
+            int(characters / _FALLBACK_CHARS_PER_TOKEN)
+            + _FALLBACK_MESSAGE_OVERHEAD_TOKENS * len(messages)
+            + _FALLBACK_MESSAGE_OVERHEAD_TOKENS
+        )
+
+    async def _bounded_output_tokens(
+        self,
+        client: httpx.AsyncClient,
+        messages: list[dict[str, str]],
+        requested: int,
+    ) -> int:
+        """Sortie demandee, ramenee a ce que la fenetre laisse reellement.
+
+        Sans fenetre connue, on n'invente rien : la valeur demandee part
+        telle quelle, comme avant ce correctif.
+        """
+        prompt_tokens, window = await self._tokenize(client, messages)
+        if prompt_tokens is None:
+            prompt_tokens = self._fallback_prompt_tokens(messages)
+        if window is None:
+            window = await self._advertised_window(client)
+        if window is None:
+            return requested
+        self._context_window = window
+        remaining = window - prompt_tokens - CONTEXT_SAFETY_MARGIN_TOKENS
+        if remaining < MIN_OUTPUT_TOKENS:
+            raise AIRuntimeError(AI_PROMPT_TOO_LONG)
+        return min(requested, remaining)
 
     async def generate(self, request: TextInferenceRequest) -> TextInferenceResult:
         if not self.base_url:
@@ -260,6 +397,9 @@ class OpenAICompatibleTextBackend:
             async with httpx.AsyncClient(
                 timeout=request.timeout_seconds, transport=self.transport
             ) as client:
+                payload["max_tokens"] = await self._bounded_output_tokens(
+                    client, payload["messages"], request.options.max_output_tokens
+                )
                 response = await client.post(
                     f"{self.base_url}/chat/completions",
                     headers=_auth_headers(self.token),
@@ -276,6 +416,7 @@ class OpenAICompatibleTextBackend:
         if response.status_code == 425:
             raise AIRuntimeError(AI_RUNTIME_STARTING, retry_after=2)
         if response.status_code != 200:
+            _log_engine_refusal(self.adapter_name, response)
             raise AIRuntimeError(AI_RUNTIME_FAILED)
         try:
             body = response.json()
@@ -395,6 +536,7 @@ class WhisperCompatibleSpeechBackend:
         if response.status_code == 425:
             raise AIRuntimeError(AI_RUNTIME_STARTING, retry_after=2)
         if response.status_code != 200:
+            _log_engine_refusal(self.adapter_name, response)
             raise AIRuntimeError(AI_RUNTIME_FAILED)
         try:
             body = response.json()
