@@ -6,6 +6,20 @@ param(
     [switch]$Headless,
     [string]$OrganizationName = 'Nova Lab',
     [ValidateSet('campus','business')][string]$OrganizationType = 'campus',
+    # L'adresse du premier administrateur. Une installation qui n'en nomme
+    # aucun livre un serveur que personne ne peut piloter : la pile repond, et
+    # Nova Admin reste inaccessible. Le motif accepte la chaine vide parce que
+    # le mode interactif la demande plus tard ; il refuse en revanche tout ce
+    # qui ne peut etre l'adresse de personne, et il le fait a la liaison des
+    # parametres -- donc avant la moindre ligne de code, et loin du conteneur.
+    [ValidatePattern('^$|^[^@\s,;<>"]+@[^@\s,;<>"]+\.[^@\s,;<>".]{2,}$')]
+    [string]$FirstAdminEmail = '',
+    # Le second est facultatif, jamais impose. Exiger deux adresses pousserait
+    # a en inventer une pour passer l'ecran, et un administrateur invente est
+    # pire qu'un administrateur manquant : il occupe la place sans jamais
+    # correspondre a personne.
+    [ValidatePattern('^$|^[^@\s,;<>"]+@[^@\s,;<>"]+\.[^@\s,;<>".]{2,}$')]
+    [string]$SecondAdminEmail = '',
     [string]$ManifestUrl = 'https://releases.novaspeak.app/server/quick-lab/manifest.json',
     [string]$ReleasePublicKeyXml = '__NOVA_RELEASE_PUBLIC_KEY_XML__',
     [switch]$LibraryMode
@@ -13,7 +27,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$script:Version = '0.4.3'
+$script:Version = '0.5.0'
 $script:Root = Join-Path $env:ProgramData 'Nova\OrganizationServer'
 $script:StatePath = Join-Path $script:Root 'setup-state.json'
 $script:LogPath = Join-Path $script:Root 'logs\setup.log'
@@ -208,6 +222,177 @@ function Get-OrCreateSecret([string]$Name) {
         }
     }
     return $path
+}
+
+# ──────────────────────────── Premier administrateur ──────────────────────
+#
+# Une installation qui va jusqu'au bout sans nommer personne livre un serveur
+# que personne ne peut piloter : la pile repond, /api/readyz dit oui, et Nova
+# Admin refuse tout le monde. Le geste manquant tenait en une commande, mais
+# elle exigeait d'ouvrir un shell dans le conteneur -- c'est-a-dire de savoir
+# qu'elle existe.
+#
+# Deux precautions gouvernent tout ce qui suit :
+#
+#   - l'adresse est verifiee **avant** d'atteindre le conteneur. Une adresse
+#     fautive ne produit pas une erreur, elle produit pire : un compte
+#     administrateur qui ne correspondra jamais a l'identite reelle, pendant
+#     que la personne se connecte et obtient un compte ordinaire ;
+#   - l'adresse n'entre dans aucun journal. Write-SafeLog ne masque que les
+#     affectations de mot de passe, de jeton, de secret ou d'identifiant : une
+#     adresse y passerait en clair. Le journal ne recoit donc qu'un decompte.
+
+function Test-EmailShape([string]$Value) {
+    # La forme, et rien de plus. Savoir si la boite existe n'appartient qu'au
+    # fournisseur d'identite ; ce controle-ci arrete seulement ce qui ne peut
+    # etre l'adresse de personne. Trop strict serait pire que trop large : une
+    # adresse valide refusee ici empecherait de nommer un administrateur.
+    if ([string]::IsNullOrWhiteSpace($Value)) { return $false }
+    return ($Value.Trim() -match '^[^@\s,;<>"]+@[^@\s,;<>"]+\.[^@\s,;<>".]{2,}$')
+}
+
+function Protect-OperatorFile([string]$Path) {
+    # Memes droits que le mot de passe de la base : le proprietaire et SYSTEM,
+    # sans heritage. Volontairement distinct de Get-OrCreateSecret, qui protege
+    # un secret qu'il vient de tirer au sort ; ici on protege une valeur saisie,
+    # et les deux chemins doivent pouvoir echouer -- et etre verifies --
+    # separement. Le SID plutot que le nom : il survit a un compte renomme,
+    # localise ou joint a un domaine.
+    $sid = ([Security.Principal.WindowsIdentity]::GetCurrent()).User.Value
+    $acl = Run-Captured 'icacls.exe' @(
+        $Path, '/inheritance:r', '/grant:r', "*${sid}:(R,W)", '/grant:r', '*S-1-5-18:(R,W)')
+    if ($acl.ExitCode -ne 0) {
+        # Fail closed, comme pour le secret : mieux vaut redemander l'adresse
+        # que la laisser lisible par tout le monde.
+        Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+        throw 'ADMIN_EMAIL_ACL_NOT_APPLIED'
+    }
+}
+
+function Get-AdministratorStatePath {
+    return (Join-Path $script:Secrets 'first-administrators.txt')
+}
+
+function Read-StoredAdministrators {
+    # Register-Resume ecrit dans RunOnce la commande `"<exe>" resume`, **sans
+    # aucun argument** : apres le redemarrage exige par WSL2, l'adresse saisie
+    # avant ce redemarrage n'existe plus nulle part. Sans cette relecture, la
+    # reprise reinstallerait la pile et ne nommerait personne.
+    $path = Get-AdministratorStatePath
+    if (-not (Test-Path -LiteralPath $path)) { return @() }
+    try {
+        return @(Get-Content -LiteralPath $path -ErrorAction Stop |
+            ForEach-Object { $_.Trim() } | Where-Object { Test-EmailShape $_ })
+    } catch {
+        # Illisible n'est pas fatal : le mode interactif redemandera.
+        return @()
+    }
+}
+
+function Save-Administrators([string[]]$Emails) {
+    Initialize-Directories
+    $path = Get-AdministratorStatePath
+    [IO.File]::WriteAllLines($path, [string[]]$Emails, (New-Object Text.UTF8Encoding($false)))
+    Protect-OperatorFile $path
+}
+
+function Read-EmailFromDialog([string]$Prompt, [string]$Title) {
+    Add-Type -AssemblyName Microsoft.VisualBasic
+    $answer = [Microsoft.VisualBasic.Interaction]::InputBox($Prompt, $Title, '')
+    if ($null -eq $answer) { return '' }
+    return $answer.Trim()
+}
+
+function Resolve-AdministratorEmails {
+    <#
+        L'ordre est celui de l'autorite : ce que l'operateur vient de passer en
+        ligne de commande, sinon ce qu'une execution precedente a retenu, sinon
+        ce qu'on lui demande. Le mode silencieux n'a pas de troisieme recours :
+        il echoue tout de suite, avant le materiel, avant le reseau, avant la
+        moindre image telechargee.
+    #>
+    $first = $FirstAdminEmail.Trim()
+    $second = $SecondAdminEmail.Trim()
+    if (-not $first) {
+        $stored = @(Read-StoredAdministrators)
+        if ($stored.Count -ge 1) { $first = $stored[0] }
+        if (-not $second -and $stored.Count -ge 2) { $second = $stored[1] }
+    }
+    if (-not $first) {
+        if ($Headless) { throw 'FIRST_ADMIN_EMAIL_REQUIRED' }
+        $first = Read-EmailFromDialog (
+            "Adresse professionnelle du premier administrateur de $OrganizationName.`n`n" +
+            "Ce doit etre exactement l'adresse renvoyee par votre fournisseur d'identite : " +
+            "c'est elle qui rattachera le compte lors de la premiere connexion.") `
+            'Nova Organization Server — Premier administrateur'
+        if (-not (Test-EmailShape $first)) { throw 'FIRST_ADMIN_EMAIL_REQUIRED' }
+        if (-not $second) {
+            $second = Read-EmailFromDialog (
+                "Adresse d'un second administrateur (facultatif).`n`n" +
+                "Un administrateur unique bloque l'organisation des qu'il est absent. " +
+                "Laissez vide pour continuer sans.") `
+                'Nova Organization Server — Second administrateur'
+        }
+    }
+    if (-not (Test-EmailShape $first)) { throw 'FIRST_ADMIN_EMAIL_INVALID' }
+    if ($second -and -not (Test-EmailShape $second)) { throw 'FIRST_ADMIN_EMAIL_INVALID' }
+    $emails = @($first.ToLowerInvariant())
+    if ($second -and $second.ToLowerInvariant() -ne $emails[0]) {
+        $emails += $second.ToLowerInvariant()
+    }
+    return $emails
+}
+
+function Invoke-AdminCli([string[]]$Arguments) {
+    $compose = Join-Path $script:Generated 'compose.quick-lab.yml'
+    if (-not (Test-Path -LiteralPath $compose)) { throw 'LAB_CONFIGURATION_MISSING' }
+    # `exec -T` : sans lui, un TTY est reclame. L'installateur tourne sans
+    # console en mode silencieux et a la reprise RunOnce, et la commande y
+    # resterait bloquee.
+    return Run-Captured 'docker.exe' (@('compose','--file',$compose,'exec','-T','api',
+        'python','admin_cli.py') + $Arguments)
+}
+
+function Set-FirstAdministrators([string[]]$Emails) {
+    <#
+        Idempotent par construction : `grant` **ecrit** un role, il ne l'ajoute
+        pas. Rejoue -- par `update`, par `reconfigure`, ou par une simple
+        reinstallation -- il reecrit la meme valeur sur le meme compte. Et
+        `--create-if-missing` ne peut pas dupliquer : l'unicite
+        (organisation, adresse) est tenue par un index unique en base, et la
+        seconde execution retrouve le compte au lieu d'en creer un.
+    #>
+    if ($Emails.Count -eq 0) { throw 'FIRST_ADMIN_EMAIL_REQUIRED' }
+    foreach ($email in $Emails) {
+        if (-not (Test-EmailShape $email)) { throw 'FIRST_ADMIN_EMAIL_INVALID' }
+    }
+    foreach ($email in $Emails) {
+        $result = Invoke-AdminCli @('grant', $email, 'organization_admin', '--create-if-missing')
+        if ($result.ExitCode -ne 0) {
+            # Ni l'adresse ni la sortie de la commande n'entrent dans ce
+            # message : il est journalise tel quel par le bloc d'erreur final.
+            throw ('FIRST_ADMIN_PROMOTION_FAILED: exit {0}' -f $result.ExitCode)
+        }
+    }
+    Write-SafeLog ('first_admin promoted count={0}' -f $Emails.Count)
+    return $Emails.Count
+}
+
+function Get-AdministratorReport([int]$Count) {
+    # Ce que l'ecran final annonce vient de la base, pas de ce que le script
+    # croit avoir fait. Un echec de lecture n'invalide pas la promotion, qui a
+    # deja rendu son code de sortie ; il rend seulement le rapport muet.
+    $listed = Invoke-AdminCli @('list')
+    $roster = if ($listed.ExitCode -eq 0) { $listed.Output } else { '' }
+    $text = if ($roster) { "Administrateurs de l organisation :`n$roster" }
+            else { "Administrateurs promus : $Count" }
+    if ($Count -lt 2) {
+        $text += "`n`nUn seul administrateur. S il est absent, plus personne ne peut " +
+                 "piloter l organisation.`nAjoutez-en un second maintenant :`n" +
+                 "  docker compose --file `"$(Join-Path $script:Generated 'compose.quick-lab.yml')`" " +
+                 "exec -T api python admin_cli.py grant <adresse> organization_admin --create-if-missing"
+    }
+    return $text
 }
 
 function Save-State([string]$Step, [string]$ProfileId, [string]$ReleaseId = '') {
@@ -675,6 +860,14 @@ function Restore-PreviousConfiguration {
 
 function Get-FailureAdvice([string]$Message) {
     switch -Regex ($Message) {
+        '^FIRST_ADMIN_EMAIL_REQUIRED' {
+            return "Aucune adresse d administrateur n a ete fournie.`nRelancez avec -FirstAdminEmail <adresse professionnelle>. Sans administrateur, la pile demarre mais personne ne peut ouvrir Nova Admin." }
+        '^FIRST_ADMIN_EMAIL_INVALID' {
+            return "L adresse d administrateur fournie n est pas une adresse valide.`nAucun compte n a ete cree. Relancez avec -FirstAdminEmail <adresse professionnelle>." }
+        '^ADMIN_EMAIL_ACL_NOT_APPLIED' {
+            return "Les droits d acces au fichier retenant l adresse de l administrateur n ont pas pu etre restreints.`nL adresse n a pas ete conservee. Relancez l installateur depuis une session Windows disposant des droits d administration." }
+        '^FIRST_ADMIN_PROMOTION_FAILED' {
+            return "Le serveur fonctionne, mais le premier administrateur n a pas pu etre nomme.`nPersonne ne peut encore ouvrir Nova Admin. Relancez l action 'reconfigure' avec -FirstAdminEmail <adresse>, ou nommez-le a la main :`n  docker compose --file %ProgramData%\Nova\OrganizationServer\generated\compose.quick-lab.yml exec -T api python admin_cli.py grant <adresse> organization_admin --create-if-missing" }
         '^SECRET_ACL_NOT_APPLIED' {
             return "Les droits d acces au mot de passe de la base n ont pas pu etre restreints.`nLe secret n a pas ete conserve. Relancez l installateur depuis une session Windows disposant des droits d administration." }
         '^DOCKER_PRESENT_BUT_DAEMON_NOT_RESPONDING' {
@@ -917,6 +1110,13 @@ function Get-LabStatus {
 }
 
 function Invoke-Install {
+    # Avant tout le reste. En mode silencieux, une installation sans adresse
+    # d'administrateur echoue ici, en une seconde, plutot qu'apres une demi-heure
+    # de telechargement -- et plutot qu'en livrant un serveur que personne ne
+    # pilote. En interactif, la question est posee tant que l'operateur est
+    # encore devant l'ecran.
+    $administrators = Resolve-AdministratorEmails
+    Save-Administrators $administrators
     $hardware = Get-Hardware
     $profile = Select-HardwareProfile $hardware (Read-BundledProfiles)
     if (-not $profile.supported) { throw $profile.diagnostic }
@@ -948,7 +1148,13 @@ function Invoke-Install {
         throw
     }
     Save-State 'ready' $profile.id $manifest.release_id
-    Show-Result 'Nova Organization Server — READY' "Organization: $OrganizationName`nProfile: $($profile.id)`nNova API: http://127.0.0.1:8080`nLanguage runtime: $($runtime.Mode)`nPostgreSQL, Redis, Speech, Language and Nova Server are running."
+    # Hors du try/catch ci-dessus, et c'est delibere : Restore-PreviousConfiguration
+    # ramenerait la pile precedente. Une promotion ratee n'est pas une raison
+    # d'annuler une mise a jour qui, elle, a reussi -- la pile repond, readyz dit
+    # oui, et seule la nomination reste a faire. L'echec reste visible : il
+    # remonte au bloc d'erreur final, qui affiche le code et la marche a suivre.
+    $promoted = Set-FirstAdministrators $administrators
+    Show-Result 'Nova Organization Server — READY' ("Organization: $OrganizationName`nProfile: $($profile.id)`nNova API: http://127.0.0.1:8080`nLanguage runtime: $($runtime.Mode)`nPostgreSQL, Redis, Speech, Language and Nova Server are running.`n`n" + (Get-AdministratorReport $promoted))
 }
 
 if ($LibraryMode) { return }
@@ -992,6 +1198,37 @@ if ($Action -eq 'selftest') {
             if ($got -ne $expected[$case]) { throw ('SERVICE_STATE_WRONG {0} -> {1}' -f $case, $got) }
         }
         Write-Output 'SERVICE_STATE_OK running=ok healthy=ok starting=ok unhealthy=ok exited0=ok exited1=ok'
+
+        # Le premier administrateur. Une adresse fautive doit etre refusee ici,
+        # sur le poste, et non decouverte le jour ou personne n arrive a ouvrir
+        # Nova Admin. Ce controle est celui que la ligne de commande et la boite
+        # de dialogue partagent.
+        $emailCases = @{
+            'alex@exemple.fr'             = $true
+            'alex.martin@sous.exemple.fr' = $true
+            ''                            = $false
+            'alex'                        = $false
+            'alex@exemple'                = $false
+            'alex@@exemple.fr'            = $false
+            'alex@exemple.f'              = $false
+            'alex martin@exemple.fr'      = $false
+            'alex@exemple.fr,bea@exemple.fr' = $false
+        }
+        foreach ($case in $emailCases.Keys) {
+            if ((Test-EmailShape $case) -ne $emailCases[$case]) {
+                throw ('ADMIN_EMAIL_SHAPE_WRONG case={0}' -f $(if ($case) { 'non-vide' } else { 'vide' }))
+            }
+        }
+        Write-Output 'ADMIN_EMAIL_SHAPE_OK accepted=2 refused=7'
+
+        # Chaque echec de nomination doit porter sa marche a suivre : c est ce
+        # qui distingue un installateur d un code d erreur.
+        foreach ($code in @('FIRST_ADMIN_EMAIL_REQUIRED', 'FIRST_ADMIN_EMAIL_INVALID',
+                            'FIRST_ADMIN_PROMOTION_FAILED: exit 1',
+                            'ADMIN_EMAIL_ACL_NOT_APPLIED')) {
+            if (-not (Get-FailureAdvice $code)) { throw ('ADMIN_ADVICE_MISSING {0}' -f $code) }
+        }
+        Write-Output 'ADMIN_ADVICE_OK codes=4'
 
         # If Docker is up, report what the real lab containers look like. This
         # reads state only: nothing is started, stopped or removed.

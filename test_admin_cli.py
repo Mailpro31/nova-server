@@ -512,5 +512,174 @@ class ControlPlaneModeTests(unittest.TestCase):
         self.assertEqual(code, 0)
 
 
+
+class BootstrapFirstAdministratorTests(unittest.TestCase):
+    """L'amorçage : nommer un administrateur là où aucun compte n'existe.
+
+    C'est le cas de l'installateur, sur une organisation neuve : personne ne
+    s'est encore connecté, donc `grant` seul n'a rien à promouvoir. Ces tests
+    couvrent les quatre situations qui décident si l'installation livre un
+    serveur pilotable : la promotion, sa répétition, son échec, et la saisie
+    fautive qui ne doit jamais atteindre la base.
+    """
+
+    EMAIL = "premiere-admin@example.com"
+    SECOND = "seconde-admin@example.com"
+
+    def setUp(self):
+        with main.db() as conn:
+            for email in (self.EMAIL, self.SECOND, "TYPO@example.com"):
+                conn.execute(
+                    "DELETE FROM users WHERE organization_id=? AND normalized_email=?",
+                    (main.nova_organization_id(), main.normalize_email(email)),
+                )
+
+    def account(self, email: str):
+        with main.db() as conn:
+            return main.user_by_email(conn, main.nova_organization_id(), email)
+
+    def count(self, email: str) -> int:
+        with main.db() as conn:
+            return conn.execute(
+                "SELECT COUNT(*) AS n FROM users WHERE organization_id=? "
+                "AND normalized_email=?",
+                (main.nova_organization_id(), main.normalize_email(email)),
+            ).fetchone()["n"]
+
+    # --- promotion réussie ------------------------------------------------
+
+    def test_an_unknown_address_is_promoted_when_creation_is_asked_for(self):
+        self.assertIsNone(self.account(self.EMAIL))
+        code, output = run("grant", self.EMAIL, "organization_admin",
+                           "--create-if-missing")
+        self.assertEqual(code, 0, output)
+        self.assertIn("organization_admin", output)
+        self.assertEqual(self.account(self.EMAIL)["security_role"],
+                         "organization_admin")
+
+    def test_without_the_flag_an_unknown_address_is_still_refused(self):
+        """Le défaut ne change pas : sur le chemin de récupération, une faute
+        de frappe doit s'arrêter là plutôt que de fabriquer un compte."""
+        code, output = run("grant", self.EMAIL, "organization_admin")
+        self.assertEqual(code, 1)
+        self.assertIn("aucun compte", output)
+        self.assertIsNone(self.account(self.EMAIL))
+
+    def test_the_created_account_is_an_ordinary_member_account(self):
+        """Pas un compte parallèle : la même ligne que celle qu'une connexion
+        aurait créée, avec le rôle en plus."""
+        run("grant", self.EMAIL, "organization_admin", "--create-if-missing")
+        account = self.account(self.EMAIL)
+        self.assertEqual(account["organization_id"], main.nova_organization_id())
+        self.assertEqual(account["normalized_email"],
+                         main.normalize_email(self.EMAIL))
+        self.assertEqual(main.account_status(account), "active")
+        self.assertTrue(account["user_id"])
+
+    def test_the_first_real_login_reuses_the_account_instead_of_doubling_it(self):
+        """La propriété qui rend tout le dispositif acceptable.
+
+        `touch_user` est ce que traverse une première connexion. Il doit
+        retrouver le compte pré-créé par son adresse normalisée, et non en
+        créer un second qui laisserait un administrateur fantôme d'un côté et
+        la personne réelle de l'autre.
+        """
+        run("grant", self.EMAIL, "organization_admin", "--create-if-missing")
+        created = self.account(self.EMAIL)
+        main.touch_user(self.EMAIL.upper())
+        self.assertEqual(self.count(self.EMAIL), 1)
+        after = self.account(self.EMAIL)
+        self.assertEqual(after["user_id"], created["user_id"])
+        self.assertEqual(after["security_role"], "organization_admin")
+
+    # --- rejouée : l'installation se relance, `update`, `reconfigure` ------
+
+    def test_replaying_the_promotion_changes_nothing(self):
+        for _ in range(3):
+            code, _ = run("grant", self.EMAIL, "organization_admin",
+                          "--create-if-missing")
+            self.assertEqual(code, 0)
+        self.assertEqual(self.count(self.EMAIL), 1)
+        self.assertEqual(self.account(self.EMAIL)["security_role"],
+                         "organization_admin")
+
+    def test_replaying_keeps_the_same_identity(self):
+        """Le `user_id` porte les sessions, les identités fédérées et l'audit.
+        Une seconde exécution qui le changerait détacherait tout cela."""
+        run("grant", self.EMAIL, "organization_admin", "--create-if-missing")
+        first = self.account(self.EMAIL)["user_id"]
+        run("grant", self.EMAIL, "organization_admin", "--create-if-missing")
+        self.assertEqual(self.account(self.EMAIL)["user_id"], first)
+
+    def test_two_administrators_coexist(self):
+        run("grant", self.EMAIL, "organization_admin", "--create-if-missing")
+        run("grant", self.SECOND, "organization_admin", "--create-if-missing")
+        code, output = run("list")
+        self.assertEqual(code, 0)
+        self.assertIn(self.EMAIL, output)
+        self.assertIn(self.SECOND, output)
+
+    # --- échec correctement signalé ---------------------------------------
+
+    def test_an_unknown_role_is_refused_and_creates_nothing(self):
+        code, output = run("grant", self.EMAIL, "sous-chef", "--create-if-missing")
+        self.assertEqual(code, 1)
+        self.assertIn("refus", output)
+        self.assertIsNone(self.account(self.EMAIL))
+
+    def test_an_unknown_organization_is_refused_and_creates_nothing(self):
+        code, output = run("grant", self.EMAIL, "organization_admin",
+                           "--organization", "organisation-qui-n-existe-pas",
+                           "--create-if-missing")
+        self.assertEqual(code, 1)
+        self.assertIn("refus", output)
+        self.assertIsNone(self.account(self.EMAIL))
+
+    def test_the_flag_is_refused_outside_grant(self):
+        """Accepter le drapeau ailleurs en silence laisserait croire qu'il a
+        fait quelque chose."""
+        for argv in (["revoke", self.EMAIL], ["list"], ["discovery", "show"]):
+            with self.subTest(argv=argv):
+                code, output = run(*argv, "--create-if-missing")
+                self.assertEqual(code, 2)
+                self.assertIn("refus", output)
+
+    def test_revoke_never_creates_an_account(self):
+        code, _ = run("revoke", "jamais-vue@example.com")
+        self.assertEqual(code, 1)
+        with main.db() as conn:
+            self.assertIsNone(main.user_by_email(
+                conn, main.nova_organization_id(), "jamais-vue@example.com"))
+
+    # --- adresse invalide, refusée avant la base --------------------------
+
+    def test_a_malformed_address_is_refused_before_the_database(self):
+        for candidate in ("", "   ", "alex", "alex@exemple", "alex@@exemple.fr",
+                          "alex@exemple.f", "alex martin@exemple.fr",
+                          "a@exemple.fr,b@exemple.fr", "<alex@exemple.fr>"):
+            with self.subTest(candidate=candidate):
+                code, output = run("grant", candidate, "organization_admin",
+                                   "--create-if-missing")
+                self.assertEqual(code, 1)
+                self.assertIn("mal formée", output)
+
+    def test_a_malformed_address_writes_nothing(self):
+        with main.db() as conn:
+            before = conn.execute("SELECT COUNT(*) AS n FROM users").fetchone()["n"]
+        run("grant", "pas-une-adresse", "organization_admin", "--create-if-missing")
+        with main.db() as conn:
+            after = conn.execute("SELECT COUNT(*) AS n FROM users").fetchone()["n"]
+        self.assertEqual(before, after)
+
+    def test_ordinary_addresses_are_accepted_by_the_shape_check(self):
+        """Trop strict serait pire que trop large : une adresse valide refusée
+        empêcherait de nommer un administrateur."""
+        for candidate in ("alex@exemple.fr", "alex.martin@sous.exemple.fr",
+                          "alex+nova@exemple.fr", "a_b-c@exemple-lab.co.uk"):
+            with self.subTest(candidate=candidate):
+                self.assertTrue(admin_cli.email_is_well_formed(candidate))
+
+
+
 if __name__ == "__main__":
     unittest.main()

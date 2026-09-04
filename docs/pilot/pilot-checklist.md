@@ -44,9 +44,17 @@ Le détail de chaque étape est dans [`pilot-runbook.md`](./pilot-runbook.md).
 - [ ] `python -m migrations status` puis `migrate`
 - [ ] `/api/livez` et `/api/readyz` répondent
 - [ ] Fournisseur d'identité configuré et testé avec **un** compte
-- [ ] Premier administrateur connecté, puis promu par `admin_cli grant`
-- [ ] **Au moins deux `organization_admin`** — voir runbook §17
+- [ ] Premier administrateur nommé — par l'installeur Windows
+      (`-FirstAdminEmail`, rien à faire de plus), ou par `admin_cli grant`
+      (`--create-if-missing` si la personne ne s'est jamais connectée)
+- [ ] Adresse du premier administrateur **relue** : ce doit être exactement
+      celle que renvoie le fournisseur d'identité, sans quoi le compte promu ne
+      correspondra jamais à personne — voir runbook §3
+- [ ] **Au moins deux `organization_admin`** — `-SecondAdminEmail`, ou la
+      commande donnée par l'écran final ; voir runbook §17
 - [ ] `admin_cli list` montre les administrateurs attendus
+- [ ] Le premier administrateur s'est connecté **pour de vrai** et ouvre Nova
+      Admin : c'est cette connexion qui prouve le rattachement
 - [ ] Profil de déploiement créé, commande d'installation copiée
 - [ ] Configuration machine récupérée et relue
 - [ ] Policies revues, y compris celles laissées par défaut

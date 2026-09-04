@@ -16,6 +16,7 @@ dérobée permanente.
 Usage :
 
     python admin_cli.py grant  <email> <role> [--organization <slug|id>]
+                                             [--create-if-missing]
     python admin_cli.py revoke <email>        [--organization <slug|id>]
     python admin_cli.py list                  [--organization <slug|id>]
 
@@ -27,12 +28,32 @@ Sans `--organization`, l'organisation servie par l'instance. En mode
 control_plane, l'option devient obligatoire : une adresse ne désigne une
 personne qu'à l'intérieur d'une organisation.
 
+`--create-if-missing` crée le compte si l'adresse est inconnue, au lieu de
+refuser. Réservé à l'amorçage : sur une organisation neuve, personne ne s'est
+encore connecté, donc aucun compte n'existe et `grant` seul n'aurait rien à
+promouvoir. Hors de ce cas, le refus est la bonne réponse — une faute de frappe
+doit s'arrêter là plutôt que de fabriquer un administrateur qui ne désigne
+personne.
+
 Rôles : organization_admin, it_admin, read_only, member.
 """
 
+import re
 import sys
 
 import main
+
+# Forme d'une adresse, et rien de plus. Le but n'est pas de décider si la boîte
+# existe — seul le fournisseur d'identité le sait — mais d'arrêter avant la base
+# ce qui ne peut être l'adresse de personne : une chaîne vide, un mot sans
+# arobase, une liste séparée par des virgules collée dans le mauvais champ.
+# Trop strict serait pire que trop large : une adresse valide refusée ici
+# empêcherait de nommer un administrateur.
+EMAIL_SHAPE = re.compile(r"^[^@\s,;<>\"]+@[^@\s,;<>\"]+\.[^@\s,;<>\".]{2,}$")
+
+
+def email_is_well_formed(value: str) -> bool:
+    return bool(EMAIL_SHAPE.match((value or "").strip()))
 
 
 def _print_usage():
@@ -63,10 +84,22 @@ def resolve_organization(reference: str | None) -> str:
     return row["id"]
 
 
-def grant(email: str, role: str, organization: str | None = None) -> int:
+def grant(email: str, role: str, organization: str | None = None,
+          create_missing: bool = False) -> int:
+    """Attribue un rôle. Avec `create_missing`, crée le compte s'il manque.
+
+    La forme de l'adresse n'est vérifiée que sur le chemin de création : c'est
+    le seul où une saisie fautive **écrit** quelque chose. Sur le chemin
+    ordinaire, une adresse absurde ne trouve simplement aucun compte, et le
+    refus dit déjà la bonne chose.
+    """
+    if create_missing and not email_is_well_formed(email):
+        print("refusé : adresse mal formée")
+        return 1
     try:
         organization_id = resolve_organization(organization)
-        result = main.set_security_role(email, role, organization_id)
+        result = main.set_security_role(
+            email, role, organization_id, create_missing=create_missing)
     except (ValueError, LookupError) as error:
         print(f"refusé : {error}")
         return 1
@@ -171,6 +204,13 @@ def list_admins(organization: str | None = None) -> int:
     return 0
 
 
+def _extract_flag(argv: list[str], name: str) -> tuple[list[str], bool]:
+    """Retire `--name` de la liste et dit s'il y était."""
+    if name not in argv:
+        return argv, False
+    return [item for item in argv if item != name], True
+
+
 def _extract_option(argv: list[str], name: str) -> tuple[list[str], str | None]:
     """Retire `--name valeur` de la liste et renvoie la valeur."""
     if name not in argv:
@@ -190,9 +230,15 @@ def run(argv: list[str]) -> int:
     except ValueError as error:
         print(f"refusé : {error}")
         return 2
+    argv, create_missing = _extract_flag(argv, "--create-if-missing")
     command, *rest = argv
     if command == "grant" and len(rest) == 2:
-        return grant(rest[0], rest[1], organization)
+        return grant(rest[0], rest[1], organization, create_missing)
+    if create_missing:
+        # Le drapeau n'a de sens que pour `grant`. L'accepter en silence
+        # ailleurs laisserait croire qu'il a fait quelque chose.
+        print("refusé : --create-if-missing ne s'applique qu'à grant")
+        return 2
     if command == "revoke" and len(rest) == 1:
         return revoke(rest[0], organization)
     if command == "list" and not rest:

@@ -16,6 +16,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Le conteneur `migrate` echouait pour la meme raison (`No module named
 # migrations`), donc la pile ne demarrait pas du tout.
 COPY main.py ai_runtime.py local_channel.py serve.py connector.py ./
+# L'outil d'operateur. Il n'est demarre par aucun `command` : il est execute
+# ponctuellement dans le conteneur `api`, notamment par l'installateur pour
+# nommer le premier administrateur. Sans lui dans l'image, le geste decrit par
+# le runbook echoue sur `can't open file '/app/admin_cli.py'`, et une
+# organisation neuve n'a aucun moyen d'obtenir son premier administrateur.
+COPY admin_cli.py ./
 COPY connector_release.py database.py deployment.py migrations.py ./
 COPY observability.py production_config.py ratelimit.py scim.py secrets_provider.py ./
 COPY learning/ ./learning/

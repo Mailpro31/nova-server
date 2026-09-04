@@ -662,3 +662,183 @@ def test_the_regeneration_test_checks_the_secret_acl():
     # figurer dans les droits du fichier.
     assert "S-1-1-0" in script and "S-1-5-32-545" in script
     assert "SECRET_OWNER_NOT_GRANTED" in script
+
+
+# ─────────────────────── Le premier administrateur ────────────────────────
+#
+# Une installation qui va jusqu'au bout sans nommer personne livre un serveur
+# que personne ne peut piloter : la pile repond, /api/readyz dit oui, et Nova
+# Admin refuse tout le monde. Ces tests decrivent ce que l'installateur doit
+# faire pour que cela n'arrive plus.
+
+
+def first_admin_body() -> str:
+    body = setup_source()
+    start = body.index("function Set-FirstAdministrators")
+    return body[start:body.index("\nfunction ", start)]
+
+
+def test_the_installer_names_a_first_administrator():
+    body = setup_source()
+    for expected in ("function Resolve-AdministratorEmails",
+                     "function Set-FirstAdministrators",
+                     "function Read-StoredAdministrators",
+                     "$administrators = Resolve-AdministratorEmails",
+                     "$promoted = Set-FirstAdministrators $administrators"):
+        assert expected in body
+
+
+def test_the_promotion_runs_inside_the_api_container():
+    body = setup_source()
+    invoke = body[body.index("function Invoke-AdminCli"):]
+    invoke = invoke[:invoke.index("\nfunction ")]
+    assert "'exec','-T','api'" in invoke
+    assert "'python','admin_cli.py'" in invoke
+    assert "grant" in first_admin_body()
+    assert "'--create-if-missing'" in first_admin_body()
+
+
+def test_the_operator_tool_is_actually_in_the_image():
+    # Le geste decrit par le runbook echouait sur `can't open file` : le
+    # Dockerfile listait ses fichiers un par un et ne contenait pas celui-la.
+    dockerfile = (Path(__file__).parent / "Dockerfile").read_text(encoding="utf-8")
+    assert "admin_cli.py" in dockerfile
+
+
+def test_a_missing_address_stops_a_silent_install_before_any_work():
+    body = setup_source()
+    install = body[body.index("function Invoke-Install"):]
+    install = install[:install.index("\n}\n")]
+    # Premiere instruction executable du corps : rien n'est telecharge, aucun
+    # materiel n'est sonde avant de savoir qui administrera le serveur.
+    statements = [line.strip() for line in install.splitlines()[1:]
+                  if line.strip() and not line.strip().startswith("#")]
+    assert statements[0] == "$administrators = Resolve-AdministratorEmails"
+    resolve = body[body.index("function Resolve-AdministratorEmails"):]
+    resolve = resolve[:resolve.index("\nfunction ")]
+    assert "if ($Headless) { throw 'FIRST_ADMIN_EMAIL_REQUIRED' }" in resolve
+
+
+def test_the_address_is_validated_before_the_container_is_reached():
+    body = first_admin_body()
+    # La verification precede la boucle qui appelle le conteneur : une saisie
+    # fautive ne doit pas creer un compte a moitie.
+    assert body.index("FIRST_ADMIN_EMAIL_INVALID") < body.index("Invoke-AdminCli")
+    assert "[ValidatePattern(" in setup_source()
+
+
+def test_the_second_administrator_is_offered_but_never_imposed():
+    body = setup_source()
+    assert "[string]$SecondAdminEmail = ''" in body
+    report = body[body.index("function Get-AdministratorReport"):]
+    report = report[:report.index("\nfunction ")]
+    # Un administrateur unique doit se voir, avec la commande exacte a jouer.
+    assert "$Count -lt 2" in report
+    assert "grant <adresse> organization_admin --create-if-missing" in report
+
+
+def test_a_failed_promotion_does_not_roll_the_stack_back():
+    # Restore-PreviousConfiguration ramenerait la pile precedente. Une
+    # promotion ratee n'est pas une raison d'annuler une mise a jour reussie.
+    body = setup_source()
+    install = body[body.index("function Invoke-Install"):]
+    install = install[:install.index("\n}\n")]
+    assert install.index("Restore-PreviousConfiguration") < install.index(
+        "Set-FirstAdministrators")
+    rollback = install[install.index("} catch {"):]
+    assert "Set-FirstAdministrators" not in rollback.split("Save-State 'ready'")[0]
+
+
+def test_a_failed_promotion_is_visible_and_carries_its_instructions():
+    body = setup_source()
+    advice = body[body.index("function Get-FailureAdvice"):]
+    for code in ("FIRST_ADMIN_EMAIL_REQUIRED", "FIRST_ADMIN_EMAIL_INVALID",
+                 "FIRST_ADMIN_PROMOTION_FAILED", "ADMIN_EMAIL_ACL_NOT_APPLIED"):
+        assert code in advice
+    assert "admin_cli.py grant <adresse> organization_admin" in advice
+
+
+def test_the_address_never_reaches_the_log():
+    # Write-SafeLog ne masque que password|token|secret|credential : une adresse
+    # y passerait en clair. Le message d'echec est journalise tel quel par le
+    # bloc d'erreur final, il ne doit donc porter que le code de sortie.
+    body = first_admin_body()
+    assert "throw ('FIRST_ADMIN_PROMOTION_FAILED: exit {0}' -f $result.ExitCode)" in body
+    assert "$result.Output" not in body
+    assert "Write-SafeLog ('first_admin promoted count={0}' -f $Emails.Count)" in body
+
+
+def test_the_retained_address_is_protected_like_a_secret():
+    body = setup_source()
+    protect = body[body.index("function Protect-OperatorFile"):]
+    protect = protect[:protect.index("\nfunction ")]
+    assert "$env:USERNAME" not in protect
+    assert "'/grant:r'" in protect
+    assert "WindowsIdentity]::GetCurrent()).User.Value" in protect
+    assert "$acl.ExitCode -ne 0" in protect
+    assert "Remove-Item" in protect
+    assert "throw 'ADMIN_EMAIL_ACL_NOT_APPLIED'" in protect
+
+
+def test_a_resume_after_the_reboot_still_knows_who_to_promote():
+    # Register-Resume ecrit `"<exe>" resume`, sans argument : sans relecture,
+    # la reprise apres le redemarrage WSL2 ne nommerait personne.
+    body = setup_source()
+    resume = body[body.index("function Register-Resume"):]
+    resume = resume[:resume.index("\nfunction ")]
+    assert "$FirstAdminEmail" not in resume
+    assert "Save-Administrators $administrators" in body
+    stored = body[body.index("function Read-StoredAdministrators"):]
+    stored = stored[:stored.index("\nfunction ")]
+    assert "Get-AdministratorStatePath" in stored
+
+
+def test_the_selftest_proves_the_address_check():
+    body = setup_source()
+    selftest = body[body.index("if ($Action -eq 'selftest')"):]
+    assert "ADMIN_EMAIL_SHAPE_OK" in selftest
+    assert "ADMIN_ADVICE_OK" in selftest
+    assert "Test-EmailShape" in selftest
+
+
+def test_supply_chain_checks_survive_the_first_admin_changes():
+    body = setup_source()
+    for code in ("MANIFEST_ORIGIN_NOT_PINNED", "MANIFEST_SIGNATURE_INVALID",
+                 "OCI_REFERENCE_NOT_IMMUTABLE", "OCI_DIGEST_VERIFICATION_FAILED",
+                 "OCI_PLATFORM_UNEXPECTED", "RELEASE_PUBLIC_KEY_NOT_CONFIGURED"):
+        assert code in body
+    assert "$script:AllowedManifestOrigin = 'https://releases.novaspeak.app'" in body
+
+
+def test_the_first_admin_test_is_shipped_and_offline():
+    script = (ROOT / "test-first-admin.ps1").read_text(encoding="utf-8")
+    assert "-LibraryMode" in script
+    assert "GetTempPath" in script
+    # Le double remplace l'appel reel : rien n'est demarre.
+    assert "function Run-Captured" in script
+    for forbidden in ("Invoke-WebRequest", "Invoke-Compose", "Invoke-RestMethod"):
+        assert forbidden not in script
+
+
+def test_the_first_admin_test_covers_the_four_situations():
+    script = (ROOT / "test-first-admin.ps1").read_text(encoding="utf-8")
+    for marker in ("MALFORMED_EMAIL_REACHED_CONTAINER", "PROMOTION_CALL_COUNT_WRONG",
+                   "REPLAY_IS_NOT_IDENTICAL", "PROMOTION_FAILURE_SWALLOWED",
+                   "PROMOTION_FAILURE_LEAKS_THE_ADDRESS", "ADDRESS_IN_THE_LOG",
+                   "AreAccessRulesProtected"):
+        assert marker in script
+
+
+def test_the_first_admin_path_can_be_verified_on_this_machine():
+    # Execute pour de vrai quand PowerShell est disponible ; ignore ailleurs,
+    # l'installateur etant un script Windows.
+    powershell = shutil.which("powershell") or shutil.which("pwsh")
+    if not powershell:
+        pytest.skip("PowerShell absent")
+    completed = subprocess.run(
+        [powershell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+         "-File", str(ROOT / "test-first-admin.ps1")],
+        capture_output=True, text=True, timeout=300,
+    )
+    assert "FIRST_ADMIN_TEST_OK" in completed.stdout, completed.stdout + completed.stderr
+    assert completed.returncode == 0

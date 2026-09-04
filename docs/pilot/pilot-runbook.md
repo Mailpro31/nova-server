@@ -71,7 +71,32 @@ endpoint resterait une porte dérobée quelles que soient ses conditions. Il n'y
 pas non plus de variable d'amorçage, qui resterait en place bien après le
 premier démarrage.
 
-Le parcours est donc en deux temps :
+### Sur une installation faite par l'installeur Windows
+
+**Il n'y a rien à faire : l'installeur s'en charge.** Il demande l'adresse du
+premier administrateur avant de télécharger quoi que ce soit, puis, une fois
+`/api/readyz` obtenu, exécute la promotion dans le conteneur `api`. L'écran
+final affiche les administrateurs réellement enregistrés.
+
+```
+NovaOrganizationServerSetup.exe -FirstAdminEmail alex@exemple.fr
+NovaOrganizationServerSetup.exe -FirstAdminEmail alex@exemple.fr -SecondAdminEmail bea@exemple.fr
+```
+
+En mode silencieux (`-Headless`), `-FirstAdminEmail` est **obligatoire** :
+l'installation s'arrête immédiatement si elle manque, plutôt que de livrer un
+serveur que personne ne peut piloter. En mode interactif, l'installeur pose la
+question. L'adresse est retenue, avec les mêmes droits d'accès que le mot de
+passe de la base, afin que la reprise après le redémarrage exigé par WSL2 nomme
+le même administrateur ; elle n'apparaît dans aucun journal.
+
+Relancer l'installation, `update` ou `reconfigure` rejoue la promotion sans
+effet de bord : `grant` **écrit** un rôle, il ne l'ajoute pas, et l'unicité
+(organisation, adresse) interdit le doublon.
+
+### À la main, ou sur une installation Linux
+
+Le parcours est en deux temps :
 
 1. la personne se connecte normalement — par SSO ou par code e-mail. Son compte
    naît de cette connexion ;
@@ -81,6 +106,34 @@ Le parcours est donc en deux temps :
 python admin_cli.py grant alex@exemple.fr organization_admin
 python admin_cli.py list
 ```
+
+Depuis un poste où la pile tourne dans des conteneurs :
+
+```
+docker compose exec -T api python admin_cli.py list
+```
+
+### Nommer quelqu'un qui ne s'est jamais connecté
+
+`grant` refuse une adresse inconnue, et c'est le bon défaut : sur le chemin de
+récupération, une faute de frappe doit s'arrêter là. Pour l'amorçage d'une
+organisation neuve, où **aucun** compte n'existe encore, ajoutez
+`--create-if-missing` :
+
+```
+python admin_cli.py grant alex@exemple.fr organization_admin --create-if-missing
+```
+
+Le compte ainsi créé n'est pas un compte parallèle. À la première connexion
+réelle, le fournisseur d'identité s'y rattache par l'adresse et **le réutilise**
+— le rôle survit, aucun doublon n'apparaît.
+
+> **L'adresse doit être exactement celle que renvoie le fournisseur
+> d'identité.** C'est elle, et elle seule, qui fait le rattachement. Une adresse
+> approchante — un alias, ou l'écart entre l'UPN et la boîte aux lettres chez
+> Entra — produit un administrateur qui ne correspondra jamais à personne,
+> pendant que la personne réelle se connecte et obtient un compte ordinaire. En
+> cas de doute, vérifiez avec `admin_cli list` après la première connexion.
 
 Rôles : `organization_admin` gère les personnes et le produit ; `it_admin` gère
 la machine — déploiement, fournisseurs, diagnostics ; `read_only` observe.
@@ -304,7 +357,10 @@ python admin_cli.py grant <adresse> organization_admin
 
 La personne doit d'abord posséder un compte — donc s'être connectée au moins une
 fois. Si plus personne ne peut se connecter, il faut d'abord rétablir le
-fournisseur d'identité, ou utiliser le code par e-mail.
+fournisseur d'identité, ou utiliser le code par e-mail. En dernier recours,
+`--create-if-missing` nomme quelqu'un qui ne s'est jamais connecté ; relisez
+l'avertissement du §3 avant de vous en servir : hors amorçage, une adresse
+approchante crée un administrateur qui ne désigne personne.
 
 **Conséquence pratique : nommez au moins deux `organization_admin` dès le début
 du pilote.** La garde qui empêche de retirer le dernier gestionnaire d'identités
