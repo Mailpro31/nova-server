@@ -6,6 +6,29 @@ param(
     [switch]$Headless,
     [string]$OrganizationName = 'Nova Lab',
     [ValidateSet('campus','business')][string]$OrganizationType = 'campus',
+    # L'adresse du premier administrateur. Une installation qui n'en nomme
+    # aucun livre un serveur que personne ne peut piloter : la pile repond, et
+    # Nova Admin reste inaccessible. Le motif accepte la chaine vide parce que
+    # le mode interactif la demande plus tard ; il refuse en revanche tout ce
+    # qui ne peut etre l'adresse de personne, et il le fait a la liaison des
+    # parametres -- donc avant la moindre ligne de code, et loin du conteneur.
+    [ValidatePattern('^$|^[^@\s,;<>"]+@[^@\s,;<>"]+\.[^@\s,;<>".]{2,}$')]
+    [string]$FirstAdminEmail = '',
+    # Le second est facultatif, jamais impose. Exiger deux adresses pousserait
+    # a en inventer une pour passer l'ecran, et un administrateur invente est
+    # pire qu'un administrateur manquant : il occupe la place sans jamais
+    # correspondre a personne.
+    [ValidatePattern('^$|^[^@\s,;<>"]+@[^@\s,;<>"]+\.[^@\s,;<>".]{2,}$')]
+    [string]$SecondAdminEmail = '',
+    # Les domaines de courriel de l'organisation, separes par des virgules.
+    # Sans eux, le serveur retombe sur le defaut de `ALLOWED_DOMAINS`, herite
+    # d'un deploiement mono-tenant : les administrateurs nommes par l'amorcage
+    # se connectent quand meme -- leur compte existe deja -- mais tout autre
+    # membre echoue a sa premiere connexion. Une installation peut donc
+    # paraitre reussie en ne testant que l'administrateur, et etre inutilisable
+    # pour tout le monde d'autre. Il n'y a donc pas de defaut ici.
+    [ValidatePattern('^$|^\s*(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+[A-Za-z]{2,}\s*(?:,\s*(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+[A-Za-z]{2,}\s*)*$')]
+    [string]$OrganizationDomains = '',
     [string]$ManifestUrl = 'https://releases.novaspeak.app/server/quick-lab/manifest.json',
     [string]$ReleasePublicKeyXml = '__NOVA_RELEASE_PUBLIC_KEY_XML__',
     [switch]$LibraryMode
@@ -13,7 +36,13 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$script:Version = '0.4.3'
+# Ce que l'operateur a reellement passe, saisi ici et nulle part ailleurs :
+# `$PSBoundParameters` est propre a chaque portee, et celui d'une fonction ne
+# dit rien des arguments du script. Sans cette capture, un `-OrganizationName`
+# explicite serait indistinguable de son defaut, et la valeur memorisee par une
+# execution precedente l'emporterait sur ce que l'operateur vient de taper.
+$script:BoundParameters = $PSBoundParameters
+$script:Version = '0.5.0'
 $script:Root = Join-Path $env:ProgramData 'Nova\OrganizationServer'
 $script:StatePath = Join-Path $script:Root 'setup-state.json'
 $script:LogPath = Join-Path $script:Root 'logs\setup.log'
@@ -27,6 +56,9 @@ $script:AllowedManifestOrigin = 'https://releases.novaspeak.app'
 # rewrites production configuration.
 $script:LabRoot = Join-Path $script:Root 'lab'
 $script:LabPort = 8443
+# Les domaines retenus pour cette execution. Vide tant que Resolve-InstallAnswers
+# n'a pas tranche ; Write-StackCompose refuse d'ecrire un compose sans eux.
+$script:ResolvedDomains = ''
 
 function Initialize-Directories {
     foreach ($path in @($script:Root, (Split-Path $script:LogPath), $script:Generated,
@@ -208,6 +240,264 @@ function Get-OrCreateSecret([string]$Name) {
         }
     }
     return $path
+}
+
+# ──────────────────────────── Premier administrateur ──────────────────────
+#
+# Une installation qui va jusqu'au bout sans nommer personne livre un serveur
+# que personne ne peut piloter : la pile repond, /api/readyz dit oui, et Nova
+# Admin refuse tout le monde. Le geste manquant tenait en une commande, mais
+# elle exigeait d'ouvrir un shell dans le conteneur -- c'est-a-dire de savoir
+# qu'elle existe.
+#
+# Deux precautions gouvernent tout ce qui suit :
+#
+#   - l'adresse est verifiee **avant** d'atteindre le conteneur. Une adresse
+#     fautive ne produit pas une erreur, elle produit pire : un compte
+#     administrateur qui ne correspondra jamais a l'identite reelle, pendant
+#     que la personne se connecte et obtient un compte ordinaire ;
+#   - l'adresse n'entre dans aucun journal. Write-SafeLog ne masque que les
+#     affectations de mot de passe, de jeton, de secret ou d'identifiant : une
+#     adresse y passerait en clair. Le journal ne recoit donc qu'un decompte.
+
+function Test-EmailShape([string]$Value) {
+    # La forme, et rien de plus. Savoir si la boite existe n'appartient qu'au
+    # fournisseur d'identite ; ce controle-ci arrete seulement ce qui ne peut
+    # etre l'adresse de personne. Trop strict serait pire que trop large : une
+    # adresse valide refusee ici empecherait de nommer un administrateur.
+    if ([string]::IsNullOrWhiteSpace($Value)) { return $false }
+    return ($Value.Trim() -match '^[^@\s,;<>"]+@[^@\s,;<>"]+\.[^@\s,;<>".]{2,}$')
+}
+
+function Protect-OperatorFile([string]$Path) {
+    # Memes droits que le mot de passe de la base : le proprietaire et SYSTEM,
+    # sans heritage. Volontairement distinct de Get-OrCreateSecret, qui protege
+    # un secret qu'il vient de tirer au sort ; ici on protege une valeur saisie,
+    # et les deux chemins doivent pouvoir echouer -- et etre verifies --
+    # separement. Le SID plutot que le nom : il survit a un compte renomme,
+    # localise ou joint a un domaine.
+    $sid = ([Security.Principal.WindowsIdentity]::GetCurrent()).User.Value
+    $acl = Run-Captured 'icacls.exe' @(
+        $Path, '/inheritance:r', '/grant:r', "*${sid}:(R,W)", '/grant:r', '*S-1-5-18:(R,W)')
+    if ($acl.ExitCode -ne 0) {
+        # Fail closed, comme pour le secret : mieux vaut redemander l'adresse
+        # que la laisser lisible par tout le monde.
+        Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+        throw 'ADMIN_EMAIL_ACL_NOT_APPLIED'
+    }
+}
+
+function Test-DomainListShape([string]$Value) {
+    # Une liste de domaines, et rien de plus. Un label commence et finit par un
+    # caractere alphanumerique, deux labels au minimum, et une extension
+    # alphabetique : `exemple.fr` oui, `localhost` non, `-mauvais.fr` non.
+    # Les espaces autour des virgules sont tolerés parce que le serveur les
+    # retire de toute facon -- les refuser serait un refus gratuit.
+    if ([string]::IsNullOrWhiteSpace($Value)) { return $false }
+    return ($Value -match '^\s*(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+[A-Za-z]{2,}\s*(?:,\s*(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+[A-Za-z]{2,}\s*)*$')
+}
+
+function ConvertTo-DomainList([string]$Value) {
+    # Forme canonique : minuscules, sans espace, sans doublon, jointe par des
+    # virgules. C'est exactement ce que le serveur lira.
+    $seen = @()
+    foreach ($item in ($Value -split ',')) {
+        $domain = $item.Trim().ToLowerInvariant()
+        if ($domain -and ($seen -notcontains $domain)) { $seen += $domain }
+    }
+    return ($seen -join ',')
+}
+
+function Get-InstallAnswersPath {
+    return (Join-Path $script:Secrets 'install-answers.json')
+}
+
+function Read-InstallAnswers {
+    <#
+        Ce que l'operateur a repondu, relu tel quel.
+
+        Register-Resume ecrit dans RunOnce la commande `"<exe>" resume`, **sans
+        aucun argument** : apres le redemarrage exige par WSL2, tout ce qui a
+        ete saisi avant ce redemarrage a disparu. Sans cette relecture, la
+        reprise reinstallerait la pile en nommant personne et en retombant sur
+        les valeurs par defaut -- y compris le defaut de domaines herite, qui
+        est precisement ce que cette saisie existe pour eviter.
+    #>
+    $path = Get-InstallAnswersPath
+    if (-not (Test-Path -LiteralPath $path)) { return $null }
+    try {
+        $answers = Get-Content -Raw -LiteralPath $path -ErrorAction Stop | ConvertFrom-Json
+    } catch {
+        # Illisible n'est pas fatal : le mode interactif redemandera, et le
+        # mode silencieux echouera bruyamment faute de reponse.
+        return $null
+    }
+    if ($answers.schema_version -ne 1) { return $null }
+    return $answers
+}
+
+function Save-InstallAnswers($Answers) {
+    Initialize-Directories
+    $path = Get-InstallAnswersPath
+    $json = $Answers | ConvertTo-Json -Depth 4
+    [IO.File]::WriteAllText($path, $json, (New-Object Text.UTF8Encoding($false)))
+    Protect-OperatorFile $path
+}
+
+function Read-TextFromDialog([string]$Prompt, [string]$Title) {
+    Add-Type -AssemblyName Microsoft.VisualBasic
+    $answer = [Microsoft.VisualBasic.Interaction]::InputBox($Prompt, $Title, '')
+    if ($null -eq $answer) { return '' }
+    return $answer.Trim()
+}
+
+function Resolve-InstallAnswers {
+    <#
+        Tout ce que l'installation doit savoir avant de commencer, en un seul
+        endroit.
+
+        L'ordre est celui de l'autorite : ce que l'operateur vient de passer en
+        ligne de commande, sinon ce qu'une execution precedente a retenu, sinon
+        ce qu'on lui demande. Le mode silencieux n'a pas de troisieme recours :
+        il echoue tout de suite, avant le materiel, avant le reseau, avant la
+        moindre image telechargee.
+
+        Le nom et le type d'organisation passent par le meme chemin. Ils
+        n'avaient aucun filet : apres une reprise, `Write-StackCompose` les
+        regenerait a leur valeur par defaut, et le nom saisi devenait
+        silencieusement « Nova Lab ».
+    #>
+    $stored = Read-InstallAnswers
+
+    $domains = ConvertTo-DomainList $OrganizationDomains
+    if (-not $domains -and $stored) { $domains = ConvertTo-DomainList ([string]$stored.domains) }
+
+    $first = $FirstAdminEmail.Trim()
+    $second = $SecondAdminEmail.Trim()
+    if (-not $first -and $stored) {
+        $kept = @(@($stored.administrators) | Where-Object { Test-EmailShape $_ })
+        if ($kept.Count -ge 1) { $first = $kept[0] }
+        if (-not $second -and $kept.Count -ge 2) { $second = $kept[1] }
+    }
+
+    # Le nom et le type : l'argument explicite gagne, sinon la memoire, sinon le
+    # defaut du parametre. `$PSBoundParameters` distingue « passe » de
+    # « laisse a sa valeur par defaut », ce qu'une comparaison ne saurait faire.
+    $name = $OrganizationName
+    $type = $OrganizationType
+    if ($stored) {
+        if (-not $script:BoundParameters.ContainsKey('OrganizationName') -and $stored.organization_name) {
+            $name = [string]$stored.organization_name
+        }
+        if (-not $script:BoundParameters.ContainsKey('OrganizationType') -and $stored.organization_type) {
+            $type = [string]$stored.organization_type
+        }
+    }
+
+    if (-not $domains) {
+        if ($Headless) { throw 'ORGANIZATION_DOMAINS_REQUIRED' }
+        $domains = ConvertTo-DomainList (Read-TextFromDialog (
+            "Domaines de courriel de $name, separes par des virgules.`n`n" +
+            "Exemple : exemple.fr, cadres.exemple.fr`n`n" +
+            "Seules les adresses de ces domaines pourront se connecter. " +
+            "Il n'y a pas de valeur par defaut : celle du serveur appartient a " +
+            "une autre organisation.") `
+            'Nova Organization Server — Domaines de l organisation')
+        if (-not $domains) { throw 'ORGANIZATION_DOMAINS_REQUIRED' }
+    }
+    if (-not (Test-DomainListShape $domains)) { throw 'ORGANIZATION_DOMAINS_INVALID' }
+
+    if (-not $first) {
+        if ($Headless) { throw 'FIRST_ADMIN_EMAIL_REQUIRED' }
+        $first = Read-TextFromDialog (
+            "Adresse professionnelle du premier administrateur de $name.`n`n" +
+            "Ce doit etre exactement l'adresse renvoyee par votre fournisseur d'identite : " +
+            "c'est elle qui rattachera le compte lors de la premiere connexion.") `
+            'Nova Organization Server — Premier administrateur'
+        if (-not (Test-EmailShape $first)) { throw 'FIRST_ADMIN_EMAIL_REQUIRED' }
+        if (-not $second) {
+            $second = Read-TextFromDialog (
+                "Adresse d'un second administrateur (facultatif).`n`n" +
+                "Un administrateur unique bloque l'organisation des qu'il est absent. " +
+                "Laissez vide pour continuer sans.") `
+                'Nova Organization Server — Second administrateur'
+        }
+    }
+    if (-not (Test-EmailShape $first)) { throw 'FIRST_ADMIN_EMAIL_INVALID' }
+    if ($second -and -not (Test-EmailShape $second)) { throw 'FIRST_ADMIN_EMAIL_INVALID' }
+    $emails = @($first.ToLowerInvariant())
+    if ($second -and $second.ToLowerInvariant() -ne $emails[0]) {
+        $emails += $second.ToLowerInvariant()
+    }
+
+    # Une adresse d'administrateur hors des domaines declares ne pourra jamais
+    # se connecter : son compte serait promu, et le fournisseur d'identite le
+    # refuserait. Mieux vaut le dire ici que le decouvrir devant l'ecran de
+    # connexion.
+    $declared = @($domains -split ',')
+    foreach ($email in $emails) {
+        if ($declared -notcontains $email.Split('@')[-1]) { throw 'FIRST_ADMIN_EMAIL_OUTSIDE_DOMAINS' }
+    }
+
+    return [pscustomobject]@{
+        schema_version    = 1
+        organization_name = $name
+        organization_type = $type
+        domains           = $domains
+        administrators    = $emails
+    }
+}
+
+function Invoke-AdminCli([string[]]$Arguments) {
+    $compose = Join-Path $script:Generated 'compose.quick-lab.yml'
+    if (-not (Test-Path -LiteralPath $compose)) { throw 'LAB_CONFIGURATION_MISSING' }
+    # `exec -T` : sans lui, un TTY est reclame. L'installateur tourne sans
+    # console en mode silencieux et a la reprise RunOnce, et la commande y
+    # resterait bloquee.
+    return Run-Captured 'docker.exe' (@('compose','--file',$compose,'exec','-T','api',
+        'python','admin_cli.py') + $Arguments)
+}
+
+function Set-FirstAdministrators([string[]]$Emails) {
+    <#
+        Idempotent par construction : `grant` **ecrit** un role, il ne l'ajoute
+        pas. Rejoue -- par `update`, par `reconfigure`, ou par une simple
+        reinstallation -- il reecrit la meme valeur sur le meme compte. Et
+        `--create-if-missing` ne peut pas dupliquer : l'unicite
+        (organisation, adresse) est tenue par un index unique en base, et la
+        seconde execution retrouve le compte au lieu d'en creer un.
+    #>
+    if ($Emails.Count -eq 0) { throw 'FIRST_ADMIN_EMAIL_REQUIRED' }
+    foreach ($email in $Emails) {
+        if (-not (Test-EmailShape $email)) { throw 'FIRST_ADMIN_EMAIL_INVALID' }
+    }
+    foreach ($email in $Emails) {
+        $result = Invoke-AdminCli @('grant', $email, 'organization_admin', '--create-if-missing')
+        if ($result.ExitCode -ne 0) {
+            # Ni l'adresse ni la sortie de la commande n'entrent dans ce
+            # message : il est journalise tel quel par le bloc d'erreur final.
+            throw ('FIRST_ADMIN_PROMOTION_FAILED: exit {0}' -f $result.ExitCode)
+        }
+    }
+    Write-SafeLog ('first_admin promoted count={0}' -f $Emails.Count)
+    return $Emails.Count
+}
+
+function Get-AdministratorReport([int]$Count) {
+    # Ce que l'ecran final annonce vient de la base, pas de ce que le script
+    # croit avoir fait. Un echec de lecture n'invalide pas la promotion, qui a
+    # deja rendu son code de sortie ; il rend seulement le rapport muet.
+    $listed = Invoke-AdminCli @('list')
+    $roster = if ($listed.ExitCode -eq 0) { $listed.Output } else { '' }
+    $text = if ($roster) { "Administrateurs de l organisation :`n$roster" }
+            else { "Administrateurs promus : $Count" }
+    if ($Count -lt 2) {
+        $text += "`n`nUn seul administrateur. S il est absent, plus personne ne peut " +
+                 "piloter l organisation.`nAjoutez-en un second maintenant :`n" +
+                 "  docker compose --file `"$(Join-Path $script:Generated 'compose.quick-lab.yml')`" " +
+                 "exec -T api python admin_cli.py grant <adresse> organization_admin --create-if-missing"
+    }
+    return $text
 }
 
 function Save-State([string]$Step, [string]$ProfileId, [string]$ReleaseId = '') {
@@ -464,6 +754,17 @@ function Get-GeneratedIdentity {
 }
 
 function Write-StackCompose($Manifest, $Profile, $Runtime) {
+    # Aucun compose n'est ecrit sans domaines. C'est ici que la garantie tient :
+    # `ALLOWED_DOMAINS` a un defaut cote serveur, herite d'un deploiement
+    # mono-tenant, et un compose qui omettrait `NOVA_DOMAINS` le laisserait
+    # servir. Le refus est donc structurel, et non un controle en amont qu'un
+    # futur chemin d'appel pourrait contourner.
+    #
+    # Avant `Get-OrCreateSecret`, et non apres : un refus ne doit rien laisser
+    # derriere lui, pas meme un mot de passe de base tire au sort pour une
+    # configuration qui ne sera jamais ecrite.
+    if (-not $script:ResolvedDomains) { throw 'ORGANIZATION_DOMAINS_REQUIRED' }
+    if (-not (Test-DomainListShape $script:ResolvedDomains)) { throw 'ORGANIZATION_DOMAINS_INVALID' }
     Initialize-Directories
     $dbSecret = Get-OrCreateSecret 'postgres-password.txt'
     $identity = Get-GeneratedIdentity
@@ -525,6 +826,7 @@ $llmEnvironment
       NOVA_ORGANIZATION_ID: "$orgId"
       NOVA_ORGANIZATION_NAME: "$OrganizationName"
       NOVA_ORGANIZATION_TYPE: "$OrganizationType"
+      NOVA_DOMAINS: "$script:ResolvedDomains"
       NOVA_AI_TEXT_BASE_URL: http://llm:8000/v1
       NOVA_AI_TEXT_MODEL: "$($Profile.language.model_id)"
       NOVA_AI_SPEECH_BASE_URL: http://whisper:8000
@@ -675,6 +977,20 @@ function Restore-PreviousConfiguration {
 
 function Get-FailureAdvice([string]$Message) {
     switch -Regex ($Message) {
+        '^ORGANIZATION_DOMAINS_REQUIRED' {
+            return "Aucun domaine de courriel n a ete declare pour l organisation.`nRelancez avec -OrganizationDomains exemple.fr (plusieurs domaines separes par des virgules). Sans eux, le serveur retomberait sur des domaines appartenant a une autre organisation, et aucun de vos membres ne pourrait se connecter." }
+        '^ORGANIZATION_DOMAINS_INVALID' {
+            return "La liste de domaines fournie n est pas valide.`nAttendu : des domaines separes par des virgules, par exemple exemple.fr,cadres.exemple.fr. Aucune configuration n a ete ecrite." }
+        '^FIRST_ADMIN_EMAIL_OUTSIDE_DOMAINS' {
+            return "L adresse d administrateur n appartient a aucun des domaines declares.`nElle serait promue mais ne pourrait jamais se connecter. Corrigez -FirstAdminEmail, ou ajoutez son domaine a -OrganizationDomains." }
+        '^FIRST_ADMIN_EMAIL_REQUIRED' {
+            return "Aucune adresse d administrateur n a ete fournie.`nRelancez avec -FirstAdminEmail <adresse professionnelle>. Sans administrateur, la pile demarre mais personne ne peut ouvrir Nova Admin." }
+        '^FIRST_ADMIN_EMAIL_INVALID' {
+            return "L adresse d administrateur fournie n est pas une adresse valide.`nAucun compte n a ete cree. Relancez avec -FirstAdminEmail <adresse professionnelle>." }
+        '^ADMIN_EMAIL_ACL_NOT_APPLIED' {
+            return "Les droits d acces au fichier retenant l adresse de l administrateur n ont pas pu etre restreints.`nL adresse n a pas ete conservee. Relancez l installateur depuis une session Windows disposant des droits d administration." }
+        '^FIRST_ADMIN_PROMOTION_FAILED' {
+            return "Le serveur fonctionne, mais le premier administrateur n a pas pu etre nomme.`nPersonne ne peut encore ouvrir Nova Admin. Relancez l action 'reconfigure' avec -FirstAdminEmail <adresse>, ou nommez-le a la main :`n  docker compose --file %ProgramData%\Nova\OrganizationServer\generated\compose.quick-lab.yml exec -T api python admin_cli.py grant <adresse> organization_admin --create-if-missing" }
         '^SECRET_ACL_NOT_APPLIED' {
             return "Les droits d acces au mot de passe de la base n ont pas pu etre restreints.`nLe secret n a pas ete conserve. Relancez l installateur depuis une session Windows disposant des droits d administration." }
         '^DOCKER_PRESENT_BUT_DAEMON_NOT_RESPONDING' {
@@ -917,6 +1233,22 @@ function Get-LabStatus {
 }
 
 function Invoke-Install {
+    # Avant tout le reste. En mode silencieux, une installation sans adresse
+    # d'administrateur echoue ici, en une seconde, plutot qu'apres une demi-heure
+    # de telechargement -- et plutot qu'en livrant un serveur que personne ne
+    # pilote. En interactif, la question est posee tant que l'operateur est
+    # encore devant l'ecran.
+    $answers = Resolve-InstallAnswers
+    Save-InstallAnswers $answers
+    # Reinjecte dans la portee du script : le generateur de configuration lit
+    # ces valeurs la, comme il lisait deja `$OrganizationName`. Les reaffecter
+    # ici est ce qui fait qu'une reprise apres redemarrage regenere la meme
+    # configuration que la premiere execution, au lieu des valeurs par defaut
+    # du bloc `param`.
+    $script:OrganizationName = $answers.organization_name
+    $script:OrganizationType = $answers.organization_type
+    $script:ResolvedDomains = $answers.domains
+    $administrators = @($answers.administrators)
     $hardware = Get-Hardware
     $profile = Select-HardwareProfile $hardware (Read-BundledProfiles)
     if (-not $profile.supported) { throw $profile.diagnostic }
@@ -948,7 +1280,13 @@ function Invoke-Install {
         throw
     }
     Save-State 'ready' $profile.id $manifest.release_id
-    Show-Result 'Nova Organization Server — READY' "Organization: $OrganizationName`nProfile: $($profile.id)`nNova API: http://127.0.0.1:8080`nLanguage runtime: $($runtime.Mode)`nPostgreSQL, Redis, Speech, Language and Nova Server are running."
+    # Hors du try/catch ci-dessus, et c'est delibere : Restore-PreviousConfiguration
+    # ramenerait la pile precedente. Une promotion ratee n'est pas une raison
+    # d'annuler une mise a jour qui, elle, a reussi -- la pile repond, readyz dit
+    # oui, et seule la nomination reste a faire. L'echec reste visible : il
+    # remonte au bloc d'erreur final, qui affiche le code et la marche a suivre.
+    $promoted = Set-FirstAdministrators $administrators
+    Show-Result 'Nova Organization Server — READY' ("Organization: $OrganizationName`nProfile: $($profile.id)`nNova API: http://127.0.0.1:8080`nLanguage runtime: $($runtime.Mode)`nPostgreSQL, Redis, Speech, Language and Nova Server are running.`n`n" + (Get-AdministratorReport $promoted))
 }
 
 if ($LibraryMode) { return }
@@ -992,6 +1330,84 @@ if ($Action -eq 'selftest') {
             if ($got -ne $expected[$case]) { throw ('SERVICE_STATE_WRONG {0} -> {1}' -f $case, $got) }
         }
         Write-Output 'SERVICE_STATE_OK running=ok healthy=ok starting=ok unhealthy=ok exited0=ok exited1=ok'
+
+        # Le premier administrateur. Une adresse fautive doit etre refusee ici,
+        # sur le poste, et non decouverte le jour ou personne n arrive a ouvrir
+        # Nova Admin. Ce controle est celui que la ligne de commande et la boite
+        # de dialogue partagent.
+        $emailCases = @{
+            'alex@exemple.fr'             = $true
+            'alex.martin@sous.exemple.fr' = $true
+            ''                            = $false
+            'alex'                        = $false
+            'alex@exemple'                = $false
+            'alex@@exemple.fr'            = $false
+            'alex@exemple.f'              = $false
+            'alex martin@exemple.fr'      = $false
+            'alex@exemple.fr,bea@exemple.fr' = $false
+        }
+        foreach ($case in $emailCases.Keys) {
+            if ((Test-EmailShape $case) -ne $emailCases[$case]) {
+                throw ('ADMIN_EMAIL_SHAPE_WRONG case={0}' -f $(if ($case) { 'non-vide' } else { 'vide' }))
+            }
+        }
+        Write-Output 'ADMIN_EMAIL_SHAPE_OK accepted=2 refused=7'
+
+        # Chaque echec de nomination doit porter sa marche a suivre : c est ce
+        # qui distingue un installateur d un code d erreur.
+        foreach ($code in @('FIRST_ADMIN_EMAIL_REQUIRED', 'FIRST_ADMIN_EMAIL_INVALID',
+                            'FIRST_ADMIN_PROMOTION_FAILED: exit 1',
+                            'ADMIN_EMAIL_ACL_NOT_APPLIED')) {
+            if (-not (Get-FailureAdvice $code)) { throw ('ADMIN_ADVICE_MISSING {0}' -f $code) }
+        }
+        Write-Output 'ADMIN_ADVICE_OK codes=4'
+
+        # Les domaines de l organisation. Le serveur a un defaut herite d un
+        # deploiement mono-tenant ; une installation faite par ce script ne doit
+        # jamais le laisser servir. Ce controle est celui que la ligne de
+        # commande et la boite de dialogue partagent.
+        $domainCases = @{
+            'exemple.fr'                      = $true
+            'exemple.fr,cadres.exemple.fr'    = $true
+            'exemple.fr, cadres.exemple.fr'   = $true
+            'sous.domaine.exemple-lab.co.uk'  = $true
+            ''                                = $false
+            'localhost'                       = $false
+            'exemple.f'                       = $false
+            '-mauvais.fr'                     = $false
+            'mauvais-.fr'                     = $false
+            'exemple.fr,'                     = $false
+            'exemple.fr;autre.fr'             = $false
+            'http://exemple.fr'               = $false
+        }
+        foreach ($case in $domainCases.Keys) {
+            if ((Test-DomainListShape $case) -ne $domainCases[$case]) {
+                throw ('ORGANIZATION_DOMAIN_SHAPE_WRONG case={0}' -f $(if ($case) { 'non-vide' } else { 'vide' }))
+            }
+        }
+        if ((ConvertTo-DomainList ' Exemple.FR , exemple.fr, Cadres.Exemple.fr ') -ne 'exemple.fr,cadres.exemple.fr') {
+            throw 'ORGANIZATION_DOMAIN_NORMALISATION_WRONG'
+        }
+        Write-Output 'ORGANIZATION_DOMAIN_SHAPE_OK accepted=4 refused=8 normalised=1'
+
+        # La garantie structurelle : aucun compose ne s ecrit sans domaines, donc
+        # le defaut du serveur ne peut plus servir sur une installation faite ici.
+        $previousDomains = $script:ResolvedDomains
+        try {
+            $script:ResolvedDomains = ''
+            $refused = $false
+            try { Write-StackCompose $null $null $null | Out-Null } catch {
+                if ($_.Exception.Message -match '^ORGANIZATION_DOMAINS_REQUIRED') { $refused = $true }
+            }
+            if (-not $refused) { throw 'COMPOSE_WRITTEN_WITHOUT_DOMAINS' }
+        } finally { $script:ResolvedDomains = $previousDomains }
+        Write-Output 'ORGANIZATION_DOMAIN_GUARD_OK compose_refuses_empty=1'
+
+        foreach ($code in @('ORGANIZATION_DOMAINS_REQUIRED', 'ORGANIZATION_DOMAINS_INVALID',
+                            'FIRST_ADMIN_EMAIL_OUTSIDE_DOMAINS')) {
+            if (-not (Get-FailureAdvice $code)) { throw ('ADMIN_ADVICE_MISSING {0}' -f $code) }
+        }
+        Write-Output 'ORGANIZATION_DOMAIN_ADVICE_OK codes=3'
 
         # If Docker is up, report what the real lab containers look like. This
         # reads state only: nothing is started, stopped or removed.

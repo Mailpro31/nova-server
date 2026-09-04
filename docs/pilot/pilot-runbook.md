@@ -30,10 +30,29 @@ NOVA_SERVICE_ENDPOINT=https://…
 NOVA_ADMIN_ORIGINS=https://…
 ```
 
-Les valeurs par défaut de ces variables portent le nom du tout premier
-déploiement. Les laisser en production ferait servir votre organisation sous
-l'identité d'une autre, avec les apparences d'une configuration correcte : le
-démarrage les refuse donc explicitement.
+Les valeurs par défaut de certaines de ces variables portent le nom du tout
+premier déploiement. Les laisser en production ferait servir votre organisation
+sous l'identité d'une autre, avec les apparences d'une configuration correcte :
+le démarrage les refuse donc explicitement.
+
+`NOVA_DOMAINS` n'a plus de valeur par défaut. Sur Linux, `docker compose`
+refuse de résoudre la configuration si la variable est absente ou vide. Cette
+garantie évite une installation qui semblerait fonctionner pour un compte
+administrateur précréé, mais refuserait tous les autres membres à leur première
+connexion avec `MEMBERSHIP_NOT_FOUND`.
+
+**Sur une installation faite par l'installeur Windows, cette variable n'est
+plus à écrire à la main :** elle est saisie par l'installeur (voir §3) et posée
+dans la configuration générée. L'installeur refuse d'écrire une configuration
+sans elle.
+
+**Sur Linux**, ajoutez-la explicitement au fichier `.env` placé à côté de
+`docker-compose.yml`, puis vérifiez la configuration avant le démarrage :
+
+```
+NOVA_DOMAINS=etudiants.example.org,example.org
+docker compose config --quiet
+```
 
 Puis :
 
@@ -71,7 +90,44 @@ endpoint resterait une porte dérobée quelles que soient ses conditions. Il n'y
 pas non plus de variable d'amorçage, qui resterait en place bien après le
 premier démarrage.
 
-Le parcours est donc en deux temps :
+### Sur une installation faite par l'installeur Windows
+
+**Il n'y a rien à faire : l'installeur s'en charge.** Il demande l'adresse du
+premier administrateur avant de télécharger quoi que ce soit, puis, une fois
+`/api/readyz` obtenu, exécute la promotion dans le conteneur `api`. L'écran
+final affiche les administrateurs réellement enregistrés.
+
+```
+NovaOrganizationServerSetup.exe -OrganizationDomains exemple.fr -FirstAdminEmail alex@exemple.fr
+NovaOrganizationServerSetup.exe -OrganizationDomains exemple.fr,cadres.exemple.fr `
+    -FirstAdminEmail alex@exemple.fr -SecondAdminEmail bea@exemple.fr
+```
+
+`-OrganizationDomains` est **obligatoire** : ce sont les domaines de courriel
+dont les adresses pourront se connecter. Il n'a pas de valeur par défaut, parce
+que celle du serveur appartient à une autre organisation — voir §2. Une adresse
+d'administrateur hors de ces domaines est refusée tout de suite : elle serait
+promue sans jamais pouvoir se connecter.
+
+En mode silencieux (`-Headless`), `-OrganizationDomains` et `-FirstAdminEmail`
+sont **obligatoires** : l'installation s'arrête immédiatement si l'un manque,
+avant tout téléchargement, plutôt que de livrer un serveur inutilisable. En mode
+interactif, l'installeur pose les deux questions.
+
+Les réponses sont retenues dans un fichier protégé, avec les mêmes droits
+d'accès que le mot de passe de la base : la reprise après le redémarrage exigé
+par WSL2 relance l'installeur **sans aucun argument**, et sans cette mémoire
+elle régénérerait la configuration avec les valeurs par défaut. Le nom et le
+type d'organisation suivent le même chemin, pour la même raison. Aucune adresse
+n'apparaît dans un journal.
+
+Relancer l'installation, `update` ou `reconfigure` rejoue la promotion sans
+effet de bord : `grant` **écrit** un rôle, il ne l'ajoute pas, et l'unicité
+(organisation, adresse) interdit le doublon.
+
+### À la main, ou sur une installation Linux
+
+Le parcours est en deux temps :
 
 1. la personne se connecte normalement — par SSO ou par code e-mail. Son compte
    naît de cette connexion ;
@@ -81,6 +137,34 @@ Le parcours est donc en deux temps :
 python admin_cli.py grant alex@exemple.fr organization_admin
 python admin_cli.py list
 ```
+
+Depuis un poste où la pile tourne dans des conteneurs :
+
+```
+docker compose exec -T api python admin_cli.py list
+```
+
+### Nommer quelqu'un qui ne s'est jamais connecté
+
+`grant` refuse une adresse inconnue, et c'est le bon défaut : sur le chemin de
+récupération, une faute de frappe doit s'arrêter là. Pour l'amorçage d'une
+organisation neuve, où **aucun** compte n'existe encore, ajoutez
+`--create-if-missing` :
+
+```
+python admin_cli.py grant alex@exemple.fr organization_admin --create-if-missing
+```
+
+Le compte ainsi créé n'est pas un compte parallèle. À la première connexion
+réelle, le fournisseur d'identité s'y rattache par l'adresse et **le réutilise**
+— le rôle survit, aucun doublon n'apparaît.
+
+> **L'adresse doit être exactement celle que renvoie le fournisseur
+> d'identité.** C'est elle, et elle seule, qui fait le rattachement. Une adresse
+> approchante — un alias, ou l'écart entre l'UPN et la boîte aux lettres chez
+> Entra — produit un administrateur qui ne correspondra jamais à personne,
+> pendant que la personne réelle se connecte et obtient un compte ordinaire. En
+> cas de doute, vérifiez avec `admin_cli list` après la première connexion.
 
 Rôles : `organization_admin` gère les personnes et le produit ; `it_admin` gère
 la machine — déploiement, fournisseurs, diagnostics ; `read_only` observe.
@@ -304,7 +388,10 @@ python admin_cli.py grant <adresse> organization_admin
 
 La personne doit d'abord posséder un compte — donc s'être connectée au moins une
 fois. Si plus personne ne peut se connecter, il faut d'abord rétablir le
-fournisseur d'identité, ou utiliser le code par e-mail.
+fournisseur d'identité, ou utiliser le code par e-mail. En dernier recours,
+`--create-if-missing` nomme quelqu'un qui ne s'est jamais connecté ; relisez
+l'avertissement du §3 avant de vous en servir : hors amorçage, une adresse
+approchante crée un administrateur qui ne désigne personne.
 
 **Conséquence pratique : nommez au moins deux `organization_admin` dès le début
 du pilote.** La garde qui empêche de retirer le dernier gestionnaire d'identités

@@ -60,7 +60,11 @@ from ai_runtime import (
 
 # ---------------------------------------------------------------- config
 DB_PATH = Path(os.getenv("NOVA_DB", "nova.db"))
-ALLOWED_DOMAINS = [d.strip().lower() for d in os.getenv("NOVA_DOMAINS", "eleves.ipsa.fr,ipsa.fr").split(",")]
+ALLOWED_DOMAINS = [
+    domain.strip().lower()
+    for domain in os.getenv("NOVA_DOMAINS", "").split(",")
+    if domain.strip()
+]
 MAX_SEATS = int(os.getenv("NOVA_MAX_SEATS", "300"))
 MAX_MACHINES_PER_EMAIL = int(os.getenv("NOVA_MAX_MACHINES", "3"))
 CODE_TTL_SECONDS = 600          # code email valide 10 min
@@ -208,11 +212,11 @@ ENTRA_AUTHORITY = f"https://login.microsoftonline.com/{ENTRA_TENANT_ID}/oauth2/v
 ENTRA_FLOWS: dict[str, dict] = {}
 
 # Envoi d'emails : par défaut, mode DEV (le code est affiché dans les logs serveur)
-SMTP_HOST = os.getenv("NOVA_SMTP_HOST", "")          # ex. smtp.ipsa.fr
+SMTP_HOST = os.getenv("NOVA_SMTP_HOST", "")          # ex. smtp.example.com
 SMTP_PORT = int(os.getenv("NOVA_SMTP_PORT", "587"))
 SMTP_USER = os.getenv("NOVA_SMTP_USER", "")
 SMTP_PASS = secrets_provider.resolve_value(os.getenv("NOVA_SMTP_PASS", "")) or ""
-SMTP_FROM = os.getenv("NOVA_SMTP_FROM", "nova@ipsa.fr")
+SMTP_FROM = os.getenv("NOVA_SMTP_FROM", "nova@example.invalid")
 
 # Moteurs d'inférence (services du docker-compose)
 ORGANIZATION_AI_ROUTER = router_from_environment()
@@ -3244,7 +3248,12 @@ def revoke_admin_sessions_for_user(user_id: str, reason: str = "revoked"):
     print(f"[admin] session revoked reason={reason}")
 
 
-def set_security_role(email: str, role: str, organization_id: str | None = None) -> dict:
+def set_security_role(
+    email: str,
+    role: str,
+    organization_id: str | None = None,
+    create_missing: bool = False,
+) -> dict:
     """Attribue, change ou retire un rôle de sécurité.
 
     **Aucun endpoint ne l'expose.** Le premier administrateur d'une organisation
@@ -3255,6 +3264,30 @@ def set_security_role(email: str, role: str, organization_id: str | None = None)
 
     Retirer un rôle ferme immédiatement les sessions d'administration de la
     personne : sans cela, la révocation ne prendrait effet qu'à l'expiration.
+
+    ## `create_missing`, et pourquoi il est **désactivé par défaut**
+
+    Le défaut refuse une adresse inconnue, et c'est délibéré : sur le chemin de
+    récupération, une faute de frappe doit s'arrêter là plutôt que de fabriquer
+    un compte. Un seul appelant a besoin du contraire — l'installeur, qui nomme
+    le premier administrateur d'une organisation neuve, où **aucun** compte
+    n'existe encore et où personne ne s'est jamais connecté.
+
+    Le compte ainsi créé n'est pas un compte parallèle. Il porte l'adresse
+    normalisée, et l'unicité `(organisation, adresse)` garantit qu'il n'y en
+    aura qu'un. À la première connexion par le fournisseur d'identité,
+    `resolve_member_for_identity` le retrouve par cette adresse, y rattache
+    l'identité fédérée et **le réutilise** : le rôle survit, aucun doublon
+    n'apparaît. Ce qui ne survit pas à une adresse erronée, en revanche, c'est
+    le rattachement : le compte resterait administrateur sans jamais
+    correspondre à personne. C'est pourquoi l'appelant doit avoir vérifié la
+    forme de l'adresse avant d'arriver ici, et pourquoi le drapeau est explicite
+    plutôt qu'implicite.
+
+    Conséquence à connaître : un compte pré-créé emprunte le chemin de
+    rattachement, qui précède le contrôle de domaine `ALLOWED_DOMAINS`. Le
+    contrôle de tenant du fournisseur d'identité, lui, reste en amont et n'est
+    pas contourné.
     """
     role = (role or "").strip().lower()
     if role not in SECURITY_ROLES:
@@ -3266,7 +3299,10 @@ def set_security_role(email: str, role: str, organization_id: str | None = None)
         # pas une personne, c'est une coïncidence.
         row = user_by_email(conn, organization_id, email)
         if row is None:
-            raise LookupError(f"aucun compte : {email}")
+            if not create_missing:
+                raise LookupError(f"aucun compte : {email}")
+            create_user(conn, organization_id, email)
+            row = user_by_email(conn, organization_id, email)
         conn.execute(
             "UPDATE users SET security_role=?, updated_at=? WHERE user_id=?",
             (role, time.time(), row["user_id"]),
