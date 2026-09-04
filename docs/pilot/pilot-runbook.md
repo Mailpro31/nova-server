@@ -35,6 +35,19 @@ déploiement. Les laisser en production ferait servir votre organisation sous
 l'identité d'une autre, avec les apparences d'une configuration correcte : le
 démarrage les refuse donc explicitement.
 
+`NOVA_DOMAINS` mérite une mention à part, parce que son défaut est le plus
+discret des trois. Il ne bloque pas le démarrage et n'empêche pas
+l'administrateur de se connecter — son compte existe déjà, et le rattachement
+d'identité précède le contrôle de domaine. Il refuse **tous les autres
+membres**, à leur première connexion, avec `MEMBERSHIP_NOT_FOUND`. Une
+installation peut donc paraître réussie tant qu'on ne teste que
+l'administrateur.
+
+**Sur une installation faite par l'installeur Windows, cette variable n'est
+plus à écrire à la main :** elle est saisie par l'installeur (voir §3) et posée
+dans la configuration générée. L'installeur refuse d'écrire une configuration
+sans elle.
+
 Puis :
 
 ```
@@ -79,16 +92,28 @@ premier administrateur avant de télécharger quoi que ce soit, puis, une fois
 final affiche les administrateurs réellement enregistrés.
 
 ```
-NovaOrganizationServerSetup.exe -FirstAdminEmail alex@exemple.fr
-NovaOrganizationServerSetup.exe -FirstAdminEmail alex@exemple.fr -SecondAdminEmail bea@exemple.fr
+NovaOrganizationServerSetup.exe -OrganizationDomains exemple.fr -FirstAdminEmail alex@exemple.fr
+NovaOrganizationServerSetup.exe -OrganizationDomains exemple.fr,cadres.exemple.fr `
+    -FirstAdminEmail alex@exemple.fr -SecondAdminEmail bea@exemple.fr
 ```
 
-En mode silencieux (`-Headless`), `-FirstAdminEmail` est **obligatoire** :
-l'installation s'arrête immédiatement si elle manque, plutôt que de livrer un
-serveur que personne ne peut piloter. En mode interactif, l'installeur pose la
-question. L'adresse est retenue, avec les mêmes droits d'accès que le mot de
-passe de la base, afin que la reprise après le redémarrage exigé par WSL2 nomme
-le même administrateur ; elle n'apparaît dans aucun journal.
+`-OrganizationDomains` est **obligatoire** : ce sont les domaines de courriel
+dont les adresses pourront se connecter. Il n'a pas de valeur par défaut, parce
+que celle du serveur appartient à une autre organisation — voir §2. Une adresse
+d'administrateur hors de ces domaines est refusée tout de suite : elle serait
+promue sans jamais pouvoir se connecter.
+
+En mode silencieux (`-Headless`), `-OrganizationDomains` et `-FirstAdminEmail`
+sont **obligatoires** : l'installation s'arrête immédiatement si l'un manque,
+avant tout téléchargement, plutôt que de livrer un serveur inutilisable. En mode
+interactif, l'installeur pose les deux questions.
+
+Les réponses sont retenues dans un fichier protégé, avec les mêmes droits
+d'accès que le mot de passe de la base : la reprise après le redémarrage exigé
+par WSL2 relance l'installeur **sans aucun argument**, et sans cette mémoire
+elle régénérerait la configuration avec les valeurs par défaut. Le nom et le
+type d'organisation suivent le même chemin, pour la même raison. Aucune adresse
+n'apparaît dans un journal.
 
 Relancer l'installation, `update` ou `reconfigure` rejoue la promotion sans
 effet de bord : `grant` **écrit** un rôle, il ne l'ajoute pas, et l'unicité

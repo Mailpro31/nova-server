@@ -680,10 +680,11 @@ def first_admin_body() -> str:
 
 def test_the_installer_names_a_first_administrator():
     body = setup_source()
-    for expected in ("function Resolve-AdministratorEmails",
+    for expected in ("function Resolve-InstallAnswers",
                      "function Set-FirstAdministrators",
-                     "function Read-StoredAdministrators",
-                     "$administrators = Resolve-AdministratorEmails",
+                     "function Read-InstallAnswers",
+                     "$answers = Resolve-InstallAnswers",
+                     "$administrators = @($answers.administrators)",
                      "$promoted = Set-FirstAdministrators $administrators"):
         assert expected in body
 
@@ -713,8 +714,8 @@ def test_a_missing_address_stops_a_silent_install_before_any_work():
     # materiel n'est sonde avant de savoir qui administrera le serveur.
     statements = [line.strip() for line in install.splitlines()[1:]
                   if line.strip() and not line.strip().startswith("#")]
-    assert statements[0] == "$administrators = Resolve-AdministratorEmails"
-    resolve = body[body.index("function Resolve-AdministratorEmails"):]
+    assert statements[0] == "$answers = Resolve-InstallAnswers"
+    resolve = body[body.index("function Resolve-InstallAnswers"):]
     resolve = resolve[:resolve.index("\nfunction ")]
     assert "if ($Headless) { throw 'FIRST_ADMIN_EMAIL_REQUIRED' }" in resolve
 
@@ -787,10 +788,10 @@ def test_a_resume_after_the_reboot_still_knows_who_to_promote():
     resume = body[body.index("function Register-Resume"):]
     resume = resume[:resume.index("\nfunction ")]
     assert "$FirstAdminEmail" not in resume
-    assert "Save-Administrators $administrators" in body
-    stored = body[body.index("function Read-StoredAdministrators"):]
+    assert "Save-InstallAnswers $answers" in body
+    stored = body[body.index("function Read-InstallAnswers"):]
     stored = stored[:stored.index("\nfunction ")]
-    assert "Get-AdministratorStatePath" in stored
+    assert "Get-InstallAnswersPath" in stored
 
 
 def test_the_selftest_proves_the_address_check():
@@ -842,3 +843,150 @@ def test_the_first_admin_path_can_be_verified_on_this_machine():
     )
     assert "FIRST_ADMIN_TEST_OK" in completed.stdout, completed.stdout + completed.stderr
     assert completed.returncode == 0
+
+
+# ──────────────────── Les domaines de l'organisation ──────────────────────
+#
+# main.py lit NOVA_DOMAINS et retombe, a defaut, sur les domaines d'un
+# deploiement mono-tenant anterieur. L'installeur ne posait jamais la variable :
+# le conteneur servait donc ce defaut, et tout membre autre que l'administrateur
+# echouait a sa premiere connexion. Une installation pouvait paraitre reussie en
+# ne testant que l'administrateur.
+
+
+def answers_body() -> str:
+    body = setup_source()
+    start = body.index("function Resolve-InstallAnswers")
+    return body[start:body.index("\nfunction ", start)]
+
+
+def test_the_generated_compose_declares_the_organization_domains():
+    # Le test qui echouait avant ce correctif : la variable n'existait nulle
+    # part dans le compose genere.
+    body = setup_source()
+    assert 'NOVA_DOMAINS: "$script:ResolvedDomains"' in body
+    assert "[string]$OrganizationDomains = ''" in body
+
+
+def test_no_compose_can_be_written_without_domains():
+    # La garantie est structurelle : elle vit dans le generateur, pas dans un
+    # controle en amont qu'un futur chemin d'appel pourrait contourner.
+    body = setup_source()
+    composer = body[body.index("function Write-StackCompose"):]
+    composer = composer[:composer.index("\nfunction ")]
+    assert "throw 'ORGANIZATION_DOMAINS_REQUIRED'" in composer
+    assert "throw 'ORGANIZATION_DOMAINS_INVALID'" in composer
+    # Avant la creation du secret : un refus ne doit rien laisser derriere lui.
+    assert composer.index("ORGANIZATION_DOMAINS_REQUIRED") < composer.index("$dbSecret = Get-OrCreateSecret")
+
+
+def test_the_server_default_is_never_relied_upon():
+    # Aucun domaine en dur, et surtout pas ceux du defaut herite.
+    body = setup_source()
+    for inherited in ("ipsa.fr", "eleves.ipsa.fr"):
+        assert inherited not in body
+    # Le parametre n'a pas de valeur par defaut : l'absence est une erreur, pas
+    # un repli silencieux.
+    assert "[string]$OrganizationDomains = ''" in body
+    assert "$OrganizationDomains = 'exemple" not in body
+
+
+def test_a_silent_install_without_domains_stops_before_any_work():
+    body = setup_source()
+    install = body[body.index("function Invoke-Install"):]
+    install = install[:install.index("\n}\n")]
+    statements = [line.strip() for line in install.splitlines()[1:]
+                  if line.strip() and not line.strip().startswith("#")]
+    assert statements[0] == "$answers = Resolve-InstallAnswers"
+    assert "if ($Headless) { throw 'ORGANIZATION_DOMAINS_REQUIRED' }" in answers_body()
+
+
+def test_the_domain_list_is_validated_before_anything_is_written():
+    body = setup_source()
+    assert "function Test-DomainListShape" in body
+    assert "function ConvertTo-DomainList" in body
+    # Le parametre est valide a la liaison, comme les adresses.
+    parameters = body[:body.index("Set-StrictMode")]
+    assert parameters.count("[ValidatePattern(") == 3
+
+
+def test_an_administrator_outside_the_declared_domains_is_refused():
+    # Il serait promu et ne pourrait jamais se connecter : autant le dire tout
+    # de suite plutot que devant l'ecran de connexion.
+    assert "throw 'FIRST_ADMIN_EMAIL_OUTSIDE_DOMAINS'" in answers_body()
+    advice = setup_source()[setup_source().index("function Get-FailureAdvice"):]
+    for code in ("ORGANIZATION_DOMAINS_REQUIRED", "ORGANIZATION_DOMAINS_INVALID",
+                 "FIRST_ADMIN_EMAIL_OUTSIDE_DOMAINS"):
+        assert code in advice
+
+
+def test_the_answers_survive_the_reboot_that_resume_needs():
+    # RunOnce relance `resume` sans argument : sans ce fichier, la reprise
+    # regenererait le compose avec les valeurs par defaut, donc sans domaines.
+    body = setup_source()
+    for expected in ("function Read-InstallAnswers", "function Save-InstallAnswers",
+                     "$answers = Resolve-InstallAnswers", "Save-InstallAnswers $answers",
+                     "$script:ResolvedDomains = $answers.domains"):
+        assert expected in body
+    resume = body[body.index("function Register-Resume"):]
+    resume = resume[:resume.index("\nfunction ")]
+    assert "$OrganizationDomains" not in resume
+
+
+def test_the_answers_file_is_protected_like_a_secret():
+    body = setup_source()
+    save = body[body.index("function Save-InstallAnswers"):]
+    save = save[:save.index("\nfunction ")]
+    assert "Protect-OperatorFile $path" in save
+
+
+def test_the_organization_name_is_no_longer_lost_on_a_resume():
+    # Meme defaut que les domaines, et meme remede : sans memoire, une reprise
+    # regenerait le compose avec « Nova Lab ».
+    body = setup_source()
+    assert "$script:OrganizationName = $answers.organization_name" in body
+    assert "$script:OrganizationType = $answers.organization_type" in body
+    # $PSBoundParameters est propre a chaque portee : celui d'une fonction ne
+    # dit rien des arguments du script, d'ou la capture au niveau du script.
+    assert "$script:BoundParameters = $PSBoundParameters" in body
+    assert "$script:BoundParameters.ContainsKey('OrganizationName')" in answers_body()
+
+
+def test_the_launcher_forwards_every_argument():
+    # Seul args[0] atteignait le script : -FirstAdminEmail et
+    # -OrganizationDomains etaient jetes en silence, et l'installation
+    # retombait sur des valeurs que personne n'avait choisies.
+    launcher = (ROOT / "installer" / "NovaOrganizationServerSetup.cs").read_text(encoding="utf-8")
+    assert "for (int index = firstForwarded; index < args.Length; index++)" in launcher
+    assert "arguments.Append(' ').Append(Quote(args[index]))" in launcher
+    # Un premier jeton commencant par '-' est un parametre, pas une action.
+    assert 'bool hasAction = args.Length > 0 && !args[0].StartsWith("-");' in launcher
+    # Un nom de parametre ne doit jamais etre entoure de guillemets : il
+    # deviendrait un argument positionnel.
+    quote = launcher[launcher.index("private static string Quote"):]
+    quote = quote[:quote.index("\n    private static bool")]
+    assert "IndexOfAny" in quote and "return value;" in quote
+
+
+def test_the_selftest_proves_the_domain_rules():
+    body = setup_source()
+    selftest = body[body.index("if ($Action -eq 'selftest')"):]
+    for marker in ("ORGANIZATION_DOMAIN_SHAPE_OK", "ORGANIZATION_DOMAIN_GUARD_OK",
+                   "ORGANIZATION_DOMAIN_ADVICE_OK", "COMPOSE_WRITTEN_WITHOUT_DOMAINS"):
+        assert marker in selftest
+
+
+def test_the_regeneration_test_checks_the_domains():
+    script = (ROOT / "test-regeneration.ps1").read_text(encoding="utf-8")
+    assert "$script:ResolvedDomains" in script
+    assert "DOMAINS_NOT_IN_COMPOSE" in script
+    assert "COMPOSE_WRITTEN_WITHOUT_DOMAINS" in script
+
+
+def test_supply_chain_checks_survive_the_domain_changes():
+    body = setup_source()
+    for code in ("MANIFEST_ORIGIN_NOT_PINNED", "MANIFEST_SIGNATURE_INVALID",
+                 "OCI_REFERENCE_NOT_IMMUTABLE", "OCI_DIGEST_VERIFICATION_FAILED",
+                 "OCI_PLATFORM_UNEXPECTED", "RELEASE_PUBLIC_KEY_NOT_CONFIGURED"):
+        assert code in body
+    assert "$script:AllowedManifestOrigin = 'https://releases.novaspeak.app'" in body

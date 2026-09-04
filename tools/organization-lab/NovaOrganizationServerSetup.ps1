@@ -20,6 +20,15 @@ param(
     # correspondre a personne.
     [ValidatePattern('^$|^[^@\s,;<>"]+@[^@\s,;<>"]+\.[^@\s,;<>".]{2,}$')]
     [string]$SecondAdminEmail = '',
+    # Les domaines de courriel de l'organisation, separes par des virgules.
+    # Sans eux, le serveur retombe sur le defaut de `ALLOWED_DOMAINS`, herite
+    # d'un deploiement mono-tenant : les administrateurs nommes par l'amorcage
+    # se connectent quand meme -- leur compte existe deja -- mais tout autre
+    # membre echoue a sa premiere connexion. Une installation peut donc
+    # paraitre reussie en ne testant que l'administrateur, et etre inutilisable
+    # pour tout le monde d'autre. Il n'y a donc pas de defaut ici.
+    [ValidatePattern('^$|^\s*(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+[A-Za-z]{2,}\s*(?:,\s*(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+[A-Za-z]{2,}\s*)*$')]
+    [string]$OrganizationDomains = '',
     [string]$ManifestUrl = 'https://releases.novaspeak.app/server/quick-lab/manifest.json',
     [string]$ReleasePublicKeyXml = '__NOVA_RELEASE_PUBLIC_KEY_XML__',
     [switch]$LibraryMode
@@ -27,6 +36,12 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+# Ce que l'operateur a reellement passe, saisi ici et nulle part ailleurs :
+# `$PSBoundParameters` est propre a chaque portee, et celui d'une fonction ne
+# dit rien des arguments du script. Sans cette capture, un `-OrganizationName`
+# explicite serait indistinguable de son defaut, et la valeur memorisee par une
+# execution precedente l'emporterait sur ce que l'operateur vient de taper.
+$script:BoundParameters = $PSBoundParameters
 $script:Version = '0.5.0'
 $script:Root = Join-Path $env:ProgramData 'Nova\OrganizationServer'
 $script:StatePath = Join-Path $script:Root 'setup-state.json'
@@ -41,6 +56,9 @@ $script:AllowedManifestOrigin = 'https://releases.novaspeak.app'
 # rewrites production configuration.
 $script:LabRoot = Join-Path $script:Root 'lab'
 $script:LabPort = 8443
+# Les domaines retenus pour cette execution. Vide tant que Resolve-InstallAnswers
+# n'a pas tranche ; Write-StackCompose refuse d'ecrire un compose sans eux.
+$script:ResolvedDomains = ''
 
 function Initialize-Directories {
     foreach ($path in @($script:Root, (Split-Path $script:LogPath), $script:Generated,
@@ -269,65 +287,136 @@ function Protect-OperatorFile([string]$Path) {
     }
 }
 
-function Get-AdministratorStatePath {
-    return (Join-Path $script:Secrets 'first-administrators.txt')
+function Test-DomainListShape([string]$Value) {
+    # Une liste de domaines, et rien de plus. Un label commence et finit par un
+    # caractere alphanumerique, deux labels au minimum, et une extension
+    # alphabetique : `exemple.fr` oui, `localhost` non, `-mauvais.fr` non.
+    # Les espaces autour des virgules sont tolerés parce que le serveur les
+    # retire de toute facon -- les refuser serait un refus gratuit.
+    if ([string]::IsNullOrWhiteSpace($Value)) { return $false }
+    return ($Value -match '^\s*(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+[A-Za-z]{2,}\s*(?:,\s*(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+[A-Za-z]{2,}\s*)*$')
 }
 
-function Read-StoredAdministrators {
-    # Register-Resume ecrit dans RunOnce la commande `"<exe>" resume`, **sans
-    # aucun argument** : apres le redemarrage exige par WSL2, l'adresse saisie
-    # avant ce redemarrage n'existe plus nulle part. Sans cette relecture, la
-    # reprise reinstallerait la pile et ne nommerait personne.
-    $path = Get-AdministratorStatePath
-    if (-not (Test-Path -LiteralPath $path)) { return @() }
-    try {
-        return @(Get-Content -LiteralPath $path -ErrorAction Stop |
-            ForEach-Object { $_.Trim() } | Where-Object { Test-EmailShape $_ })
-    } catch {
-        # Illisible n'est pas fatal : le mode interactif redemandera.
-        return @()
+function ConvertTo-DomainList([string]$Value) {
+    # Forme canonique : minuscules, sans espace, sans doublon, jointe par des
+    # virgules. C'est exactement ce que le serveur lira.
+    $seen = @()
+    foreach ($item in ($Value -split ',')) {
+        $domain = $item.Trim().ToLowerInvariant()
+        if ($domain -and ($seen -notcontains $domain)) { $seen += $domain }
     }
+    return ($seen -join ',')
 }
 
-function Save-Administrators([string[]]$Emails) {
+function Get-InstallAnswersPath {
+    return (Join-Path $script:Secrets 'install-answers.json')
+}
+
+function Read-InstallAnswers {
+    <#
+        Ce que l'operateur a repondu, relu tel quel.
+
+        Register-Resume ecrit dans RunOnce la commande `"<exe>" resume`, **sans
+        aucun argument** : apres le redemarrage exige par WSL2, tout ce qui a
+        ete saisi avant ce redemarrage a disparu. Sans cette relecture, la
+        reprise reinstallerait la pile en nommant personne et en retombant sur
+        les valeurs par defaut -- y compris le defaut de domaines herite, qui
+        est precisement ce que cette saisie existe pour eviter.
+    #>
+    $path = Get-InstallAnswersPath
+    if (-not (Test-Path -LiteralPath $path)) { return $null }
+    try {
+        $answers = Get-Content -Raw -LiteralPath $path -ErrorAction Stop | ConvertFrom-Json
+    } catch {
+        # Illisible n'est pas fatal : le mode interactif redemandera, et le
+        # mode silencieux echouera bruyamment faute de reponse.
+        return $null
+    }
+    if ($answers.schema_version -ne 1) { return $null }
+    return $answers
+}
+
+function Save-InstallAnswers($Answers) {
     Initialize-Directories
-    $path = Get-AdministratorStatePath
-    [IO.File]::WriteAllLines($path, [string[]]$Emails, (New-Object Text.UTF8Encoding($false)))
+    $path = Get-InstallAnswersPath
+    $json = $Answers | ConvertTo-Json -Depth 4
+    [IO.File]::WriteAllText($path, $json, (New-Object Text.UTF8Encoding($false)))
     Protect-OperatorFile $path
 }
 
-function Read-EmailFromDialog([string]$Prompt, [string]$Title) {
+function Read-TextFromDialog([string]$Prompt, [string]$Title) {
     Add-Type -AssemblyName Microsoft.VisualBasic
     $answer = [Microsoft.VisualBasic.Interaction]::InputBox($Prompt, $Title, '')
     if ($null -eq $answer) { return '' }
     return $answer.Trim()
 }
 
-function Resolve-AdministratorEmails {
+function Resolve-InstallAnswers {
     <#
+        Tout ce que l'installation doit savoir avant de commencer, en un seul
+        endroit.
+
         L'ordre est celui de l'autorite : ce que l'operateur vient de passer en
         ligne de commande, sinon ce qu'une execution precedente a retenu, sinon
         ce qu'on lui demande. Le mode silencieux n'a pas de troisieme recours :
         il echoue tout de suite, avant le materiel, avant le reseau, avant la
         moindre image telechargee.
+
+        Le nom et le type d'organisation passent par le meme chemin. Ils
+        n'avaient aucun filet : apres une reprise, `Write-StackCompose` les
+        regenerait a leur valeur par defaut, et le nom saisi devenait
+        silencieusement « Nova Lab ».
     #>
+    $stored = Read-InstallAnswers
+
+    $domains = ConvertTo-DomainList $OrganizationDomains
+    if (-not $domains -and $stored) { $domains = ConvertTo-DomainList ([string]$stored.domains) }
+
     $first = $FirstAdminEmail.Trim()
     $second = $SecondAdminEmail.Trim()
-    if (-not $first) {
-        $stored = @(Read-StoredAdministrators)
-        if ($stored.Count -ge 1) { $first = $stored[0] }
-        if (-not $second -and $stored.Count -ge 2) { $second = $stored[1] }
+    if (-not $first -and $stored) {
+        $kept = @(@($stored.administrators) | Where-Object { Test-EmailShape $_ })
+        if ($kept.Count -ge 1) { $first = $kept[0] }
+        if (-not $second -and $kept.Count -ge 2) { $second = $kept[1] }
     }
+
+    # Le nom et le type : l'argument explicite gagne, sinon la memoire, sinon le
+    # defaut du parametre. `$PSBoundParameters` distingue « passe » de
+    # « laisse a sa valeur par defaut », ce qu'une comparaison ne saurait faire.
+    $name = $OrganizationName
+    $type = $OrganizationType
+    if ($stored) {
+        if (-not $script:BoundParameters.ContainsKey('OrganizationName') -and $stored.organization_name) {
+            $name = [string]$stored.organization_name
+        }
+        if (-not $script:BoundParameters.ContainsKey('OrganizationType') -and $stored.organization_type) {
+            $type = [string]$stored.organization_type
+        }
+    }
+
+    if (-not $domains) {
+        if ($Headless) { throw 'ORGANIZATION_DOMAINS_REQUIRED' }
+        $domains = ConvertTo-DomainList (Read-TextFromDialog (
+            "Domaines de courriel de $name, separes par des virgules.`n`n" +
+            "Exemple : exemple.fr, cadres.exemple.fr`n`n" +
+            "Seules les adresses de ces domaines pourront se connecter. " +
+            "Il n'y a pas de valeur par defaut : celle du serveur appartient a " +
+            "une autre organisation.") `
+            'Nova Organization Server — Domaines de l organisation')
+        if (-not $domains) { throw 'ORGANIZATION_DOMAINS_REQUIRED' }
+    }
+    if (-not (Test-DomainListShape $domains)) { throw 'ORGANIZATION_DOMAINS_INVALID' }
+
     if (-not $first) {
         if ($Headless) { throw 'FIRST_ADMIN_EMAIL_REQUIRED' }
-        $first = Read-EmailFromDialog (
-            "Adresse professionnelle du premier administrateur de $OrganizationName.`n`n" +
+        $first = Read-TextFromDialog (
+            "Adresse professionnelle du premier administrateur de $name.`n`n" +
             "Ce doit etre exactement l'adresse renvoyee par votre fournisseur d'identite : " +
             "c'est elle qui rattachera le compte lors de la premiere connexion.") `
             'Nova Organization Server — Premier administrateur'
         if (-not (Test-EmailShape $first)) { throw 'FIRST_ADMIN_EMAIL_REQUIRED' }
         if (-not $second) {
-            $second = Read-EmailFromDialog (
+            $second = Read-TextFromDialog (
                 "Adresse d'un second administrateur (facultatif).`n`n" +
                 "Un administrateur unique bloque l'organisation des qu'il est absent. " +
                 "Laissez vide pour continuer sans.") `
@@ -340,7 +429,23 @@ function Resolve-AdministratorEmails {
     if ($second -and $second.ToLowerInvariant() -ne $emails[0]) {
         $emails += $second.ToLowerInvariant()
     }
-    return $emails
+
+    # Une adresse d'administrateur hors des domaines declares ne pourra jamais
+    # se connecter : son compte serait promu, et le fournisseur d'identite le
+    # refuserait. Mieux vaut le dire ici que le decouvrir devant l'ecran de
+    # connexion.
+    $declared = @($domains -split ',')
+    foreach ($email in $emails) {
+        if ($declared -notcontains $email.Split('@')[-1]) { throw 'FIRST_ADMIN_EMAIL_OUTSIDE_DOMAINS' }
+    }
+
+    return [pscustomobject]@{
+        schema_version    = 1
+        organization_name = $name
+        organization_type = $type
+        domains           = $domains
+        administrators    = $emails
+    }
 }
 
 function Invoke-AdminCli([string[]]$Arguments) {
@@ -649,6 +754,17 @@ function Get-GeneratedIdentity {
 }
 
 function Write-StackCompose($Manifest, $Profile, $Runtime) {
+    # Aucun compose n'est ecrit sans domaines. C'est ici que la garantie tient :
+    # `ALLOWED_DOMAINS` a un defaut cote serveur, herite d'un deploiement
+    # mono-tenant, et un compose qui omettrait `NOVA_DOMAINS` le laisserait
+    # servir. Le refus est donc structurel, et non un controle en amont qu'un
+    # futur chemin d'appel pourrait contourner.
+    #
+    # Avant `Get-OrCreateSecret`, et non apres : un refus ne doit rien laisser
+    # derriere lui, pas meme un mot de passe de base tire au sort pour une
+    # configuration qui ne sera jamais ecrite.
+    if (-not $script:ResolvedDomains) { throw 'ORGANIZATION_DOMAINS_REQUIRED' }
+    if (-not (Test-DomainListShape $script:ResolvedDomains)) { throw 'ORGANIZATION_DOMAINS_INVALID' }
     Initialize-Directories
     $dbSecret = Get-OrCreateSecret 'postgres-password.txt'
     $identity = Get-GeneratedIdentity
@@ -710,6 +826,7 @@ $llmEnvironment
       NOVA_ORGANIZATION_ID: "$orgId"
       NOVA_ORGANIZATION_NAME: "$OrganizationName"
       NOVA_ORGANIZATION_TYPE: "$OrganizationType"
+      NOVA_DOMAINS: "$script:ResolvedDomains"
       NOVA_AI_TEXT_BASE_URL: http://llm:8000/v1
       NOVA_AI_TEXT_MODEL: "$($Profile.language.model_id)"
       NOVA_AI_SPEECH_BASE_URL: http://whisper:8000
@@ -860,6 +977,12 @@ function Restore-PreviousConfiguration {
 
 function Get-FailureAdvice([string]$Message) {
     switch -Regex ($Message) {
+        '^ORGANIZATION_DOMAINS_REQUIRED' {
+            return "Aucun domaine de courriel n a ete declare pour l organisation.`nRelancez avec -OrganizationDomains exemple.fr (plusieurs domaines separes par des virgules). Sans eux, le serveur retomberait sur des domaines appartenant a une autre organisation, et aucun de vos membres ne pourrait se connecter." }
+        '^ORGANIZATION_DOMAINS_INVALID' {
+            return "La liste de domaines fournie n est pas valide.`nAttendu : des domaines separes par des virgules, par exemple exemple.fr,cadres.exemple.fr. Aucune configuration n a ete ecrite." }
+        '^FIRST_ADMIN_EMAIL_OUTSIDE_DOMAINS' {
+            return "L adresse d administrateur n appartient a aucun des domaines declares.`nElle serait promue mais ne pourrait jamais se connecter. Corrigez -FirstAdminEmail, ou ajoutez son domaine a -OrganizationDomains." }
         '^FIRST_ADMIN_EMAIL_REQUIRED' {
             return "Aucune adresse d administrateur n a ete fournie.`nRelancez avec -FirstAdminEmail <adresse professionnelle>. Sans administrateur, la pile demarre mais personne ne peut ouvrir Nova Admin." }
         '^FIRST_ADMIN_EMAIL_INVALID' {
@@ -1115,8 +1238,17 @@ function Invoke-Install {
     # de telechargement -- et plutot qu'en livrant un serveur que personne ne
     # pilote. En interactif, la question est posee tant que l'operateur est
     # encore devant l'ecran.
-    $administrators = Resolve-AdministratorEmails
-    Save-Administrators $administrators
+    $answers = Resolve-InstallAnswers
+    Save-InstallAnswers $answers
+    # Reinjecte dans la portee du script : le generateur de configuration lit
+    # ces valeurs la, comme il lisait deja `$OrganizationName`. Les reaffecter
+    # ici est ce qui fait qu'une reprise apres redemarrage regenere la meme
+    # configuration que la premiere execution, au lieu des valeurs par defaut
+    # du bloc `param`.
+    $script:OrganizationName = $answers.organization_name
+    $script:OrganizationType = $answers.organization_type
+    $script:ResolvedDomains = $answers.domains
+    $administrators = @($answers.administrators)
     $hardware = Get-Hardware
     $profile = Select-HardwareProfile $hardware (Read-BundledProfiles)
     if (-not $profile.supported) { throw $profile.diagnostic }
@@ -1229,6 +1361,53 @@ if ($Action -eq 'selftest') {
             if (-not (Get-FailureAdvice $code)) { throw ('ADMIN_ADVICE_MISSING {0}' -f $code) }
         }
         Write-Output 'ADMIN_ADVICE_OK codes=4'
+
+        # Les domaines de l organisation. Le serveur a un defaut herite d un
+        # deploiement mono-tenant ; une installation faite par ce script ne doit
+        # jamais le laisser servir. Ce controle est celui que la ligne de
+        # commande et la boite de dialogue partagent.
+        $domainCases = @{
+            'exemple.fr'                      = $true
+            'exemple.fr,cadres.exemple.fr'    = $true
+            'exemple.fr, cadres.exemple.fr'   = $true
+            'sous.domaine.exemple-lab.co.uk'  = $true
+            ''                                = $false
+            'localhost'                       = $false
+            'exemple.f'                       = $false
+            '-mauvais.fr'                     = $false
+            'mauvais-.fr'                     = $false
+            'exemple.fr,'                     = $false
+            'exemple.fr;autre.fr'             = $false
+            'http://exemple.fr'               = $false
+        }
+        foreach ($case in $domainCases.Keys) {
+            if ((Test-DomainListShape $case) -ne $domainCases[$case]) {
+                throw ('ORGANIZATION_DOMAIN_SHAPE_WRONG case={0}' -f $(if ($case) { 'non-vide' } else { 'vide' }))
+            }
+        }
+        if ((ConvertTo-DomainList ' Exemple.FR , exemple.fr, Cadres.Exemple.fr ') -ne 'exemple.fr,cadres.exemple.fr') {
+            throw 'ORGANIZATION_DOMAIN_NORMALISATION_WRONG'
+        }
+        Write-Output 'ORGANIZATION_DOMAIN_SHAPE_OK accepted=4 refused=8 normalised=1'
+
+        # La garantie structurelle : aucun compose ne s ecrit sans domaines, donc
+        # le defaut du serveur ne peut plus servir sur une installation faite ici.
+        $previousDomains = $script:ResolvedDomains
+        try {
+            $script:ResolvedDomains = ''
+            $refused = $false
+            try { Write-StackCompose $null $null $null | Out-Null } catch {
+                if ($_.Exception.Message -match '^ORGANIZATION_DOMAINS_REQUIRED') { $refused = $true }
+            }
+            if (-not $refused) { throw 'COMPOSE_WRITTEN_WITHOUT_DOMAINS' }
+        } finally { $script:ResolvedDomains = $previousDomains }
+        Write-Output 'ORGANIZATION_DOMAIN_GUARD_OK compose_refuses_empty=1'
+
+        foreach ($code in @('ORGANIZATION_DOMAINS_REQUIRED', 'ORGANIZATION_DOMAINS_INVALID',
+                            'FIRST_ADMIN_EMAIL_OUTSIDE_DOMAINS')) {
+            if (-not (Get-FailureAdvice $code)) { throw ('ADMIN_ADVICE_MISSING {0}' -f $code) }
+        }
+        Write-Output 'ORGANIZATION_DOMAIN_ADVICE_OK codes=3'
 
         # If Docker is up, report what the real lab containers look like. This
         # reads state only: nothing is started, stopped or removed.

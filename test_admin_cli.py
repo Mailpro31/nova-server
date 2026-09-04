@@ -681,5 +681,93 @@ class BootstrapFirstAdministratorTests(unittest.TestCase):
 
 
 
+
+class InheritedDomainDefaultTests(unittest.TestCase):
+    """Le défaut de `ALLOWED_DOMAINS` ne doit plus jamais décider pour personne.
+
+    `main.py` lit `NOVA_DOMAINS` et retombe, à défaut, sur les domaines d'un
+    déploiement mono-tenant antérieur. L'installeur ne posait pas la variable :
+    le conteneur servait donc ce défaut. Les administrateurs nommés par
+    l'amorçage se connectaient quand même — leur compte existe déjà, et le
+    rattachement précède le contrôle de domaine — mais **tout autre membre**
+    échouait à sa première connexion. Une installation pouvait paraître réussie
+    en ne testant que l'administrateur, et être inutilisable pour tous.
+
+    Ces tests décrivent le contrat que l'installeur doit désormais honorer.
+    """
+
+    DECLARED = "exemple-lycee.test"
+    INHERITED = "ipsa.fr"
+
+    def setUp(self):
+        with main.db() as conn:
+            conn.execute(
+                "DELETE FROM users WHERE organization_id=? AND normalized_email LIKE ?",
+                (main.nova_organization_id(), "%@" + self.DECLARED),
+            )
+            conn.execute(
+                "DELETE FROM users WHERE organization_id=? AND normalized_email LIKE ?",
+                (main.nova_organization_id(), "%@" + self.INHERITED),
+            )
+
+    def join(self, email: str, subject: str) -> str:
+        """Ce que traverse une première connexion fédérée, sans identité connue."""
+        return main.resolve_member_for_identity(
+            email, main.nova_organization_id(), subject, "microsoft_entra")
+
+    def test_a_member_of_the_declared_domain_can_join(self):
+        """Le cas que l'installeur cassait : un membre ordinaire, hors du
+        domaine hérité, dont l'organisation a bien déclaré le sien."""
+        with patch.object(main, "ALLOWED_DOMAINS", [self.DECLARED]):
+            resolved = self.join(f"eleve@{self.DECLARED}", "sujet-declare")
+        self.assertEqual(resolved, f"eleve@{self.DECLARED}")
+        with main.db() as conn:
+            account = main.user_by_email(
+                conn, main.nova_organization_id(), f"eleve@{self.DECLARED}")
+        self.assertIsNotNone(account)
+
+    def test_the_inherited_default_no_longer_admits_anyone(self):
+        """Une fois le domaine réel déclaré, celui d'une autre organisation
+        n'ouvre plus rien."""
+        with patch.object(main, "ALLOWED_DOMAINS", [self.DECLARED]):
+            with self.assertRaises(main.HTTPException) as refusal:
+                self.join(f"quelquun@{self.INHERITED}", "sujet-herite")
+        self.assertEqual(refusal.exception.status_code, 403)
+        self.assertEqual(refusal.exception.detail, "MEMBERSHIP_NOT_FOUND")
+
+    def test_without_the_declaration_the_organization_is_locked_out(self):
+        """La situation exacte que produisait le compose sans `NOVA_DOMAINS` :
+        le défaut hérité sert, et le membre réel est refusé."""
+        with patch.object(main, "ALLOWED_DOMAINS", ["eleves.ipsa.fr", "ipsa.fr"]):
+            with self.assertRaises(main.HTTPException) as refusal:
+                self.join(f"eleve@{self.DECLARED}", "sujet-sans-declaration")
+        self.assertEqual(refusal.exception.detail, "MEMBERSHIP_NOT_FOUND")
+
+    def test_the_administrator_hid_the_defect(self):
+        """Pourquoi le défaut passait inaperçu : un compte déjà promu se
+        rattache par son adresse, avant tout contrôle de domaine. Tester
+        l'administrateur ne prouvait donc rien sur les autres."""
+        admin = f"admin@{self.DECLARED}"
+        run("grant", admin, "organization_admin", "--create-if-missing")
+        with patch.object(main, "ALLOWED_DOMAINS", ["eleves.ipsa.fr", "ipsa.fr"]):
+            resolved = self.join(admin, "sujet-administrateur")
+        self.assertEqual(resolved, admin)
+
+    def test_several_declared_domains_are_all_honoured(self):
+        declared = [self.DECLARED, "cadres." + self.DECLARED]
+        with patch.object(main, "ALLOWED_DOMAINS", declared):
+            for index, domain in enumerate(declared):
+                with self.subTest(domain=domain):
+                    resolved = self.join(f"membre{index}@{domain}", f"sujet-{index}")
+                    self.assertEqual(resolved, f"membre{index}@{domain}")
+        with main.db() as conn:
+            for index, domain in enumerate(declared):
+                conn.execute(
+                    "DELETE FROM users WHERE organization_id=? AND normalized_email=?",
+                    (main.nova_organization_id(), f"membre{index}@{domain}"),
+                )
+
+
+
 if __name__ == "__main__":
     unittest.main()

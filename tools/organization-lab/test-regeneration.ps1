@@ -8,7 +8,9 @@
 #   - une seconde generation conserve l'organisation et le deploiement ;
 #   - l'image vient du manifeste, jamais d'une constante ;
 #   - la configuration precedente est gardee pour le retour arriere ;
-#   - une installation neuve, elle, tire bien une identite nouvelle.
+#   - une installation neuve, elle, tire bien une identite nouvelle ;
+#   - les domaines declares atteignent le compose, et aucun compose ne s ecrit
+#     sans eux.
 #
 # La premiere garantie est la plus importante : la base PostgreSQL est indexee
 # par l'identifiant d'organisation. Le regenerer ne detruit rien, mais rend
@@ -45,6 +47,7 @@ function Read-Identity([string]$Path) {
     $text = Get-Content -Raw -LiteralPath $Path
     [pscustomobject]@{
         Organization = [regex]::Match($text, 'NOVA_ORGANIZATION_ID:\s*"([^"]+)"').Groups[1].Value
+        Domains      = [regex]::Match($text, 'NOVA_DOMAINS:\s*"([^"]*)"').Groups[1].Value
         Deployment   = [regex]::Match($text, 'deployment_id:\s*"([^"]+)"').Groups[1].Value
         ServerImage  = [regex]::Match($text, 'image:\s*(nova-local/server:\S+)').Groups[1].Value
     }
@@ -87,6 +90,11 @@ try {
 
     $failures = @()
 
+    # Les domaines sont resolus avant la generation, comme le fait
+    # Invoke-Install. Sans eux, le generateur refuse d ecrire -- c est la
+    # garantie que le defaut du serveur ne peut plus servir.
+    $script:ResolvedDomains = 'exemple.test,cadres.exemple.test'
+
     $one = Read-Identity (Write-StackCompose $manifest $profileSpec $runtime)
     $two = Read-Identity (Write-StackCompose $manifest $profileSpec $runtime)
 
@@ -94,6 +102,19 @@ try {
     if ($one.Organization -ne $two.Organization) { $failures += 'ORGANIZATION_CHANGED' }
     if ($one.Deployment -ne $two.Deployment) { $failures += 'DEPLOYMENT_CHANGED' }
     if ($two.ServerImage -ne 'nova-local/server:9.9.9') { $failures += 'IMAGE_NOT_FROM_MANIFEST' }
+    if ($one.Domains -ne 'exemple.test,cadres.exemple.test') { $failures += 'DOMAINS_NOT_IN_COMPOSE' }
+    if ($two.Domains -ne $one.Domains) { $failures += 'DOMAINS_CHANGED' }
+
+    # Un compose sans domaines laisserait servir le defaut du serveur, herite
+    # d une autre organisation. Le refus doit etre structurel.
+    $keptDomains = $script:ResolvedDomains
+    $script:ResolvedDomains = ''
+    $refused = $false
+    try { Write-StackCompose $manifest $profileSpec $runtime | Out-Null } catch {
+        if ($_.Exception.Message -match '^ORGANIZATION_DOMAINS_REQUIRED') { $refused = $true }
+    }
+    if (-not $refused) { $failures += 'COMPOSE_WRITTEN_WITHOUT_DOMAINS' }
+    $script:ResolvedDomains = $keptDomains
     if (-not (Test-Path -LiteralPath (Join-Path $script:Generated 'compose.previous.yml'))) {
         $failures += 'PREVIOUS_NOT_KEPT'
     }
@@ -123,7 +144,7 @@ try {
         Write-Output ('REGENERATION_TEST_FAILED ' + ($failures -join ','))
         exit 1
     }
-    Write-Output 'REGENERATION_TEST_OK identity_preserved=1 image_from_manifest=1 previous_kept=1 fresh_install_mints=1'
+    Write-Output 'REGENERATION_TEST_OK identity_preserved=1 image_from_manifest=1 previous_kept=1 fresh_install_mints=1 domains_declared=1 empty_domains_refused=1'
     exit 0
 } finally {
     $env:ProgramData = $originalProgramData

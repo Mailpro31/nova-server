@@ -23,7 +23,12 @@ Le détail de chaque étape est dans [`pilot-runbook.md`](./pilot-runbook.md).
 - [ ] `NOVA_ENV=production`
 - [ ] `NOVA_DATABASE_URL` et `NOVA_REDIS_URL` renseignés
 - [ ] `NOVA_ORGANIZATION_ID`, `NOVA_ORGANIZATION_NAME`, `NOVA_DOMAINS`
-      renseignés — **les défauts portent le nom d'une autre organisation**
+      renseignés — **les défauts portent le nom d'une autre organisation**.
+      Sur une installation faite par l'installeur Windows, `NOVA_DOMAINS` est
+      saisi par l'installeur (`-OrganizationDomains`) et non écrit à la main
+- [ ] `NOVA_DOMAINS` **vérifié en connectant quelqu'un qui n'est pas
+      administrateur** : son défaut ne bloque ni le démarrage ni
+      l'administrateur, seulement tous les autres membres
 - [ ] `NOVA_SERVICE_ENDPOINT` et `NOVA_ADMIN_ORIGINS` en HTTPS publiques
 - [ ] Secrets déclarés par référence (`env://` ou `file://`), aucun secret faible
 - [ ] Aucun drapeau `*_ALLOW_INSECURE`
@@ -44,6 +49,8 @@ Le détail de chaque étape est dans [`pilot-runbook.md`](./pilot-runbook.md).
 - [ ] `python -m migrations status` puis `migrate`
 - [ ] `/api/livez` et `/api/readyz` répondent
 - [ ] Fournisseur d'identité configuré et testé avec **un** compte
+- [ ] Domaines de l'organisation déclarés, et une adresse **hors** de ces
+      domaines confirmée refusée
 - [ ] Premier administrateur nommé — par l'installeur Windows
       (`-FirstAdminEmail`, rien à faire de plus), ou par `admin_cli grant`
       (`--create-if-missing` si la personne ne s'est jamais connectée)

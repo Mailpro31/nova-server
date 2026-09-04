@@ -12,7 +12,8 @@
 #   - une promotion reussie nomme le bon role sur la bonne adresse ;
 #   - rejouee deux fois, elle refait le meme geste et n'en ajoute aucun ;
 #   - un echec du conteneur est signale, et son message ne porte pas l'adresse ;
-#   - l'adresse retenue pour la reprise est protegee comme un secret ;
+#   - les reponses retenues pour la reprise sont protegees comme un secret, et
+#     rendues telles quelles -- domaines et nom d'organisation compris ;
 #   - le journal ne contient aucune adresse en clair.
 
 $ErrorActionPreference = 'Stop'
@@ -122,13 +123,30 @@ try {
     }
     $script:NextExitCode = 0
 
-    # --- l'adresse survit au redemarrage, et reste protegee ---------------
-    Save-Administrators @($first, $second)
-    $stored = @(Read-StoredAdministrators)
-    if ($stored.Count -ne 2 -or $stored[0] -ne $first -or $stored[1] -ne $second) {
-        $failures += 'STORED_ADDRESSES_NOT_READ_BACK'
+    # --- les reponses survivent au redemarrage, et restent protegees ------
+    # RunOnce relance `resume` sans aucun argument : sans ce fichier, la reprise
+    # apres le redemarrage WSL2 ne nommerait personne et regenererait le compose
+    # avec les valeurs par defaut -- domaines herites compris.
+    Save-InstallAnswers ([pscustomobject]@{
+        schema_version    = 1
+        organization_name = 'Organisation de test'
+        organization_type = 'business'
+        domains           = 'exemple.test,cadres.exemple.test'
+        administrators    = @($first, $second)
+    })
+    $stored = Read-InstallAnswers
+    if ($null -eq $stored) {
+        $failures += 'ANSWERS_NOT_READ_BACK'
+    } else {
+        $keptAdmins = @($stored.administrators)
+        if ($keptAdmins.Count -ne 2 -or $keptAdmins[0] -ne $first -or $keptAdmins[1] -ne $second) {
+            $failures += 'STORED_ADDRESSES_NOT_READ_BACK'
+        }
+        if ($stored.domains -ne 'exemple.test,cadres.exemple.test') { $failures += 'STORED_DOMAINS_NOT_READ_BACK' }
+        if ($stored.organization_name -ne 'Organisation de test') { $failures += 'STORED_NAME_NOT_READ_BACK' }
+        if ($stored.organization_type -ne 'business') { $failures += 'STORED_TYPE_NOT_READ_BACK' }
     }
-    $statePath = Get-AdministratorStatePath
+    $statePath = Get-InstallAnswersPath
     $acl = Get-Acl -LiteralPath $statePath
     $sid = ([Security.Principal.WindowsIdentity]::GetCurrent()).User.Value
     if (-not $acl.AreAccessRulesProtected) { $failures += 'ADMIN_EMAIL_STILL_INHERITS' }
@@ -138,6 +156,30 @@ try {
     foreach ($open in @('S-1-1-0', 'S-1-5-32-545')) {
         if ($granted -contains $open) { $failures += 'ADMIN_EMAIL_ACL_TOO_OPEN' }
     }
+
+    # --- les domaines de l'organisation -----------------------------------
+    foreach ($good in @('exemple.fr', 'exemple.fr,cadres.exemple.fr',
+                        'exemple.fr, cadres.exemple.fr', 'sous.exemple-lab.co.uk')) {
+        if (-not (Test-DomainListShape $good)) { $failures += 'VALID_DOMAIN_REFUSED' }
+    }
+    foreach ($bad in @('', '   ', 'localhost', 'exemple.f', '-mauvais.fr', 'mauvais-.fr',
+                       'exemple.fr,', 'exemple.fr;autre.fr', 'http://exemple.fr')) {
+        if (Test-DomainListShape $bad) { $failures += 'INVALID_DOMAIN_ACCEPTED' }
+    }
+    if ((ConvertTo-DomainList ' Exemple.FR , exemple.fr, Cadres.Exemple.fr ') -ne 'exemple.fr,cadres.exemple.fr') {
+        $failures += 'DOMAIN_NORMALISATION_WRONG'
+    }
+
+    # Aucun compose ne s'ecrit sans domaines : c'est ce qui empeche le defaut
+    # herite du serveur de servir sur une installation faite par ce script.
+    $keptDomains = $script:ResolvedDomains
+    $script:ResolvedDomains = ''
+    $refusedEmpty = $false
+    try { Write-StackCompose $null $null $null | Out-Null } catch {
+        if ($_.Exception.Message -match '^ORGANIZATION_DOMAINS_REQUIRED') { $refusedEmpty = $true }
+    }
+    if (-not $refusedEmpty) { $failures += 'COMPOSE_WRITTEN_WITHOUT_DOMAINS' }
+    $script:ResolvedDomains = $keptDomains
 
     # --- le journal ne porte aucune adresse -------------------------------
     if (Test-Path -LiteralPath $script:LogPath) {
@@ -151,7 +193,7 @@ try {
         Write-Output ('FIRST_ADMIN_TEST_FAILED ' + (($failures | Select-Object -Unique) -join ','))
         exit 1
     }
-    Write-Output 'FIRST_ADMIN_TEST_OK shape=1 promoted=1 replay_is_idempotent=1 failure_is_reported=1 address_protected=1 log_is_clean=1'
+    Write-Output 'FIRST_ADMIN_TEST_OK shape=1 promoted=1 replay_is_idempotent=1 failure_is_reported=1 answers_protected=1 log_is_clean=1 domains_checked=1 empty_domains_refused=1'
     exit 0
 } finally {
     $env:ProgramData = $originalProgramData

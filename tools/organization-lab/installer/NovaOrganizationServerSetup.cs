@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Reflection;
 using System.Security.Principal;
+using System.Text;
 using System.Windows.Forms;
 
 internal static class Program
@@ -16,7 +17,13 @@ internal static class Program
         Application.SetCompatibleTextRenderingDefault(false);
         try
         {
-            string action = args.Length == 0 ? "install" : args[0];
+            // The first token is the action, unless it is a named parameter: a
+            // caller writing `-OrganizationDomains exemple.fr` with no verb
+            // means the default action, not an action called
+            // "-OrganizationDomains" that ValidateSet would reject.
+            bool hasAction = args.Length > 0 && !args[0].StartsWith("-");
+            string action = hasAction ? args[0] : "install";
+            int firstForwarded = hasAction ? 1 : 0;
             bool selfTest = String.Equals(action, "selftest", StringComparison.OrdinalIgnoreCase);
 
             // selftest only reads the embedded release key and writes to a
@@ -45,7 +52,21 @@ internal static class Program
             ProcessStartInfo start = new ProcessStartInfo();
             start.FileName = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),
                 "WindowsPowerShell\\v1.0\\powershell.exe");
-            start.Arguments = "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"" + script + "\" " + action;
+
+            // Every argument is forwarded, not just the action. Only args[0]
+            // used to reach the script, so `-FirstAdminEmail` and
+            // `-OrganizationDomains` were dropped in silence: the installer
+            // then asked interactively, or -- worse, unattended -- fell back to
+            // defaults nobody chose. A parameter that is accepted on the
+            // command line and quietly discarded is worse than one that does
+            // not exist.
+            StringBuilder arguments = new StringBuilder();
+            arguments.Append("-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ");
+            arguments.Append(Quote(script));
+            arguments.Append(' ').Append(Quote(action));
+            for (int index = firstForwarded; index < args.Length; index++)
+                arguments.Append(' ').Append(Quote(args[index]));
+            start.Arguments = arguments.ToString();
             start.UseShellExecute = false;
             start.CreateNoWindow = true;
 
@@ -74,6 +95,26 @@ internal static class Program
             MessageBox.Show(error.Message, "Nova Organization Server Setup", MessageBoxButtons.OK, MessageBoxIcon.Error);
             return 1;
         }
+    }
+
+    // Windows command-line quoting, as CommandLineToArgvW parses it. A token
+    // without whitespace or a quote is passed through untouched: quoting
+    // "-FirstAdminEmail" would turn a parameter name into a positional string
+    // and silently change what the script receives.
+    private static string Quote(string value)
+    {
+        if (value.Length > 0 && value.IndexOfAny(new char[] { ' ', '\t', '\n', '\v', '"' }) < 0)
+            return value;
+        StringBuilder builder = new StringBuilder("\"");
+        int backslashes = 0;
+        foreach (char character in value)
+        {
+            if (character == '\\') { backslashes++; continue; }
+            if (character == '"') builder.Append('\\', backslashes * 2 + 1).Append('"');
+            else builder.Append('\\', backslashes).Append(character);
+            backslashes = 0;
+        }
+        return builder.Append('\\', backslashes * 2).Append('"').ToString();
     }
 
     private static bool IsAdministrator()
