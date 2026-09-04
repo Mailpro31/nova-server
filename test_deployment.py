@@ -10,6 +10,7 @@ import os
 import tempfile
 import unittest
 import uuid
+from pathlib import Path
 
 
 DEPLOYMENT_TEST_DIRECTORY = tempfile.TemporaryDirectory()
@@ -18,6 +19,24 @@ os.environ.setdefault(
 )
 os.environ.setdefault("NOVA_DOMAINS", "example.com")
 os.environ.setdefault("NOVA_ORGANIZATION_NAME", "Nova Deployment Test")
+
+
+def test_compose_requires_domains_and_product_files_drop_the_inherited_domain():
+    root = Path(__file__).resolve().parent
+    compose = (root / "docker-compose.yml").read_text(encoding="utf-8")
+    assert '${NOVA_DOMAINS:?NOVA_DOMAINS must be set explicitly}' in compose
+
+    inherited_domain = "ipsa" + ".fr"
+    offenders = []
+    for path in root.rglob("*"):
+        if not path.is_file() or ".git" in path.parts or path.name.startswith("test_"):
+            continue
+        try:
+            if inherited_domain in path.read_text(encoding="utf-8"):
+                offenders.append(str(path.relative_to(root)))
+        except (UnicodeDecodeError, OSError):
+            continue
+    assert offenders == []
 
 from fastapi.testclient import TestClient  # noqa: E402
 

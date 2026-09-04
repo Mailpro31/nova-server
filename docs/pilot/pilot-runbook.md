@@ -30,23 +30,29 @@ NOVA_SERVICE_ENDPOINT=https://…
 NOVA_ADMIN_ORIGINS=https://…
 ```
 
-Les valeurs par défaut de ces variables portent le nom du tout premier
-déploiement. Les laisser en production ferait servir votre organisation sous
-l'identité d'une autre, avec les apparences d'une configuration correcte : le
-démarrage les refuse donc explicitement.
+Les valeurs par défaut de certaines de ces variables portent le nom du tout
+premier déploiement. Les laisser en production ferait servir votre organisation
+sous l'identité d'une autre, avec les apparences d'une configuration correcte :
+le démarrage les refuse donc explicitement.
 
-`NOVA_DOMAINS` mérite une mention à part, parce que son défaut est le plus
-discret des trois. Il ne bloque pas le démarrage et n'empêche pas
-l'administrateur de se connecter — son compte existe déjà, et le rattachement
-d'identité précède le contrôle de domaine. Il refuse **tous les autres
-membres**, à leur première connexion, avec `MEMBERSHIP_NOT_FOUND`. Une
-installation peut donc paraître réussie tant qu'on ne teste que
-l'administrateur.
+`NOVA_DOMAINS` n'a plus de valeur par défaut. Sur Linux, `docker compose`
+refuse de résoudre la configuration si la variable est absente ou vide. Cette
+garantie évite une installation qui semblerait fonctionner pour un compte
+administrateur précréé, mais refuserait tous les autres membres à leur première
+connexion avec `MEMBERSHIP_NOT_FOUND`.
 
 **Sur une installation faite par l'installeur Windows, cette variable n'est
 plus à écrire à la main :** elle est saisie par l'installeur (voir §3) et posée
 dans la configuration générée. L'installeur refuse d'écrire une configuration
 sans elle.
+
+**Sur Linux**, ajoutez-la explicitement au fichier `.env` placé à côté de
+`docker-compose.yml`, puis vérifiez la configuration avant le démarrage :
+
+```
+NOVA_DOMAINS=etudiants.example.org,example.org
+docker compose config --quiet
+```
 
 Puis :
 

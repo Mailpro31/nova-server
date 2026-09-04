@@ -697,7 +697,7 @@ class InheritedDomainDefaultTests(unittest.TestCase):
     """
 
     DECLARED = "exemple-lycee.test"
-    INHERITED = "ipsa.fr"
+    INHERITED = "legacy-campus.test"
 
     def setUp(self):
         with main.db() as conn:
@@ -738,7 +738,7 @@ class InheritedDomainDefaultTests(unittest.TestCase):
     def test_without_the_declaration_the_organization_is_locked_out(self):
         """La situation exacte que produisait le compose sans `NOVA_DOMAINS` :
         le défaut hérité sert, et le membre réel est refusé."""
-        with patch.object(main, "ALLOWED_DOMAINS", ["eleves.ipsa.fr", "ipsa.fr"]):
+        with patch.object(main, "ALLOWED_DOMAINS", ["students.legacy-campus.test", self.INHERITED]):
             with self.assertRaises(main.HTTPException) as refusal:
                 self.join(f"eleve@{self.DECLARED}", "sujet-sans-declaration")
         self.assertEqual(refusal.exception.detail, "MEMBERSHIP_NOT_FOUND")
@@ -749,7 +749,7 @@ class InheritedDomainDefaultTests(unittest.TestCase):
         l'administrateur ne prouvait donc rien sur les autres."""
         admin = f"admin@{self.DECLARED}"
         run("grant", admin, "organization_admin", "--create-if-missing")
-        with patch.object(main, "ALLOWED_DOMAINS", ["eleves.ipsa.fr", "ipsa.fr"]):
+        with patch.object(main, "ALLOWED_DOMAINS", ["students.legacy-campus.test", self.INHERITED]):
             resolved = self.join(admin, "sujet-administrateur")
         self.assertEqual(resolved, admin)
 

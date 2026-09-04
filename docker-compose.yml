@@ -4,7 +4,7 @@ services:
     ports:
       - "8080:8000"
     environment:
-      NOVA_DOMAINS: "${NOVA_DOMAINS:-eleves.ipsa.fr,ipsa.fr}"
+      NOVA_DOMAINS: "${NOVA_DOMAINS:?NOVA_DOMAINS must be set explicitly}"
       NOVA_MAX_SEATS: "${NOVA_MAX_SEATS:-300}"
       NOVA_MAX_MACHINES: "${NOVA_MAX_MACHINES:-3}"
       NOVA_REQUIRE_AUTH: "${NOVA_REQUIRE_AUTH:-true}"
@@ -33,7 +33,7 @@ services:
       NOVA_SMTP_PORT: "${NOVA_SMTP_PORT:-587}"
       NOVA_SMTP_USER: "${NOVA_SMTP_USER:-}"
       NOVA_SMTP_PASS: "${NOVA_SMTP_PASS:-}"
-      NOVA_SMTP_FROM: "${NOVA_SMTP_FROM:-nova@ipsa.fr}"
+      NOVA_SMTP_FROM: "${NOVA_SMTP_FROM:-nova@example.invalid}"
       # Runtime IA prive de l'organisation. Les noms de modeles vivent ici, dans
       # la configuration du deploiement : aucun endpoint produit ne les connait.
       # Le serveur n'invente plus de modele par defaut — un deploiement qui n'en

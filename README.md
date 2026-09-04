@@ -22,6 +22,10 @@ Copy-Item .env.example .env
 notepad .env
 ```
 
+Renseigner impérativement `NOVA_DOMAINS` dans `.env` avec la liste des domaines
+email autorisés, séparés par des virgules. `docker compose` refuse désormais de
+résoudre la configuration si la variable est absente ou vide.
+
 Pour tester l'authentification, l'admin et les préférences sans moteurs GPU :
 
 ```powershell
@@ -41,7 +45,7 @@ Sans SMTP, les codes à six chiffres sont affichés par
 
 | Variable | Défaut Compose | Rôle |
 |---|---|---|
-| `NOVA_DOMAINS` | `eleves.ipsa.fr,ipsa.fr` | domaines email autorisés |
+| `NOVA_DOMAINS` | **obligatoire** | domaines email autorisés, séparés par des virgules |
 | `NOVA_MAX_SEATS` | `300` | nombre maximal d'utilisateurs actifs |
 | `NOVA_MAX_MACHINES` | `3` | appareils actifs par compte |
 | `NOVA_TOKEN_TTL_SECONDS` | `2592000` | durée d'une session en secondes |

@@ -51,7 +51,9 @@ try {
 
     # Le double. icacls continue vers le vrai outil : c'est la seule facon de
     # constater que les droits sont reellement restreints.
-    $realRunCaptured = Get-Command Run-Captured
+    # Capture the implementation itself. Keeping the FunctionInfo would make it
+    # resolve to the test double below and recurse when icacls is delegated.
+    $realRunCaptured = (Get-Command Run-Captured).ScriptBlock
     $script:Calls = @()
     $script:NextExitCode = 0
     function Run-Captured([string]$File, [string[]]$Arguments) {

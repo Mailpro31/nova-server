@@ -60,7 +60,11 @@ from ai_runtime import (
 
 # ---------------------------------------------------------------- config
 DB_PATH = Path(os.getenv("NOVA_DB", "nova.db"))
-ALLOWED_DOMAINS = [d.strip().lower() for d in os.getenv("NOVA_DOMAINS", "eleves.ipsa.fr,ipsa.fr").split(",")]
+ALLOWED_DOMAINS = [
+    domain.strip().lower()
+    for domain in os.getenv("NOVA_DOMAINS", "").split(",")
+    if domain.strip()
+]
 MAX_SEATS = int(os.getenv("NOVA_MAX_SEATS", "300"))
 MAX_MACHINES_PER_EMAIL = int(os.getenv("NOVA_MAX_MACHINES", "3"))
 CODE_TTL_SECONDS = 600          # code email valide 10 min
@@ -208,11 +212,11 @@ ENTRA_AUTHORITY = f"https://login.microsoftonline.com/{ENTRA_TENANT_ID}/oauth2/v
 ENTRA_FLOWS: dict[str, dict] = {}
 
 # Envoi d'emails : par défaut, mode DEV (le code est affiché dans les logs serveur)
-SMTP_HOST = os.getenv("NOVA_SMTP_HOST", "")          # ex. smtp.ipsa.fr
+SMTP_HOST = os.getenv("NOVA_SMTP_HOST", "")          # ex. smtp.example.com
 SMTP_PORT = int(os.getenv("NOVA_SMTP_PORT", "587"))
 SMTP_USER = os.getenv("NOVA_SMTP_USER", "")
 SMTP_PASS = secrets_provider.resolve_value(os.getenv("NOVA_SMTP_PASS", "")) or ""
-SMTP_FROM = os.getenv("NOVA_SMTP_FROM", "nova@ipsa.fr")
+SMTP_FROM = os.getenv("NOVA_SMTP_FROM", "nova@example.invalid")
 
 # Moteurs d'inférence (services du docker-compose)
 ORGANIZATION_AI_ROUTER = router_from_environment()

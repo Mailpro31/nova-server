@@ -23,12 +23,13 @@ Le détail de chaque étape est dans [`pilot-runbook.md`](./pilot-runbook.md).
 - [ ] `NOVA_ENV=production`
 - [ ] `NOVA_DATABASE_URL` et `NOVA_REDIS_URL` renseignés
 - [ ] `NOVA_ORGANIZATION_ID`, `NOVA_ORGANIZATION_NAME`, `NOVA_DOMAINS`
-      renseignés — **les défauts portent le nom d'une autre organisation**.
+      renseignés. Sur Linux, `docker compose config --quiet` refuse une variable
+      `NOVA_DOMAINS` absente ou vide ; elle doit être présente dans `.env`.
       Sur une installation faite par l'installeur Windows, `NOVA_DOMAINS` est
       saisi par l'installeur (`-OrganizationDomains`) et non écrit à la main
 - [ ] `NOVA_DOMAINS` **vérifié en connectant quelqu'un qui n'est pas
-      administrateur** : son défaut ne bloque ni le démarrage ni
-      l'administrateur, seulement tous les autres membres
+      administrateur** : le compte précréé de l'administrateur ne suffit pas à
+      prouver que les domaines des autres membres sont correctement déclarés
 - [ ] `NOVA_SERVICE_ENDPOINT` et `NOVA_ADMIN_ORIGINS` en HTTPS publiques
 - [ ] Secrets déclarés par référence (`env://` ou `file://`), aucun secret faible
 - [ ] Aucun drapeau `*_ALLOW_INSECURE`
