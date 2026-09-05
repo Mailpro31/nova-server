@@ -38,6 +38,44 @@ def test_compose_requires_domains_and_product_files_drop_the_inherited_domain():
             continue
     assert offenders == []
 
+
+def test_an_empty_domain_list_says_so_at_startup():
+    """Le defaut herite a disparu ; le silence qu'il laisse ne doit pas rester.
+
+    La production refuse de demarrer sans `NOVA_DOMAINS`, et le compose Linux
+    refuse de resoudre sa configuration. Reste le lancement direct en
+    developpement : la liste vide n'admet personne, et sans ce message chaque
+    premiere connexion echouerait en MEMBERSHIP_NOT_FOUND sans explication.
+
+    Un sous-processus, parce que `ALLOWED_DOMAINS` est calcule a l'import : le
+    lire autrement reviendrait a tester autre chose que ce que voit l'operateur.
+    """
+    import subprocess
+    import sys
+
+    root = Path(__file__).resolve().parent
+    environment = {
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": os.environ.get("HOME", ""),
+        "NOVA_DB": str(Path(DEPLOYMENT_TEST_DIRECTORY.name) / "domains-warning.db"),
+    }
+
+    silent = subprocess.run(
+        [sys.executable, "-c", "import main"], cwd=root, env=environment,
+        capture_output=True, text=True, timeout=120,
+    )
+    assert silent.returncode == 0, silent.stderr
+    assert "NOVA_DOMAINS absent" in silent.stdout
+
+    declared = subprocess.run(
+        [sys.executable, "-c", "import main"], cwd=root,
+        env={**environment, "NOVA_DOMAINS": "exemple.fr"},
+        capture_output=True, text=True, timeout=120,
+    )
+    assert declared.returncode == 0, declared.stderr
+    assert "NOVA_DOMAINS absent" not in declared.stdout
+
+
 from fastapi.testclient import TestClient  # noqa: E402
 
 import deployment  # noqa: E402
