@@ -65,6 +65,20 @@ ALLOWED_DOMAINS = [
     for domain in os.getenv("NOVA_DOMAINS", "").split(",")
     if domain.strip()
 ]
+if not ALLOWED_DOMAINS:
+    # Le defaut herite d'un premier deploiement mono-tenant a disparu, et c'est
+    # bien : il faisait servir une organisation sous les domaines d'une autre.
+    # Ce qui reste est un silence. Une liste vide n'admet personne, et le
+    # symptome est le meme qu'avec de mauvais domaines -- chaque premiere
+    # connexion echoue en MEMBERSHIP_NOT_FOUND, sans que rien ne dise pourquoi.
+    #
+    # La production refuse deja de demarrer sans `NOVA_DOMAINS`, et le compose
+    # Linux refuse de resoudre sa configuration. Reste le lancement direct, en
+    # developpement : on ne le bloque pas -- ce serait rendre le developpement
+    # local impraticable pour une variable qui n'y sert souvent a rien -- mais
+    # on le dit, une fois, au demarrage.
+    print("[config] NOVA_DOMAINS absent : aucun domaine autorise, "
+          "aucune premiere connexion ne peut aboutir")
 MAX_SEATS = int(os.getenv("NOVA_MAX_SEATS", "300"))
 MAX_MACHINES_PER_EMAIL = int(os.getenv("NOVA_MAX_MACHINES", "3"))
 CODE_TTL_SECONDS = 600          # code email valide 10 min
