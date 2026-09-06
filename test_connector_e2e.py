@@ -217,6 +217,27 @@ class ConnectorEndToEndTests(unittest.TestCase):
             cwd=HERE, env=environment, capture_output=True, text=True, timeout=300,
         )
 
+    def _enroll_or_explain(self, token: str) -> None:
+        """Enrole, et si ca echoue, dit pourquoi.
+
+        L'assertion comparait le seul code de retour et jetait `stderr`. Quand
+        un code commencant par « - » a fait sortir `argparse` en code 2, le test
+        n'a rapporte que « 2 != 0 » : le message qui nommait la cause etait
+        capture, puis perdu. Une heure de diagnostic pour une ligne que le
+        processus avait deja ecrite.
+        """
+        result = self._connector(
+            "enroll", "--control-plane", self.base, "--token", token
+        )
+        self.assertEqual(
+            result.returncode, 0,
+            chr(10).join([
+                f"enrolement echoue (code {result.returncode})",
+                f"stdout: {result.stdout}",
+                f"stderr: {result.stderr}",
+            ]),
+        )
+
     def _sync_body(self) -> dict:
         """Le corps minimal qu'un Connector envoie reellement.
 
@@ -283,10 +304,7 @@ class ConnectorEndToEndTests(unittest.TestCase):
 
     def test_a_restarted_connector_reconnects_with_the_same_credential(self):
         token = self._enrollment_token()
-        self.assertEqual(
-            self._connector("enroll", "--control-plane", self.base, "--token", token).returncode,
-            0,
-        )
+        self._enroll_or_explain(token)
         before = self._local_state()
 
         # Une synchronisation authentifiee avec le credential enrole.
@@ -316,10 +334,7 @@ class ConnectorEndToEndTests(unittest.TestCase):
     def test_credential_rotation_never_leaves_a_gap(self):
         """C1 reste valide jusqu'à ce que C2 soit prouvé, puis C1 tombe."""
         token = self._enrollment_token()
-        self.assertEqual(
-            self._connector("enroll", "--control-plane", self.base, "--token", token).returncode,
-            0,
-        )
+        self._enroll_or_explain(token)
         first = self._local_state()["connector_credential"]
 
         def sync(credential: str) -> int:
@@ -364,10 +379,7 @@ class ConnectorEndToEndTests(unittest.TestCase):
         authentifié avec ce qu'il a.
         """
         token = self._enrollment_token()
-        self.assertEqual(
-            self._connector("enroll", "--control-plane", self.base, "--token", token).returncode,
-            0,
-        )
+        self._enroll_or_explain(token)
         first = self._local_state()["connector_credential"]
 
         rotated = httpx.post(
@@ -398,10 +410,7 @@ class ConnectorEndToEndTests(unittest.TestCase):
 
     def test_the_console_never_returns_a_credential(self):
         token = self._enrollment_token()
-        self.assertEqual(
-            self._connector("enroll", "--control-plane", self.base, "--token", token).returncode,
-            0,
-        )
+        self._enroll_or_explain(token)
         credential = self._local_state()["connector_credential"]
         listing = httpx.get(
             self.base + "/api/control/connectors", headers=self.admin, timeout=30

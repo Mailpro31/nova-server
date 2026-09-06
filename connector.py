@@ -789,6 +789,28 @@ def run() -> int:
     return 0
 
 
+def attach_option_values(argv: list[str], option: str) -> list[str]:
+    """Colle la valeur a son option, pour qu'un « - » initial reste une valeur.
+
+    Un code d'enrolement voyage par copier-coller jusqu'a une ligne de commande.
+    S'il commence par « - », `argparse` le prend pour une option et refuse avec
+    « expected one argument » -- un message qui ne nomme ni le code, ni la
+    cause. Le serveur ne fabrique plus de tel code, mais celui-ci ne peut pas le
+    supposer : un code peut venir d'un serveur plus ancien, et un outil qui
+    refuse une valeur qu'on lui a donnee explicitement a tort.
+    """
+    joined: list[str] = []
+    index = 0
+    while index < len(argv):
+        if argv[index] == option and index + 1 < len(argv):
+            joined.append(f"{option}={argv[index + 1]}")
+            index += 2
+        else:
+            joined.append(argv[index])
+            index += 1
+    return joined
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="connector", description="Nova Private Connector")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -800,7 +822,9 @@ def main(argv: list[str] | None = None) -> int:
     commands.add_parser("run", help="boucle de synchronisation")
     commands.add_parser("status", help="etat local, sans secret")
 
-    args = parser.parse_args(argv)
+    if argv is None:
+        argv = sys.argv[1:]
+    args = parser.parse_args(attach_option_values(argv, "--token"))
     if args.command == "enroll":
         state = enroll(args.control_plane, args.token)
         print(f"[connector] enrole : {state['connector_id']}", flush=True)

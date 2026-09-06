@@ -6652,7 +6652,17 @@ def control_create_connector_enrollment(
     pas le reafficher, et une copie de la base ne permet d'enroler personne.
     """
     now = time.time()
+    # `secrets.token_urlsafe` tire dans l'alphabet base64url, qui contient le
+    # tiret : un code sur soixante-quatre commence par « - ». Ce code est fait
+    # pour etre colle dans un terminal, et toute ligne de commande lit alors
+    # « -Xy7... » comme une option, pas comme une valeur. L'exploitant recoit
+    # « expected one argument », qui ne dit rien de la cause, et le seul remede
+    # est de redemander un code. Un tirage sur soixante-quatre etait donc
+    # inutilisable. On retire jusqu'a obtenir un code qu'une ligne de commande
+    # accepte ; l'entropie perdue est de deux centiemes de bit.
     token = secrets.token_urlsafe(32)
+    while token.startswith("-"):
+        token = secrets.token_urlsafe(32)
     enrollment_id = uuid.uuid4().hex
     with db() as conn:
         conn.execute(
