@@ -123,6 +123,38 @@ class EnrollmentTests(ConnectorTestCase):
         self.assertNotIn(created["enrollment_token"], json.dumps(dict(row)))
         self.assertEqual(row["token_hash"], main.hash_token(created["enrollment_token"]))
 
+    def test_an_enrollment_code_can_be_pasted_into_a_command_line(self):
+        """Un code qu'une ligne de commande lit comme une option est inutilisable.
+
+        `secrets.token_urlsafe` tire dans l'alphabet base64url, qui contient le
+        tiret. Un code sur soixante-quatre commencait donc par « - », et
+        `connector.py enroll --token -Xy7...` echouait sur « expected one
+        argument » : un message qui ne nomme ni le code ni la cause, pour un
+        exploitant dont le seul remede etait d'en redemander un autre.
+
+        Le tirage est force ici, plutot que repete : une propriete qui ne tient
+        qu'une fois sur soixante-quatre ne se teste pas en esperant tomber
+        dessus.
+        """
+        # La session d'administration tire elle aussi un jeton : si le faux
+        # tirage etait pose avant, c'est elle qui consommerait le code au tiret,
+        # et le test passerait sans rien verifier.
+        headers = grant_admin_session("it@example.com", "it_admin")
+        tirages = iter(["-commence-par-un-tiret-0123456789", "Xy7bon0123456789abcdef"])
+        with patch.object(main.secrets, "token_urlsafe", lambda _: next(tirages)):
+            response = self.client.post(
+                "/api/control/connectors/enrollments",
+                headers=headers,
+                json={"display_name": "Connector de test",
+                      "deployment_id": "deploiement-1"},
+            )
+        self.assertEqual(response.status_code, 200, response.text)
+        created = response.json()
+        self.assertFalse(
+            created["enrollment_token"].startswith("-"),
+            "un code que le terminal prend pour une option n'est pas utilisable",
+        )
+
     def test_enrolling_binds_the_connector_to_the_admin_organization(self):
         created = self.enrollment()
         body = self.enroll(created["enrollment_token"]).json()
@@ -764,6 +796,31 @@ class ConnectorServiceTests(unittest.TestCase):
                 connector_service.validate_control_plane_url("http://127.0.0.1:8099"),
                 "http://127.0.0.1:8099",
             )
+
+    def test_a_code_beginning_with_a_dash_is_a_value_not_an_option(self):
+        """L'outil ne refuse pas une valeur qu'on lui a explicitement donnee.
+
+        Le serveur ne fabrique plus de code commencant par « - », mais un code
+        peut venir d'un serveur plus ancien, et il vit un quart d'heure. Sans
+        cela, `--token -Xy7...` sortait en code 2 sur « expected one argument »,
+        sans jamais nommer le code en cause.
+        """
+        self.assertEqual(
+            connector_service.attach_option_values(
+                ["enroll", "--control-plane", "https://nova.test", "--token", "-Xy7abc"],
+                "--token",
+            ),
+            ["enroll", "--control-plane", "https://nova.test", "--token=-Xy7abc"],
+        )
+        # Et l'analyseur l'accepte reellement, ce que la transformation seule
+        # ne prouve pas.
+        with patch.object(connector_service, "enroll", return_value={"connector_id": "c1"}):
+            with patch.object(connector_service, "state_path", return_value="etat.json"):
+                code = connector_service.main(
+                    ["enroll", "--control-plane", "https://nova.test",
+                     "--token", "-Xy7abc"]
+                )
+        self.assertEqual(code, 0)
 
     def test_an_already_applied_revision_is_not_reapplied(self):
         """La livraison est au-moins-une-fois ; l'application est idempotente."""
