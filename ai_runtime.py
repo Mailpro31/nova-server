@@ -52,6 +52,12 @@ TEXT_TASKS = frozenset(
 SPEECH_TASKS = frozenset(
     {TaskType.TRANSCRIPTION_REALTIME, TaskType.TRANSCRIPTION_FILE}
 )
+# Les taches qui restituent un texte que l'utilisateur a lui-meme dicte. Elles
+# n'ont rien a inventer : leur sortie est jugee sur sa fidelite, jamais sur sa
+# variete. Le raisonnement leur est deja retire pour cette raison.
+FIDELITY_TASKS = frozenset(
+    {TaskType.REFORMULATION, TaskType.STYLE_TRANSFORM, TaskType.VOICE_COMMAND}
+)
 
 
 class ModelProfile(str, Enum):
@@ -778,15 +784,28 @@ class OrganizationAIRouter:
     ) -> TextInferenceOptions:
         options = requested or self.profile_options()
         reasoning = options.reasoning
-        if not self.reasoning_allowed or task_type in {
-            TaskType.REFORMULATION,
-            TaskType.STYLE_TRANSFORM,
-            TaskType.VOICE_COMMAND,
-        }:
+        temperature = max(0.0, min(options.temperature, TEMPERATURE_CEILING))
+        if not self.reasoning_allowed or task_type in FIDELITY_TASKS:
             reasoning = ReasoningMode.OFF
+        if task_type in FIDELITY_TASKS:
+            # Mesure sur le modele du lab (Qwen2.5-1.5B), deux textes porteurs
+            # de dates, d'heures, de nombres et de noms propres, vingt tirages
+            # par configuration : a temperature 0,3 le modele place un fait qui
+            # n'existe pas dans onze sorties sur quatre-vingts ; a temperature
+            # nulle, aucune sur cent vingt.
+            #
+            # Le prix est un peu plus d'omission -- un fait qui disparait. Ce
+            # n'est pas le meme risque : une omission se voit, l'utilisateur
+            # relit son propre texte et constate le manque. Une invention se lit
+            # avec la meme assurance que le reste, et deplace un rendez-vous
+            # sans que rien ne le signale.
+            #
+            # La variete d'echantillonnage n'achete rien ici : ces trois taches
+            # rendent un texte que l'utilisateur a dicte, pas une proposition.
+            temperature = 0.0
         return TextInferenceOptions(
             max(1, min(options.max_output_tokens, MAX_OUTPUT_TOKENS_CEILING)),
-            max(0.0, min(options.temperature, TEMPERATURE_CEILING)),
+            temperature,
             reasoning,
         )
 

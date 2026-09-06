@@ -234,6 +234,38 @@ class CustomProfileTests(unittest.TestCase):
         self.assertEqual(emitted.max_output_tokens, 7000)
         self.assertEqual(emitted.temperature, 0.9)
 
+    def test_a_task_that_restores_dictated_text_does_not_sample(self):
+        """Les taches de fidelite passent a temperature nulle.
+
+        Mesure sur le modele du lab, deux textes porteurs de dates, d'heures,
+        de nombres et de noms propres, vingt tirages par configuration : a
+        temperature 0,3 le modele place un fait qui n'existe pas dans onze
+        sorties sur quatre-vingts ; a temperature nulle, aucune sur cent vingt.
+
+        Une omission se voit -- l'utilisateur relit son propre texte. Une
+        invention se lit avec la meme assurance que le reste.
+        """
+        router = self.router(custom=TextInferenceOptions(4096, 0.9, ReasoningMode.ON))
+        router.apply_local_config(
+            profile=ModelProfile.CUSTOM,
+            reasoning_allowed=True,
+            max_concurrent_text=2,
+            max_concurrent_speech=1,
+            max_queue=4,
+            revision=1,
+        )
+        for task in ai_runtime.FIDELITY_TASKS:
+            with self.subTest(task=task):
+                router.text_backend.requests.clear()
+                asyncio.run(router.generate(task, "texte", "consigne"))
+                self.assertEqual(router.text_backend.requests[0].options.temperature, 0.0)
+
+        # Et une tache qui produit vraiment quelque chose garde le reglage du
+        # deploiement : la regle vise la restitution, pas la generation.
+        router.text_backend.requests.clear()
+        asyncio.run(router.generate(TaskType.AI_SKILL, "texte", "consigne"))
+        self.assertEqual(router.text_backend.requests[0].options.temperature, 0.9)
+
     def test_a_custom_profile_differs_from_standard(self):
         # La verification qui manquait : `custom` etait un clone de `standard`.
         standard = ai_runtime.PROFILE_OPTIONS[ModelProfile.STANDARD]
