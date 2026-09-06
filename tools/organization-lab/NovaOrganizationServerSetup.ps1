@@ -966,12 +966,32 @@ function Get-Health {
     [pscustomobject]@{ Livez = $live; Readyz = $ready; Containers = (Run-Captured 'docker.exe' @('ps','--filter','label=com.docker.compose.project=nova-organization-lab','--format','{{.Names}}: {{.Status}}')).Output }
 }
 
+function Get-ComposeStamp([string]$Path) {
+    # Le compose porte sa provenance dans `x-nova-lab`. C'est la seule source qui
+    # dise ce qui tourne reellement, par opposition a ce que l'installateur avait
+    # l'intention de deployer.
+    if (-not (Test-Path -LiteralPath $Path)) { return $null }
+    $text = Get-Content -LiteralPath $Path -Raw
+    return [pscustomobject]@{
+        ReleaseId = [regex]::Match($text, 'release_id:\s*"([^"]+)"').Groups[1].Value
+        ProfileId = [regex]::Match($text, 'profile_id:\s*"([^"]+)"').Groups[1].Value
+    }
+}
+
 function Restore-PreviousConfiguration {
     $previous = Join-Path $script:Generated 'compose.previous.yml'
     if (-not (Test-Path -LiteralPath $previous)) { return $false }
     $result = Run-Captured 'docker.exe' @('compose','--file',$previous,'up','-d')
     if ($result.ExitCode -ne 0) { return $false }
     Copy-Item -LiteralPath $previous -Destination (Join-Path $script:Generated 'compose.quick-lab.yml') -Force
+    # L'etat doit suivre le retour arriere. Sans cette ligne, `setup-state.json`
+    # continuait d'annoncer la release qui venait d'echouer, alors que le compose
+    # sur disque etait redevenu le precedent : l'exploitant croyait faire tourner
+    # une version et en faisait tourner une autre, sans que rien ne le signale.
+    # C'est exactement ce qui s'est produit le 5 septembre 2026, ou l'etat
+    # annoncait 2026.09.05.1 au-dessus d'un compose du 31 aout.
+    $stamp = Get-ComposeStamp $previous
+    if ($stamp) { Save-State 'rolled-back' $stamp.ProfileId $stamp.ReleaseId }
     return $true
 }
 

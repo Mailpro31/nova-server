@@ -990,3 +990,34 @@ def test_supply_chain_checks_survive_the_domain_changes():
                  "OCI_PLATFORM_UNEXPECTED", "RELEASE_PUBLIC_KEY_NOT_CONFIGURED"):
         assert code in body
     assert "$script:AllowedManifestOrigin = 'https://releases.novaspeak.app'" in body
+
+
+def test_a_rollback_does_not_leave_the_state_announcing_the_failed_release():
+    """L'etat doit suivre le compose, pas l'intention.
+
+    Le 5 septembre 2026, une installation de la release 2026.09.05.1 a echoue
+    au demarrage des conteneurs. Le retour arriere a bien remis le compose
+    precedent -- date du 31 aout, epinglant une image plus ancienne -- mais
+    `setup-state.json` a continue d'annoncer la release qui venait d'echouer.
+    L'exploitant croyait faire tourner une version et en faisait tourner une
+    autre, et l'ecart n'apparaissait nulle part.
+    """
+    body = setup_source()
+    body = body[body.index("function Restore-PreviousConfiguration"):]
+    body = body[:body.index("\nfunction ")]
+    assert "Save-State" in body, (
+        "un retour arriere qui ne corrige pas l'etat laisse une installation "
+        "qui ment sur sa propre version")
+    assert "rolled-back" in body, "l'etat doit nommer ce qui s'est passe"
+    # La release annoncee doit venir du compose restaure, jamais du manifeste
+    # que l'on tentait de deployer.
+    assert "Get-ComposeStamp $previous" in body, (
+        "la release annoncee doit etre lue dans le compose effectivement restaure")
+
+
+def test_the_compose_stamp_is_read_from_the_file_it_describes():
+    body = setup_source()
+    body = body[body.index("function Get-ComposeStamp"):]
+    body = body[:body.index("\nfunction ")]
+    for champ in ("release_id", "profile_id"):
+        assert champ in body, f"le tampon doit porter {champ}"
