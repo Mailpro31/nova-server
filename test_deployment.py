@@ -59,6 +59,16 @@ def test_an_empty_domain_list_says_so_at_startup():
         "HOME": os.environ.get("HOME", ""),
         "NOVA_DB": str(Path(DEPLOYMENT_TEST_DIRECTORY.name) / "domains-warning.db"),
     }
+    # Sous Windows, Winsock refuse de s'initialiser sans `SystemRoot` : le
+    # sous-processus echouait a `import asyncio` en WinError 10106, bien avant
+    # d'atteindre `main`. L'environnement reste volontairement minimal -- il
+    # s'agit de verifier ce que voit un operateur qui n'a rien declare -- mais
+    # une variable que l'OS exige pour ouvrir une socket n'est pas une
+    # declaration de l'operateur.
+    for inherited in ("SystemRoot", "SYSTEMROOT", "TEMP", "TMP"):
+        value = os.environ.get(inherited)
+        if value:
+            environment[inherited] = value
 
     silent = subprocess.run(
         [sys.executable, "-c", "import main"], cwd=root, env=environment,
