@@ -26,7 +26,8 @@ POSTGRES_URL = os.getenv("NOVA_TEST_POSTGRES_URL", "").strip()
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
-def run_against_postgres(body: str, *, schema: str | None = None) -> dict:
+def run_against_postgres(body: str, *, schema: str | None = None,
+                         extra_env: dict[str, str] | None = None) -> dict:
     """Execute `body` dans un processus neuf branche sur PostgreSQL.
 
     Chaque scenario obtient son propre schema PostgreSQL : deux scenarios qui
@@ -69,6 +70,9 @@ def run_against_postgres(body: str, *, schema: str | None = None) -> dict:
     environment["NOVA_TEST_TARGET_URL"] = url
     environment["NOVA_TEST_SCHEMA"] = schema
     environment.pop("NOVA_DB", None)
+    # `main` lit sa configuration a l'import : une variable posee ici est la
+    # seule qui compte, celles posees dans le corps arriveraient trop tard.
+    environment.update(extra_env or {})
     try:
         completed = subprocess.run(
             [sys.executable, script],
@@ -111,6 +115,51 @@ class PostgresBootstrapTests(unittest.TestCase):
         self.assertEqual(result["dialect"], "postgresql")
         self.assertTrue(result["core"])
         self.assertTrue(result["organization_id"])
+
+    def test_an_empty_postgres_schema_receives_its_provider_and_discovery(self):
+        """L'amorcage complet, pas seulement l'organisation.
+
+        `bootstrap_provider_configs` et `bootstrap_discovery` vivaient dans
+        `migrate_schema`, appelee sur le seul chemin SQLite. Une instance
+        PostgreSQL neuve demarrait donc sans aucune configuration de
+        fournisseur : `/api/auth/providers` n'annoncait que le code e-mail, et
+        aucune connexion SSO n'etait possible -- sur un serveur qui repondait
+        pourtant `ready:true`.
+        """
+        result = run_against_postgres(
+            """
+            main.init_db()
+            organization_id = main.nova_organization_id()
+            with main.db() as conn:
+                rows = conn.execute(
+                    "SELECT provider_type, oidc_issuer FROM "
+                    "organization_provider_configs WHERE organization_id=?",
+                    (organization_id,),
+                ).fetchall()
+                result["providers"] = [
+                    {"type": r["provider_type"], "issuer": r["oidc_issuer"]}
+                    for r in rows
+                ]
+                organization = conn.execute(
+                    "SELECT discovery_slug FROM organizations WHERE id=?",
+                    (organization_id,),
+                ).fetchone()
+                result["discovery_slug"] = organization["discovery_slug"]
+            """,
+            extra_env={
+                "NOVA_OIDC_ISSUER": "https://idp.example.com/realms/nova",
+                "NOVA_OIDC_CLIENT_ID": "nova",
+            },
+        )
+        self.assertEqual(
+            result["providers"],
+            [{"type": "oidc", "issuer": "https://idp.example.com/realms/nova"}],
+            "l'amorcage n'a pas importe la configuration OIDC de l'environnement",
+        )
+        self.assertTrue(
+            result["discovery_slug"],
+            "l'amorcage n'a pas attribue de slug de decouverte",
+        )
 
     def test_the_service_refuses_to_start_on_a_schema_it_has_not_migrated(self):
         result = run_against_postgres(

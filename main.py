@@ -410,12 +410,21 @@ def init_db():
         with db() as conn:
             migrate_schema(conn)
 
-    # L'amorcage de l'organisation n'est pas du schema : c'est la premiere
-    # ligne de donnees d'une instance, et elle vaut pour les deux moteurs.
-    # Elle vivait au milieu de `migrate_schema`, donc une base PostgreSQL
-    # neuve n'aurait eu aucune organisation.
+    # L'amorcage n'est pas du schema : ce sont les premieres lignes de donnees
+    # d'une instance, et elles valent pour les deux moteurs. Les trois vivaient
+    # au milieu de `migrate_schema`, qui ne s'execute que sur le chemin SQLite ;
+    # une base PostgreSQL neuve n'aurait donc eu ni organisation, ni
+    # configuration de fournisseur, ni slug de decouverte. La premiere avait ete
+    # sortie, les deux autres etaient restees derriere -- et un serveur
+    # PostgreSQL neuf repondait `ready:true` en n'annoncant que le code e-mail,
+    # sans qu'aucune connexion SSO soit possible.
+    #
+    # Les trois sont idempotentes par conception : sur SQLite, `migrate_schema`
+    # les a deja appelees et ce second passage ne reecrit rien.
     with db() as conn:
-        bootstrap_organization(conn)
+        organization_id = bootstrap_organization(conn)
+        bootstrap_provider_configs(conn, organization_id)
+        bootstrap_discovery(conn, organization_id)
 
 
 # L'ancien `init_db` construisait ici tout le schema, en parallele de
