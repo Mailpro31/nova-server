@@ -438,11 +438,26 @@ def test_the_database_password_cannot_break_the_connection_url():
     secret = source[source.index("function Get-OrCreateSecret"):]
     secret = secret[:secret.index("\nfunction ")]
     assert ".Replace('+','-').Replace('/','_')" in secret, "new secrets must be URL-safe"
-    # and a password written by an earlier version is encoded at the point of use
-    assert source.count("urllib.parse.quote(open(") == 2, (
-        "migrate and api must both percent-encode the password")
+    # The encoding moved, the property did not. It used to happen in the compose
+    # command, which built the URL with an `export` -- invisible to every process
+    # started later by `docker exec`, so admin_cli.py fell back to SQLite and
+    # answered "unable to open database file". The URL now carries a placeholder,
+    # the secret is designated by file, and main.py substitutes it percent-encoded.
+    assert "${NOVA_DATABASE_PASSWORD}" in source, (
+        "the compose must carry the placeholder, not the secret")
+    assert "NOVA_DATABASE_PASSWORD_FILE: /run/secrets/postgres_password" in source, (
+        "the secret must be designated by file, never interpolated")
+    assert "export NOVA_DATABASE_URL" not in source, (
+        "an URL built in the command is invisible to docker exec")
     assert "postgresql://nova:`$(cat /run/secrets/postgres_password)" not in source, (
         "the raw secret must never be interpolated into the URL")
+
+    # And the substitution percent-encodes, server-side, before the password
+    # can reach the authority part of the URL.
+    server = (Path(__file__).resolve().parent / "main.py").read_text(encoding="utf-8")
+    resolver = server[server.index("def _resolve_database_password"):][:4000]
+    assert 'urllib.parse.quote(secret, safe="")' in resolver, (
+        "the password must be percent-encoded before it enters the URL")
 
 
 # --- compose output interpretation ---------------------------------------------

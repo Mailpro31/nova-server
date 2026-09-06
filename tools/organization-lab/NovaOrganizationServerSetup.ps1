@@ -794,8 +794,13 @@ services:
     restart: unless-stopped
   migrate:
     image: $($Manifest.images.server)
-    entrypoint: ["/bin/sh", "-ec"]
-    command: ["export NOVA_DATABASE_URL=postgresql://nova:`$(python -c 'import urllib.parse;print(urllib.parse.quote(open(\"/run/secrets/postgres_password\").read().strip(), safe=\"\"))')@postgres:5432/nova; python -m migrations migrate"]
+    # L'URL etait construite dans la commande, donc perdue pour tout processus
+    # lance ensuite par `docker exec` : `admin_cli.py` retombait sur SQLite.
+    # Elle est desormais declaree ici, le mot de passe venant du secret.
+    command: ["python", "-m", "migrations", "migrate"]
+    environment:
+      NOVA_DATABASE_URL: "postgresql://nova:`$`${NOVA_DATABASE_PASSWORD}@postgres:5432/nova"
+      NOVA_DATABASE_PASSWORD_FILE: /run/secrets/postgres_password
     secrets: [postgres_password]
     depends_on: { postgres: { condition: service_healthy } }
   whisper:
@@ -817,9 +822,10 @@ $llmEnvironment
     restart: unless-stopped
   api:
     image: $($Manifest.images.server)
-    entrypoint: ["/bin/sh", "-ec"]
-    command: ["export NOVA_DATABASE_URL=postgresql://nova:`$(python -c 'import urllib.parse;print(urllib.parse.quote(open(\"/run/secrets/postgres_password\").read().strip(), safe=\"\"))')@postgres:5432/nova; exec python serve.py"]
+    command: ["python", "serve.py"]
     environment:
+      NOVA_DATABASE_URL: "postgresql://nova:`$`${NOVA_DATABASE_PASSWORD}@postgres:5432/nova"
+      NOVA_DATABASE_PASSWORD_FILE: /run/secrets/postgres_password
       NOVA_ENV: development
       NOVA_REDIS_URL: redis://redis:6379/0
       NOVA_REQUIRE_AUTH: "true"

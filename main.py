@@ -7,6 +7,7 @@ Confidentialité : seuls des COMPTEURS d'usage sont stockés, jamais le contenu.
 import csv
 import io
 import os
+import urllib.parse
 import random
 import re
 import base64
@@ -294,8 +295,60 @@ def database_url() -> str:
     """
     explicit = os.getenv("NOVA_DATABASE_URL", "").strip()
     if explicit:
-        return explicit
+        return _resolve_database_password(explicit)
     return "sqlite:///" + str(DB_PATH).replace("\\", "/")
+
+
+DATABASE_PASSWORD_PLACEHOLDER = "${NOVA_DATABASE_PASSWORD}"
+
+
+def _resolve_database_password(url: str) -> str:
+    """Substitue le mot de passe lu dans un fichier de secret.
+
+    ## Pourquoi cette indirection existe
+
+    Le compose construisait l'URL dans la *commande* du conteneur :
+
+        command: ["export NOVA_DATABASE_URL=postgresql://nova:$(...)@...; exec python serve.py"]
+
+    Un `docker exec` demarre un processus neuf, qui n'herite pas de cet
+    `export` : tout outillage lance ainsi -- `admin_cli.py` en tete -- retombait
+    sur le defaut SQLite et repondait « unable to open database file ». La
+    commande de nomination du premier administrateur, telle qu'elle figure dans
+    le runbook, ne pouvait donc pas s'executer.
+
+    L'URL peut desormais etre declaree en clair dans le compose, avec un
+    marqueur a la place du mot de passe, et `NOVA_DATABASE_PASSWORD_FILE`
+    designe le fichier de secret. Aucun secret n'entre dans un fichier genere,
+    et chaque processus du conteneur -- y compris ceux lances par `exec` --
+    resout la meme URL.
+    """
+    if DATABASE_PASSWORD_PLACEHOLDER not in url:
+        return url
+    path = os.getenv("NOVA_DATABASE_PASSWORD_FILE", "").strip()
+    if not path:
+        raise ProductionConfigurationError(
+            "DATABASE_PASSWORD_FILE_MISSING",
+            "NOVA_DATABASE_URL carries a password placeholder but "
+            "NOVA_DATABASE_PASSWORD_FILE is not set.",
+        )
+    try:
+        secret = Path(path).read_text(encoding="utf-8").strip()
+    except OSError as error:
+        raise ProductionConfigurationError(
+            "DATABASE_PASSWORD_FILE_UNREADABLE",
+            f"NOVA_DATABASE_PASSWORD_FILE is not readable: {error.strerror}",
+        ) from error
+    if not secret:
+        raise ProductionConfigurationError(
+            "DATABASE_PASSWORD_FILE_EMPTY",
+            "NOVA_DATABASE_PASSWORD_FILE designates an empty file.",
+        )
+    # Le mot de passe traverse une URL : les caracteres reserves doivent etre
+    # encodes, sinon un simple `@` ou `/` tronquerait l'hote ou la base.
+    return url.replace(
+        DATABASE_PASSWORD_PLACEHOLDER, urllib.parse.quote(secret, safe="")
+    )
 
 
 class ProductionConfigurationError(RuntimeError):
