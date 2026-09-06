@@ -1,0 +1,207 @@
+# Nova Organization — Control Plane, deploiement de production.
+#
+# Ce fichier est fait pour etre remis a une organisation telle quelle. Il ne
+# construit rien : il tire l'image publiee, epinglee par empreinte. Il
+# n'embarque ni PostgreSQL, ni Redis, ni runtime d'inference -- ces trois-la
+# sont des services que l'organisation provisionne, sauvegarde et surveille
+# pour eux-memes. Les embarquer ici donnerait une base de production dans un
+# volume de conteneur, sans sauvegarde et sans chiffrement au repos, ce que la
+# checklist de pilote refuse a juste titre.
+#
+#   docker compose --file docker-compose.production.yml up -d
+#
+# Les valeurs viennent d'un fichier `.env` a cote de celui-ci. Voir
+# `.env.production.example`, et le runbook `docs/operations/production-runbook.md`
+# pour ce que chacune signifie.
+#
+# Toute variable ecrite `${NOM:?...}` est **obligatoire** : le demarrage
+# s'arrete avec son message plutot que de se rabattre sur un defaut. Un
+# deploiement qui oublie une de ces valeurs doit le savoir tout de suite, pas
+# le decouvrir a la premiere connexion refusee.
+
+x-nova-image: &nova-image
+  # Empreinte, pas etiquette. Une etiquette peut etre redirigee vers une autre
+  # image ; une empreinte designe exactement ce qui a ete publie et verifie.
+  # Celle-ci vient du manifeste signe de la release. Pour changer de version,
+  # remplacez-la par l'empreinte de la nouvelle -- et une seule fois : l'ancre
+  # sert aux deux services, qui doivent toujours porter la meme image.
+  image: ghcr.io/mailpro31/nova-server@sha256:7995ae5de0a40224ff8d5e5948b9a3706b16e8ce4d01eb3dec870fbc1f21a95f
+
+x-nova-database: &nova-database
+  # L'URL est assemblee ici, et le mot de passe n'y figure pas : `$${NOVA_DATABASE_PASSWORD}`
+  # est un marqueur que le serveur remplace au demarrage par le contenu du
+  # fichier designe ci-dessous, percent-encode. Le double `$$` empeche Compose
+  # de l'interpoler -- il doit arriver litteralement jusqu'au serveur.
+  #
+  # Aucun mot de passe ne traverse donc le fichier d'environnement, ni la table
+  # des processus, ni un `docker inspect`.
+  NOVA_DATABASE_URL: "postgresql://${NOVA_DATABASE_USER:?compte PostgreSQL}:$${NOVA_DATABASE_PASSWORD}@${NOVA_DATABASE_HOST:?hote PostgreSQL}:${NOVA_DATABASE_PORT:-5432}/${NOVA_DATABASE_NAME:?base PostgreSQL}${NOVA_DATABASE_QUERY:-}"
+  NOVA_DATABASE_PASSWORD_FILE: "${NOVA_DATABASE_PASSWORD_FILE:-/run/secrets/db_password}"
+
+x-nova-secrets: &nova-secrets
+  # Les secrets sont designes, jamais ecrits ici. Le serveur accepte
+  # `file:///chemin` et `env://NOM` partout ou un secret est attendu, et refuse
+  # au demarrage une valeur faible, trop courte, ou laissee par defaut.
+  NOVA_OIDC_CLIENT_SECRET: "${NOVA_OIDC_CLIENT_SECRET:-}"
+  NOVA_GOOGLE_CLIENT_SECRET: "${NOVA_GOOGLE_CLIENT_SECRET:-}"
+  NOVA_SMTP_PASS: "${NOVA_SMTP_PASS:-}"
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # Migration du schema. Un passage, puis le conteneur sort.
+  #
+  # Le service ne migre jamais tout seul : il refuse de demarrer sur une base en
+  # retard (`DATABASE_MIGRATION_REQUIRED`) ou plus recente que lui
+  # (`DATABASE_SCHEMA_TOO_NEW`). La migration est donc une etape explicite, et
+  # `api` attend qu'elle ait reussi.
+  # ---------------------------------------------------------------------------
+  migrate:
+    <<: *nova-image
+    command: ["python", "-m", "migrations", "migrate"]
+    environment:
+      <<: *nova-database
+      NOVA_ENV: production
+    volumes:
+      - ${NOVA_SECRETS_DIR:-./secrets}:/run/secrets:ro
+    restart: "no"
+
+  # ---------------------------------------------------------------------------
+  # L'API et le canal de controle local, un seul processus.
+  # ---------------------------------------------------------------------------
+  api:
+    <<: *nova-image
+    command: ["python", "serve.py"]
+    ports:
+      # Boucle locale uniquement : TLS termine au reverse proxy, qui est le seul
+      # a joindre ce port. L'application ne gere aucun certificat. C'est
+      # l'origine *annoncee* qui doit etre publique et en HTTPS, pas l'adresse
+      # d'ecoute.
+      - "127.0.0.1:8080:8000"
+    environment:
+      # Deux ancres fusionnees : YAML exige une sequence, deux cles `<<`
+      # separees seraient invalides.
+      <<: [*nova-database, *nova-secrets]
+
+      # -- Ce qui n'a pas de defaut acceptable ---------------------------------
+      NOVA_ENV: production
+      NOVA_REDIS_URL: "${NOVA_REDIS_URL:?Redis est obligatoire en production : sans compteur partage, chaque worker compte pour lui et le quota vaut son multiple}"
+      NOVA_DOMAINS: "${NOVA_DOMAINS:?domaines de messagerie autorises, separes par des virgules -- sans eux, chaque membre est refuse a la premiere connexion}"
+      NOVA_ADMIN_ORIGINS: "${NOVA_ADMIN_ORIGINS:?origines HTTPS de la console d'administration}"
+      NOVA_SERVICE_ENDPOINT: "${NOVA_SERVICE_ENDPOINT:?origine HTTPS annoncee aux postes}"
+
+      # -- Identite de l'organisation, telle qu'elle s'affiche sur les postes --
+      NOVA_ORGANIZATION_ID: "${NOVA_ORGANIZATION_ID:?identifiant court de l'organisation}"
+      NOVA_ORGANIZATION_NAME: "${NOVA_ORGANIZATION_NAME:?nom affiche de l'organisation}"
+      NOVA_ORGANIZATION_SHORT_NAME: "${NOVA_ORGANIZATION_SHORT_NAME:-}"
+      NOVA_ORGANIZATION_CAMPUS: "${NOVA_ORGANIZATION_CAMPUS:-}"
+      NOVA_ORGANIZATION_TYPE: "${NOVA_ORGANIZATION_TYPE:-education}"
+
+      # -- Fournisseur d'identite ---------------------------------------------
+      # L'emetteur doit etre en HTTPS, sans exception. Un IdP auto-heberge sur
+      # un reseau prive reste legitime, mais son certificat doit etre valide et
+      # sa CA connue du serveur : la contrainte de schema n'est pas relachee.
+      NOVA_OIDC_ISSUER: "${NOVA_OIDC_ISSUER:-}"
+      NOVA_OIDC_CLIENT_ID: "${NOVA_OIDC_CLIENT_ID:-}"
+      NOVA_OIDC_CLIENT_AUTH_METHOD: "${NOVA_OIDC_CLIENT_AUTH_METHOD:-none}"
+      NOVA_OIDC_DISPLAY_NAME: "${NOVA_OIDC_DISPLAY_NAME:-}"
+      NOVA_ENTRA_CLIENT_ID: "${NOVA_ENTRA_CLIENT_ID:-}"
+      NOVA_ENTRA_TENANT_ID: "${NOVA_ENTRA_TENANT_ID:-organizations}"
+      NOVA_ENTRA_ALLOWED_TENANT_ID: "${NOVA_ENTRA_ALLOWED_TENANT_ID:-}"
+      NOVA_GOOGLE_CLIENT_ID: "${NOVA_GOOGLE_CLIENT_ID:-}"
+      NOVA_GOOGLE_ALLOWED_HOSTED_DOMAIN: "${NOVA_GOOGLE_ALLOWED_HOSTED_DOMAIN:-}"
+
+      # -- Runtime d'inference prive ------------------------------------------
+      # Aucun modele par defaut : un deploiement qui n'en declare pas obtient
+      # `AI_MODEL_NOT_READY`, jamais un choix silencieux.
+      NOVA_WHISPER_URL: "${NOVA_WHISPER_URL:?adresse du service de transcription}"
+      NOVA_WHISPER_MODEL: "${NOVA_WHISPER_MODEL:?modele de transcription}"
+      NOVA_LLM_URL: "${NOVA_LLM_URL:?adresse du service de texte, API compatible OpenAI}"
+      NOVA_LLM_MODEL: "${NOVA_LLM_MODEL:?modele de texte}"
+      NOVA_AI_PROFILE: "${NOVA_AI_PROFILE:-standard}"
+      NOVA_AI_REASONING_ALLOWED: "${NOVA_AI_REASONING_ALLOWED:-false}"
+      NOVA_AI_MAX_CONCURRENT_TEXT: "${NOVA_AI_MAX_CONCURRENT_TEXT:-2}"
+      NOVA_AI_MAX_CONCURRENT_SPEECH: "${NOVA_AI_MAX_CONCURRENT_SPEECH:-1}"
+      NOVA_AI_MAX_QUEUE: "${NOVA_AI_MAX_QUEUE:-4}"
+
+      # -- Reseau et bornes ----------------------------------------------------
+      # `X-Forwarded-For` n'est lu que si la connexion vient d'une adresse
+      # listee ici, et c'est le dernier element qui est retenu -- celui que ce
+      # proxy a ajoute, non le premier, que le client controle. Vide par
+      # defaut : aucun proxy n'est cru tant qu'on ne l'a pas declare.
+      NOVA_TRUSTED_PROXIES: "${NOVA_TRUSTED_PROXIES:-}"
+      NOVA_DB_POOL_MIN: "${NOVA_DB_POOL_MIN:-1}"
+      NOVA_DB_POOL_MAX: "${NOVA_DB_POOL_MAX:-10}"
+      NOVA_DB_POOL_TIMEOUT: "${NOVA_DB_POOL_TIMEOUT:-10}"
+      NOVA_MAX_SEATS: "${NOVA_MAX_SEATS:-300}"
+      NOVA_MAX_MACHINES: "${NOVA_MAX_MACHINES:-3}"
+      NOVA_REQUIRE_AUTH: "true"
+
+      # -- Courrier ------------------------------------------------------------
+      NOVA_SMTP_HOST: "${NOVA_SMTP_HOST:-}"
+      NOVA_SMTP_PORT: "${NOVA_SMTP_PORT:-587}"
+      NOVA_SMTP_USER: "${NOVA_SMTP_USER:-}"
+      NOVA_SMTP_FROM: "${NOVA_SMTP_FROM:-}"
+
+      # -- Canal de controle local --------------------------------------------
+      # `unix` en production : les permissions du socket font l'authentification,
+      # et il n'y a aucun secret partage a gerer, faire tourner ou oublier.
+      NOVA_CONNECTOR_LOCAL_TRANSPORT: "unix"
+      NOVA_CONNECTOR_LOCAL_SOCKET: "/run/nova/control.sock"
+    volumes:
+      - nova-data:/data
+      - nova-run:/run/nova
+      - ${NOVA_SECRETS_DIR:-./secrets}:/run/secrets:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      # `livez` et pas `health` : `health` lit la base, et un orchestrateur
+      # redemarrerait un processus parfaitement vivant parce que sa base est
+      # momentanement injoignable.
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/livez', timeout=5).status == 200 else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Le pont vers le plan de controle Nova. Sortant uniquement : aucun port
+  # publie, aucune adresse privee connue de Nova. S'il ne peut pas joindre le
+  # plan de controle, `api` continue de servir la dictee avec sa derniere
+  # configuration.
+  #
+  # Optionnel : active par `--profile connector`, apres enrolement depuis Nova
+  # Admin. Une organisation qui n'utilise pas la configuration centralisee n'a
+  # aucune raison de le faire tourner.
+  # ---------------------------------------------------------------------------
+  connector:
+    <<: *nova-image
+    command: ["python", "connector.py", "run"]
+    environment:
+      NOVA_CONNECTOR_STATE: "/data/connector-state.json"
+      NOVA_CONNECTOR_LOCAL_TRANSPORT: "unix"
+      NOVA_CONNECTOR_LOCAL_SOCKET: "/run/nova/control.sock"
+      # Un conteneur ne remplace pas sa propre image. Le declarer fait que ce
+      # Connector annonce `connector_orchestrator_update_v1`.
+      NOVA_CONNECTOR_DISTRIBUTION: "docker"
+      # A injecter par le mecanisme de secrets du deploiement : le credential
+      # n'a alors pas a etre pose sur le disque. Il se fait tourner depuis Nova
+      # Admin, sans re-enroler ce Connector.
+      NOVA_CONNECTOR_CREDENTIAL: "${NOVA_CONNECTOR_CREDENTIAL:-}"
+    volumes:
+      - nova-data:/data
+      - nova-run:/run/nova
+      - ${NOVA_SECRETS_DIR:-./secrets}:/run/secrets:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    profiles: ["connector"]
+
+volumes:
+  nova-data:
+  # Le socket de controle local. Monte uniquement dans `api` et `connector` :
+  # aucun autre service n'a de raison de l'atteindre.
+  nova-run:
