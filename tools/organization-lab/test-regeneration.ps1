@@ -50,6 +50,12 @@ function Read-Identity([string]$Path) {
         Domains      = [regex]::Match($text, 'NOVA_DOMAINS:\s*"([^"]*)"').Groups[1].Value
         Deployment   = [regex]::Match($text, 'deployment_id:\s*"([^"]+)"').Groups[1].Value
         ServerImage  = [regex]::Match($text, 'image:\s*(nova-local/server:\S+)').Groups[1].Value
+        # Toutes les occurrences, pas la premiere : `migrate` et `api` partagent
+        # l'image du serveur, et une seule des deux etait verifiee. Un compose
+        # qui epinglerait deux versions differentes ferait tourner les
+        # migrations sur l'une et le serveur sur l'autre.
+        ServerImages = @([regex]::Matches($text, 'image:\s*(nova-local/server:\S+)') |
+                         ForEach-Object { $_.Groups[1].Value })
         DatabaseUrl  = [regex]::Match($text, 'NOVA_DATABASE_URL:\s*"([^"]*)"').Groups[1].Value
     }
 }
@@ -103,6 +109,11 @@ try {
     if ($one.Organization -ne $two.Organization) { $failures += 'ORGANIZATION_CHANGED' }
     if ($one.Deployment -ne $two.Deployment) { $failures += 'DEPLOYMENT_CHANGED' }
     if ($two.ServerImage -ne 'nova-local/server:9.9.9') { $failures += 'IMAGE_NOT_FROM_MANIFEST' }
+    # `migrate` et `api` doivent porter la meme image, celle du manifeste.
+    if ($two.ServerImages.Count -lt 2) { $failures += 'SERVER_IMAGE_SITES_MISSING' }
+    foreach ($image in $two.ServerImages) {
+        if ($image -ne 'nova-local/server:9.9.9') { $failures += 'IMAGE_NOT_FROM_MANIFEST_EVERYWHERE' }
+    }
     # L'URL doit porter le marqueur, jamais le secret, et jamais un `export`
     # invisible aux processus lances ensuite dans le conteneur.
     if ($two.DatabaseUrl -notlike '*${NOVA_DATABASE_PASSWORD}*') { $failures += 'DATABASE_URL_WITHOUT_PLACEHOLDER' }
