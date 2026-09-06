@@ -119,8 +119,16 @@ TOKEN_TTL_SECONDS = int(os.getenv("NOVA_TOKEN_TTL_SECONDS", str(30 * 24 * 3600))
 # défaut ; un établissement peut les remplacer sans modifier le client.
 ORGANIZATION_ID = os.getenv("NOVA_ORGANIZATION_ID", "ipsa")
 ORGANIZATION_NAME = os.getenv("NOVA_ORGANIZATION_NAME", "IPSA")
-ORGANIZATION_SHORT_NAME = os.getenv("NOVA_ORGANIZATION_SHORT_NAME", "IPSA")
-ORGANIZATION_CAMPUS = os.getenv("NOVA_ORGANIZATION_CAMPUS", "Paris")
+# Ces deux-la sont annonces au poste par `/api/config`, et le poste les affiche
+# tels quels. Un defaut qui nomme une organisation reelle -- « IPSA », « Paris »
+# -- s'affichait donc chez tous les utilisateurs d'une organisation qui porte un
+# autre nom, sans que rien ne le signale cote serveur : l'installeur ne propage
+# ni l'un ni l'autre. Le nom court derive desormais du nom, qui est configure ;
+# le campus n'a pas de defaut, parce qu'aucune valeur ne peut le deviner.
+ORGANIZATION_SHORT_NAME = (
+    os.getenv("NOVA_ORGANIZATION_SHORT_NAME", "").strip() or ORGANIZATION_NAME
+)
+ORGANIZATION_CAMPUS = os.getenv("NOVA_ORGANIZATION_CAMPUS", "").strip()
 # Nature de l'organisation : `education` donne Campus, `business` donne
 # Business. Ce n'est pas une edition technique distincte — les deux traversent
 # la meme infrastructure Organization, et seule cette valeur les separe.
