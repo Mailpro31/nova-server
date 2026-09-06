@@ -39,6 +39,10 @@ function Use-Scratch([string]$Path) {
     $script:Generated = Join-Path $script:Root 'generated'
     $script:Secrets = Join-Path $script:Root 'secrets'
     $script:LogPath = Join-Path $script:Root 'logs\setup.log'
+    # L'etat aussi. Sans cette ligne, un test qui ecrit l'etat ecrivait
+    # dans le ProgramData reel : le harnais corrompait l'installation de
+    # la machine qui l'executait, silencieusement.
+    $script:StatePath = Join-Path $script:Root 'setup-state.json'
     $script:ManifestCache = Join-Path $script:Root 'state\last-known-good-manifest.json'
     $script:LabRoot = Join-Path $script:Root 'lab'
 }
@@ -124,6 +128,40 @@ try {
     if ($one.Domains -ne 'exemple.test,cadres.exemple.test') { $failures += 'DOMAINS_NOT_IN_COMPOSE' }
     if ($two.Domains -ne $one.Domains) { $failures += 'DOMAINS_CHANGED' }
 
+    # Le retour arriere doit corriger l'etat, pas seulement le compose.
+    #
+    # Le 5 septembre 2026, une installation a echoue au demarrage des
+    # conteneurs. Le compose precedent a bien ete remis en place, mais
+    # `setup-state.json` a continue d'annoncer la release qui venait
+    # d'echouer : l'exploitant croyait faire tourner une version et en faisait
+    # tourner une autre. Jusqu'ici seule la presence de l'appel etait verifiee,
+    # par lecture du source ; c'est le resultat qui compte.
+    Save-State 'starting' 'LAB_GPU_6GB' '9.9.9'
+    $previous = Join-Path $script:Generated 'compose.previous.yml'
+    Set-Content -LiteralPath $previous -Encoding UTF8 -Value @'
+x-nova-lab:
+  release_id: "8.8.8"
+  profile_id: "LAB_GPU_ANCIEN"
+'@
+    $stamp = Get-ComposeStamp $previous
+    if (-not $stamp) { $failures += 'STAMP_NOT_READ' }
+    elseif ($stamp.ReleaseId -ne '8.8.8') { $failures += 'STAMP_RELEASE_WRONG' }
+    elseif ($stamp.ProfileId -ne 'LAB_GPU_ANCIEN') { $failures += 'STAMP_PROFILE_WRONG' }
+    else {
+        Save-State 'rolled-back' $stamp.ProfileId $stamp.ReleaseId
+        $etat = Get-Content -Raw -LiteralPath $script:StatePath | ConvertFrom-Json
+        # L'etat doit decrire le compose sur disque, jamais la release qu'on
+        # tentait de deployer.
+        if ($etat.release_id -ne '8.8.8') { $failures += 'STATE_ANNOUNCES_FAILED_RELEASE' }
+        if ($etat.profile_id -ne 'LAB_GPU_ANCIEN') { $failures += 'STATE_KEEPS_FAILED_PROFILE' }
+        if ($etat.step -ne 'rolled-back') { $failures += 'STATE_DOES_NOT_NAME_THE_ROLLBACK' }
+    }
+    # Un compose sans tampon ne doit pas produire un etat invente.
+    $sansTampon = Join-Path $script:Generated 'compose.sans-tampon.yml'
+    Set-Content -LiteralPath $sansTampon -Encoding UTF8 -Value 'services: {}'
+    $vide = Get-ComposeStamp $sansTampon
+    if ($vide.ReleaseId -ne '') { $failures += 'STAMP_INVENTED' }
+
     # Un compose sans domaines laisserait servir le defaut du serveur, herite
     # d une autre organisation. Le refus doit etre structurel.
     $keptDomains = $script:ResolvedDomains
@@ -163,7 +201,7 @@ try {
         Write-Output ('REGENERATION_TEST_FAILED ' + ($failures -join ','))
         exit 1
     }
-    Write-Output 'REGENERATION_TEST_OK identity_preserved=1 image_from_manifest=1 previous_kept=1 fresh_install_mints=1 domains_declared=1 empty_domains_refused=1'
+    Write-Output 'REGENERATION_TEST_OK rollback_state_corrected=1 identity_preserved=1 image_from_manifest=1 previous_kept=1 fresh_install_mints=1 domains_declared=1 empty_domains_refused=1'
     exit 0
 } finally {
     $env:ProgramData = $originalProgramData

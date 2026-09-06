@@ -7,6 +7,11 @@ on:
         description: Immutable release version
         required: true
         type: string
+      channel:
+        description: Release channel published under /server/<channel>
+        required: false
+        default: quick-lab
+        type: string
 
 permissions:
   contents: read
@@ -129,11 +134,15 @@ jobs:
       - name: Validate release inputs and secrets
         env:
           VERSION: ${{ inputs.version }}
+          CHANNEL: ${{ inputs.channel }}
           SIGNING_KEY: ${{ secrets.NOVA_RELEASE_SIGNING_KEY_PEM }}
           VERCEL_TOKEN: ${{ secrets.NOVA_RELEASE_VERCEL_TOKEN }}
         run: |
           set -euo pipefail
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?$ ]]
+          # Le canal devient un chemin sur le site publie : rien qui puisse en
+          # sortir, ni « .. », ni barre oblique.
+          [[ "$CHANNEL" =~ ^[a-z0-9][a-z0-9-]{0,31}$ ]]
           test -n "$SIGNING_KEY"
           test -n "$VERCEL_TOKEN"
       - name: Resolve linux/amd64 manifest digests
@@ -214,13 +223,14 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: organization-lab-${{ inputs.version }}-installer
-          path: release-site/public/server/quick-lab
+          path: release-site/public/server/${{ inputs.channel }}
       - name: Verify the staged installer matches the built hash
         env:
+          CHANNEL: ${{ inputs.channel }}
           INSTALLER_SHA256: ${{ needs.installer.outputs.sha256 }}
         run: |
           set -euo pipefail
-          exe=release-site/public/server/quick-lab/NovaOrganizationServerSetup.exe
+          exe=release-site/public/server/${CHANNEL}/NovaOrganizationServerSetup.exe
           test -s "$exe"
           actual=$(sha256sum "$exe" | awk '{print $1}')
           test "$actual" = "$INSTALLER_SHA256"
@@ -236,13 +246,15 @@ jobs:
           SPEECH_INDEX: ${{ needs.speech.outputs.digest }}
           LANGUAGE_INDEX: ${{ needs.language.outputs.digest }}
           INSTALLER_SHA256: ${{ needs.installer.outputs.sha256 }}
+          CHANNEL: ${{ inputs.channel }}
           SIGNING_KEY: ${{ secrets.NOVA_RELEASE_SIGNING_KEY_PEM }}
         run: |
           set -euo pipefail
-          mkdir -p release-site/public/server/quick-lab
+          mkdir -p "release-site/public/server/${CHANNEL}"
           python - <<'PY'
           import json, os
           version = os.environ['VERSION']
+          channel = os.environ['CHANNEL']
           artifacts = [
             ('nova-server', f'ghcr.io/mailpro31/nova-server@{os.environ["SERVER_DIGEST"]}', f'nova-local/server:{version}', 'Proprietary-Nova'),
             ('postgres', f'docker.io/library/postgres@{os.environ["POSTGRES_DIGEST"]}', 'nova-local/postgres:16', 'PostgreSQL'),
@@ -251,10 +263,10 @@ jobs:
             ('language-6gb', f'ghcr.io/mailpro31/nova-quick-lab-language@{os.environ["LANGUAGE_DIGEST"]}', f'nova-local/language:{version}', 'Apache-2.0'),
           ]
           manifest = {
-            'schema_version': 1, 'release_id': f'quick-lab-{version}',
+            'schema_version': 1, 'release_id': f'{channel}-{version}',
             'installer': {
               'version': version, 'minimum_version': '0.1.0',
-              'url': 'https://releases.novaspeak.app/server/quick-lab/NovaOrganizationServerSetup.exe',
+              'url': f'https://releases.novaspeak.app/server/{channel}/NovaOrganizationServerSetup.exe',
               'sha256': os.environ['INSTALLER_SHA256'],
               'authenticode_signed': False,
             },
@@ -275,16 +287,59 @@ jobs:
               'language': {'artifact_id': 'language-6gb', 'image': f'nova-local/language:{version}', 'model_id': 'Qwen/Qwen2.5-1.5B-Instruct-AWQ', 'model_path': '/models/qwen2.5-1.5b-instruct-awq', 'quantization': 'AWQ', 'max_model_len': 2048, 'gpu_memory_utilization': 0.55}
             }]
           }
-          with open('release-site/public/server/quick-lab/manifest.json', 'w', encoding='utf-8', newline='\n') as handle:
+          with open(f'release-site/public/server/{channel}/manifest.json', 'w', encoding='utf-8', newline='\n') as handle:
               json.dump(manifest, handle, ensure_ascii=False, separators=(',', ':'))
           PY
           printf '%s' "$SIGNING_KEY" > "$RUNNER_TEMP/nova-release-signing.pem"
           chmod 600 "$RUNNER_TEMP/nova-release-signing.pem"
-          openssl dgst -sha256 -sign "$RUNNER_TEMP/nova-release-signing.pem" -out "$RUNNER_TEMP/manifest.sig.bin" release-site/public/server/quick-lab/manifest.json
-          base64 -w0 "$RUNNER_TEMP/manifest.sig.bin" > release-site/public/server/quick-lab/manifest.json.sig
+          openssl dgst -sha256 -sign "$RUNNER_TEMP/nova-release-signing.pem" -out "$RUNNER_TEMP/manifest.sig.bin" release-site/public/server/${CHANNEL}/manifest.json
+          base64 -w0 "$RUNNER_TEMP/manifest.sig.bin" > release-site/public/server/${CHANNEL}/manifest.json.sig
           rm -f "$RUNNER_TEMP/nova-release-signing.pem" "$RUNNER_TEMP/manifest.sig.bin"
           printf '{"status":"ready","release":"%s"}\n' "$VERSION" > release-site/public/index.json
           printf '%s\n' '{"headers":[{"source":"/server/(.*)","headers":[{"key":"Cache-Control","value":"public, max-age=300, must-revalidate"},{"key":"X-Content-Type-Options","value":"nosniff"}]}]}' > release-site/vercel.json
+      - name: Re-stage the channels this release does not publish
+        env:
+          CHANNEL: ${{ inputs.channel }}
+        run: |
+          set -euo pipefail
+          # `vercel deploy` publie le contenu de `release-site`, et rien d'autre :
+          # le site en ligne est remplace, pas complete. Un dossier qui ne
+          # contient que le canal du jour effacerait donc tous les autres --
+          # l'installeur de production disparaitrait le jour d'une publication
+          # de lab, sans qu'aucune etape n'echoue.
+          #
+          # Les autres canaux sont donc retelecharges depuis le site en ligne et
+          # remis en place a l'identique. Un canal qui existe et qu'on n'arrive
+          # pas a recuperer arrete la publication : mieux vaut ne rien publier
+          # que publier un site ampute.
+          origine=https://releases.novaspeak.app
+          for autre in quick-lab production; do
+            [ "$autre" = "$CHANNEL" ] && continue
+            code=$(curl -sS -o /dev/null -w '%{http_code}' "$origine/server/$autre/manifest.json" || echo 000)
+            if [ "$code" = "404" ]; then
+              echo "canal $autre : absent du site, rien a preserver"
+              continue
+            fi
+            if [ "$code" != "200" ]; then
+              echo "canal $autre : le site a repondu $code, publication interrompue" >&2
+              exit 1
+            fi
+            echo "canal $autre : preservation"
+            mkdir -p "release-site/public/server/$autre"
+            for fichier in manifest.json manifest.json.sig NovaOrganizationServerSetup.exe; do
+              url="$origine/server/$autre/$fichier"
+              statut=$(curl -sS -o "release-site/public/server/$autre/$fichier"                        -w '%{http_code}' "$url" || echo 000)
+              if [ "$statut" = "404" ]; then
+                rm -f "release-site/public/server/$autre/$fichier"
+                continue
+              fi
+              if [ "$statut" != "200" ]; then
+                echo "  $fichier : $statut, publication interrompue" >&2
+                exit 1
+              fi
+            done
+          done
+
       - name: Deploy manifest to releases.novaspeak.app
         working-directory: release-site
         env:
@@ -295,7 +350,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: organization-lab-${{ inputs.version }}-manifest
-          path: release-site/public/server/quick-lab/
+          path: release-site/public/server/${{ inputs.channel }}/
           retention-days: 90
 
   verify:
@@ -310,4 +365,4 @@ jobs:
           # manifest, config and layer is re-hashed and compared with what the
           # signed manifest pins.
           unset GITHUB_TOKEN GH_TOKEN
-          python3 tools/organization-lab/verify-release-images.py             https://releases.novaspeak.app/server/quick-lab/manifest.json
+          python3 tools/organization-lab/verify-release-images.py             https://releases.novaspeak.app/server/${{ inputs.channel }}/manifest.json
