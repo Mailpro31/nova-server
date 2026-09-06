@@ -42,6 +42,34 @@ UTF-8, de taille bornée, et non lisible par tout le monde.
 
 ## 2. Démarrage
 
+### Avec le Compose livré
+
+`docker-compose.production.yml` assemble ce que décrit ce runbook. Il tire
+l'image publiée, épinglée par empreinte, et n'embarque ni PostgreSQL, ni Redis,
+ni runtime d'inférence : ces trois-là sont provisionnés, sauvegardés et
+surveillés par l'organisation.
+
+```
+cp .env.production.example .env      # puis remplir
+mkdir -p secrets                     # un fichier par secret, non lisible par tous
+docker compose --file docker-compose.production.yml up -d
+```
+
+Toute variable sans défaut acceptable arrête le démarrage avec son motif, et
+Compose les liste **toutes** d'un coup. Le service `migrate` passe d'abord ;
+`api` attend qu'il ait réussi.
+
+Le mot de passe de la base n'entre dans aucun fichier : le Compose écrit
+`${NOVA_DATABASE_PASSWORD}` dans l'URL, et le serveur le remplace au démarrage
+par le contenu de `NOVA_DATABASE_PASSWORD_FILE`, percent-encodé — un `/` ou un
+`@` dans un mot de passe ne peut donc pas tronquer l'adresse.
+
+Le Connector est derrière un profil : `--profile connector`, après enrôlement
+depuis Nova Admin.
+
+### À la main
+
+
 ```
 python -m migrations status          # état, sans effet de bord
 python -m migrations migrate         # migration explicite

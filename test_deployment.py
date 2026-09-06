@@ -39,6 +39,63 @@ def test_compose_requires_domains_and_product_files_drop_the_inherited_domain():
     assert offenders == []
 
 
+def test_the_production_compose_is_a_deliverable_not_a_build_file():
+    """Ce fichier est remis a une organisation : il ne construit rien.
+
+    Le compose de developpement construit depuis les sources et suit `:latest`.
+    Le remettre tel quel donnerait a chaque organisation une image differente,
+    construite chez elle, et une mise a jour silencieuse de Whisper ou de vLLM
+    le jour ou leur etiquette bouge.
+    """
+    root = Path(__file__).resolve().parent
+    compose = (root / "docker-compose.production.yml").read_text(encoding="utf-8")
+
+    assert "build:" not in compose, "un livrable ne construit pas depuis les sources"
+    assert ":latest" not in compose, "une etiquette flottante n'est pas une version"
+    assert "@sha256:" in compose, (
+        "l'image doit etre epinglee par empreinte : une etiquette peut etre "
+        "redirigee vers une autre image, une empreinte non")
+
+    # Ni base, ni compteur partage embarques. La checklist de pilote les exige
+    # provisionnes, sauvegardes et chiffres au repos ; un volume de conteneur
+    # n'offre aucun des trois.
+    for embarque in ("image: postgres", "image: redis", "image: vllm"):
+        assert embarque not in compose, f"{embarque} n'a pas sa place dans un livrable"
+
+    # Les variables sans defaut acceptable s'arretent, elles ne se devinent pas.
+    for obligatoire in ("NOVA_REDIS_URL", "NOVA_DOMAINS", "NOVA_ADMIN_ORIGINS",
+                        "NOVA_SERVICE_ENDPOINT"):
+        assert f"${{{obligatoire}:?" in compose, (
+            f"{obligatoire} doit arreter le demarrage plutot que prendre un defaut")
+
+    # La sonde de vivacite ne lit pas la base : un orchestrateur redemarrerait
+    # un processus vivant parce que sa base est momentanement injoignable.
+    assert "/api/livez" in compose
+    assert "/api/health" not in compose
+
+
+def test_the_production_compose_carries_the_password_placeholder_the_server_expects():
+    """Le marqueur du compose et celui du serveur sont le meme texte.
+
+    Le mot de passe n'entre dans aucun fichier : le compose ecrit un marqueur,
+    le serveur le remplace par le contenu du fichier de secret, percent-encode.
+    Si les deux textes divergent, l'URL part avec le marqueur en guise de mot de
+    passe -- et l'erreur ressemble a un identifiant refuse par PostgreSQL.
+
+    Le compose double le `$` pour que Compose ne l'interprete pas ; c'est bien
+    un seul `$` qui atteint le conteneur.
+    """
+    import main
+
+    root = Path(__file__).resolve().parent
+    compose = (root / "docker-compose.production.yml").read_text(encoding="utf-8")
+
+    assert "$" + main.DATABASE_PASSWORD_PLACEHOLDER in compose, (
+        "le marqueur du compose doit etre celui que main.py remplace")
+    assert "NOVA_DATABASE_PASSWORD_FILE" in compose, (
+        "sans le fichier designe, le marqueur reste et la connexion echoue")
+
+
 def test_an_empty_domain_list_says_so_at_startup():
     """Le defaut herite a disparu ; le silence qu'il laisse ne doit pas rester.
 
