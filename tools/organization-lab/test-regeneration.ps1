@@ -56,6 +56,7 @@ function Read-Identity([string]$Path) {
         # migrations sur l'une et le serveur sur l'autre.
         ServerImages = @([regex]::Matches($text, 'image:\s*(nova-local/server:\S+)') |
                          ForEach-Object { $_.Groups[1].Value })
+        OrgType      = [regex]::Match($text, 'NOVA_ORGANIZATION_TYPE:\s*"([^"]*)"').Groups[1].Value
         DatabaseUrl  = [regex]::Match($text, 'NOVA_DATABASE_URL:\s*"([^"]*)"').Groups[1].Value
     }
 }
@@ -114,6 +115,9 @@ try {
     foreach ($image in $two.ServerImages) {
         if ($image -ne 'nova-local/server:9.9.9') { $failures += 'IMAGE_NOT_FROM_MANIFEST_EVERYWHERE' }
     }
+    # Le serveur ne connait que `education` et `business` : ecrire « campus »
+    # produisait un compose qui decrivait autre chose que ce qui s'appliquait.
+    if ($two.OrgType -notin @('education','business')) { $failures += 'ORGANIZATION_TYPE_NOT_TRANSLATED' }
     # L'URL doit porter le marqueur, jamais le secret, et jamais un `export`
     # invisible aux processus lances ensuite dans le conteneur.
     if ($two.DatabaseUrl -notlike '*${NOVA_DATABASE_PASSWORD}*') { $failures += 'DATABASE_URL_WITHOUT_PLACEHOLDER' }

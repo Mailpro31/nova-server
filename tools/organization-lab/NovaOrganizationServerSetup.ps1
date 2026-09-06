@@ -831,7 +831,7 @@ $llmEnvironment
       NOVA_REQUIRE_AUTH: "true"
       NOVA_ORGANIZATION_ID: "$orgId"
       NOVA_ORGANIZATION_NAME: "$OrganizationName"
-      NOVA_ORGANIZATION_TYPE: "$OrganizationType"
+      NOVA_ORGANIZATION_TYPE: "$(ConvertTo-ServerOrganizationType $OrganizationType)"
       NOVA_DOMAINS: "$script:ResolvedDomains"
       NOVA_AI_TEXT_BASE_URL: http://llm:8000/v1
       NOVA_AI_TEXT_MODEL: "$($Profile.language.model_id)"
@@ -1099,6 +1099,21 @@ function Get-LabSettings {
     $path = Join-Path $script:LabRoot 'lab.json'
     if (-not (Test-Path -LiteralPath $path)) { return $null }
     try { return Get-Content -LiteralPath $path -Raw | ConvertFrom-Json } catch { throw 'LAB_SETTINGS_UNREADABLE' }
+}
+
+function ConvertTo-ServerOrganizationType([string]$Type) {
+    # « Campus » est le nom produit ; le serveur, lui, ne connait que
+    # `education` et `business` (ORGANIZATION_TYPES dans main.py) et normalise
+    # silencieusement tout le reste vers `education`. Ecrire « campus » dans le
+    # compose produisait donc un fichier qui decrivait une configuration
+    # differente de celle appliquee : l'installeur annoncait un type que le
+    # serveur remplacait sans le dire. La traduction est faite ici, une fois,
+    # pour que le compose dise la verite.
+    switch ($Type) {
+        'campus'    { return 'education' }
+        'business'  { return 'business' }
+        default     { throw "ORGANIZATION_TYPE_UNKNOWN: $Type" }
+    }
 }
 
 function Write-LabGatewayCompose($Manifest, $Settings) {
