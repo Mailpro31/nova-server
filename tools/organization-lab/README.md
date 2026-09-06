@@ -45,3 +45,29 @@ Desktop discovery continues to use its compiled, pinned Control Plane origin.
 
 `LAB_CPU` is intentionally diagnostic-only in V1. It does not silently select a
 cloud runtime. GPU profiles are selected from `profiles.manifest.json`.
+
+## Customising the generated Compose
+
+`compose.quick-lab.yml` is an output, not a source. `install`, `update` and
+`reconfigure` rewrite it, and the installer writes it as SYSTEM, so the account
+running the lab cannot edit it in place:
+
+    compose.quick-lab.yml  BUILTIN\Users:(I)(RX)
+
+Editing it is therefore the wrong move twice over — refused now, and lost at the
+next installer run even if the permissions were widened. Anything the generator
+does not cover belongs in a separate override file, kept outside `generated/`:
+
+    docker compose ^
+      --file "%ProgramData%\Nova\OrganizationServer\generated\compose.quick-lab.yml" ^
+      --file "C:\path\to\my-override.yml" ^
+      up -d
+
+Compose merges the two, later file winning. The override survives every
+regeneration because the installer never touches it. Use it for the settings the
+Quick Lab does not ask about — an external OIDC issuer, an extra mount, a
+different published port — and keep the generated file as the installer left it.
+
+Two things do not belong in an override: the PostgreSQL password, which stays a
+Docker secret, and anything the installer already parameterises, which would
+then be set in two places that drift apart.

@@ -1036,3 +1036,21 @@ def test_the_compose_stamp_is_read_from_the_file_it_describes():
     body = body[:body.index("\nfunction ")]
     for champ in ("release_id", "profile_id"):
         assert champ in body, f"le tampon doit porter {champ}"
+
+
+def test_the_readme_names_the_override_as_the_way_to_customise():
+    """Le fichier genere n'est pas modifiable, et le README doit le dire.
+
+    L'installateur l'ecrit sous SYSTEM : le compte qui exploite le lab n'a que
+    la lecture. Et meme avec les droits, `install`, `update` et `reconfigure`
+    le reecrivent -- une edition directe est perdue au passage suivant. La voie
+    normale est un fichier d'override separe, que l'installateur ne touche
+    jamais.
+    """
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "override" in readme.lower(), (
+        "la seule voie de personnalisation durable doit etre documentee")
+    assert "--file" in readme, "la forme a deux fichiers doit etre montree"
+    # Et l'avertissement qui explique pourquoi editer le fichier genere echoue.
+    assert "rewrite it" in readme or "rewrites it" in readme, (
+        "le README doit dire que le fichier genere est reecrit")
