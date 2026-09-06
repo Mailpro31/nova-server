@@ -91,6 +91,15 @@ from fastapi.testclient import TestClient  # noqa: E402
 import deployment  # noqa: E402
 import main  # noqa: E402
 
+# Le schema s'applique explicitement : importer `main` ne migre plus rien, et ce
+# fichier etait le seul de la suite a ne pas faire l'appel. Il passait quand
+# meme, parce qu'un autre module de test importe `main` avant lui et partage la
+# base que le premier `NOVA_DB` a designee -- donc les tables existaient deja,
+# creees par quelqu'un d'autre. Lance seul, le meme fichier echouait dix-huit
+# fois sur « no such table: deployment_profiles ». Un test dont le resultat
+# depend de ses voisins ne dit rien de ce qu'il pretend verifier.
+main.init_db()
+
 
 def manifest_document(version: str = "1.1.0", channel: str = "stable") -> dict:
     return {
