@@ -39,6 +39,10 @@ function Use-Scratch([string]$Path) {
     $script:Generated = Join-Path $script:Root 'generated'
     $script:Secrets = Join-Path $script:Root 'secrets'
     $script:LogPath = Join-Path $script:Root 'logs\setup.log'
+    # L'etat aussi. Sans cette ligne, un test qui ecrit l'etat ecrivait
+    # dans le ProgramData reel : le harnais corrompait l'installation de
+    # la machine qui l'executait, silencieusement.
+    $script:StatePath = Join-Path $script:Root 'setup-state.json'
     $script:ManifestCache = Join-Path $script:Root 'state\last-known-good-manifest.json'
     $script:LabRoot = Join-Path $script:Root 'lab'
 }

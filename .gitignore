@@ -22,3 +22,6 @@ tools/organization-lab/dist/
 
 # Divers
 .DS_Store
+
+# Dependances locales des suites de test (adresses, mots de passe de test)
+nova-test.env
