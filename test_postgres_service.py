@@ -161,6 +161,47 @@ class PostgresBootstrapTests(unittest.TestCase):
             "l'amorcage n'a pas attribue de slug de decouverte",
         )
 
+    def test_discovery_can_be_enabled_by_configuration(self):
+        """Sortir du blocage circulaire sans passer par la base.
+
+        `discovery_enabled` ne s'ecrivait que par `/api/admin/discovery`, qui
+        exige une session d'administration -- laquelle exige que la console ait
+        resolu l'organisation, donc que la decouverte soit deja active. Une
+        installation neuve n'avait aucun chemin produit pour en sortir.
+        """
+        actif = run_against_postgres(
+            """
+            main.init_db()
+            with main.db() as conn:
+                row = conn.execute(
+                    "SELECT discovery_enabled, service_endpoint FROM "
+                    "organizations WHERE id=?", (main.nova_organization_id(),),
+                ).fetchone()
+                result["enabled"] = bool(row["discovery_enabled"])
+                result["endpoint"] = row["service_endpoint"]
+            """,
+            extra_env={
+                "NOVA_DISCOVERY_ENABLED": "true",
+                "NOVA_SERVICE_ENDPOINT": "https://nova.example.com",
+            },
+        )
+        self.assertTrue(actif["enabled"], "la variable n'a pas active la decouverte")
+        self.assertEqual(actif["endpoint"], "https://nova.example.com")
+
+        # Le defaut ne change pas : sans la variable, rien n'est active.
+        muet = run_against_postgres(
+            """
+            main.init_db()
+            with main.db() as conn:
+                row = conn.execute(
+                    "SELECT discovery_enabled FROM organizations WHERE id=?",
+                    (main.nova_organization_id(),),
+                ).fetchone()
+                result["enabled"] = bool(row["discovery_enabled"])
+            """
+        )
+        self.assertFalse(muet["enabled"], "la decouverte s'active sans qu'on l'ait demandee")
+
     def test_the_service_refuses_to_start_on_a_schema_it_has_not_migrated(self):
         result = run_against_postgres(
             """

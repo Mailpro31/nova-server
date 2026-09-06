@@ -1584,6 +1584,14 @@ SERVICE_ENDPOINT = os.getenv("NOVA_SERVICE_ENDPOINT", "").strip().rstrip("/")
 # Le code que l'utilisateur saisit. Ce n'est **pas** un secret : le connaître ne
 # donne rien. C'est un identifiant public, comme un nom de domaine.
 DISCOVERY_SLUG = os.getenv("NOVA_DISCOVERY_SLUG", "").strip()
+# La decouverte etait le seul reglage d'amorcage sans variable : `discovery_enabled`
+# vaut 0 par defaut et ne s'ecrivait que par `/api/admin/discovery`, protege par une
+# session d'administration -- qui exige que la console ait resolu l'organisation,
+# donc que la decouverte soit deja active. Une installation neuve n'avait aucun
+# moyen produit de sortir de cette boucle : il fallait un UPDATE a la main.
+DISCOVERY_ENABLED = (
+    os.getenv("NOVA_DISCOVERY_ENABLED", "").strip().lower() == "true"
+)
 # Hors production, un endpoint en clair sur la boucle locale est légitime.
 DISCOVERY_ALLOW_INSECURE_ENDPOINT = (
     os.getenv("NOVA_DISCOVERY_ALLOW_INSECURE_ENDPOINT", "").strip().lower() == "true"
@@ -1754,7 +1762,8 @@ def bootstrap_discovery(conn, organization_id: str):
     ne réécrit pas, et une valeur corrigée en base n'est pas écrasée.
     """
     row = conn.execute(
-        "SELECT discovery_slug, service_endpoint FROM organizations WHERE id=?",
+        "SELECT discovery_slug, service_endpoint, discovery_enabled "
+        "FROM organizations WHERE id=?",
         (organization_id,),
     ).fetchone()
     if row is None:
@@ -1768,6 +1777,11 @@ def bootstrap_discovery(conn, organization_id: str):
             updates["discovery_slug"] = normalize_discovery_slug(slug)
     if not row["service_endpoint"] and SERVICE_ENDPOINT:
         updates["service_endpoint"] = SERVICE_ENDPOINT
+    # Comme le reste de cet amorcage : on n'active jamais une decouverte que
+    # l'exploitant aurait desactivee en base. La variable decide du premier
+    # demarrage, pas des suivants.
+    if DISCOVERY_ENABLED and not row["discovery_enabled"]:
+        updates["discovery_enabled"] = 1
     if updates:
         assignments = ", ".join(f"{name}=?" for name in updates)
         conn.execute(
