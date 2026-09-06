@@ -7,6 +7,7 @@ Confidentialité : seuls des COMPTEURS d'usage sont stockés, jamais le contenu.
 import csv
 import io
 import os
+import urllib.parse
 import random
 import re
 import base64
@@ -118,8 +119,16 @@ TOKEN_TTL_SECONDS = int(os.getenv("NOVA_TOKEN_TTL_SECONDS", str(30 * 24 * 3600))
 # défaut ; un établissement peut les remplacer sans modifier le client.
 ORGANIZATION_ID = os.getenv("NOVA_ORGANIZATION_ID", "ipsa")
 ORGANIZATION_NAME = os.getenv("NOVA_ORGANIZATION_NAME", "IPSA")
-ORGANIZATION_SHORT_NAME = os.getenv("NOVA_ORGANIZATION_SHORT_NAME", "IPSA")
-ORGANIZATION_CAMPUS = os.getenv("NOVA_ORGANIZATION_CAMPUS", "Paris")
+# Ces deux-la sont annonces au poste par `/api/config`, et le poste les affiche
+# tels quels. Un defaut qui nomme une organisation reelle -- « IPSA », « Paris »
+# -- s'affichait donc chez tous les utilisateurs d'une organisation qui porte un
+# autre nom, sans que rien ne le signale cote serveur : l'installeur ne propage
+# ni l'un ni l'autre. Le nom court derive desormais du nom, qui est configure ;
+# le campus n'a pas de defaut, parce qu'aucune valeur ne peut le deviner.
+ORGANIZATION_SHORT_NAME = (
+    os.getenv("NOVA_ORGANIZATION_SHORT_NAME", "").strip() or ORGANIZATION_NAME
+)
+ORGANIZATION_CAMPUS = os.getenv("NOVA_ORGANIZATION_CAMPUS", "").strip()
 # Nature de l'organisation : `education` donne Campus, `business` donne
 # Business. Ce n'est pas une edition technique distincte — les deux traversent
 # la meme infrastructure Organization, et seule cette valeur les separe.
@@ -294,8 +303,60 @@ def database_url() -> str:
     """
     explicit = os.getenv("NOVA_DATABASE_URL", "").strip()
     if explicit:
-        return explicit
+        return _resolve_database_password(explicit)
     return "sqlite:///" + str(DB_PATH).replace("\\", "/")
+
+
+DATABASE_PASSWORD_PLACEHOLDER = "${NOVA_DATABASE_PASSWORD}"
+
+
+def _resolve_database_password(url: str) -> str:
+    """Substitue le mot de passe lu dans un fichier de secret.
+
+    ## Pourquoi cette indirection existe
+
+    Le compose construisait l'URL dans la *commande* du conteneur :
+
+        command: ["export NOVA_DATABASE_URL=postgresql://nova:$(...)@...; exec python serve.py"]
+
+    Un `docker exec` demarre un processus neuf, qui n'herite pas de cet
+    `export` : tout outillage lance ainsi -- `admin_cli.py` en tete -- retombait
+    sur le defaut SQLite et repondait « unable to open database file ». La
+    commande de nomination du premier administrateur, telle qu'elle figure dans
+    le runbook, ne pouvait donc pas s'executer.
+
+    L'URL peut desormais etre declaree en clair dans le compose, avec un
+    marqueur a la place du mot de passe, et `NOVA_DATABASE_PASSWORD_FILE`
+    designe le fichier de secret. Aucun secret n'entre dans un fichier genere,
+    et chaque processus du conteneur -- y compris ceux lances par `exec` --
+    resout la meme URL.
+    """
+    if DATABASE_PASSWORD_PLACEHOLDER not in url:
+        return url
+    path = os.getenv("NOVA_DATABASE_PASSWORD_FILE", "").strip()
+    if not path:
+        raise ProductionConfigurationError(
+            "DATABASE_PASSWORD_FILE_MISSING",
+            "NOVA_DATABASE_URL carries a password placeholder but "
+            "NOVA_DATABASE_PASSWORD_FILE is not set.",
+        )
+    try:
+        secret = Path(path).read_text(encoding="utf-8").strip()
+    except OSError as error:
+        raise ProductionConfigurationError(
+            "DATABASE_PASSWORD_FILE_UNREADABLE",
+            f"NOVA_DATABASE_PASSWORD_FILE is not readable: {error.strerror}",
+        ) from error
+    if not secret:
+        raise ProductionConfigurationError(
+            "DATABASE_PASSWORD_FILE_EMPTY",
+            "NOVA_DATABASE_PASSWORD_FILE designates an empty file.",
+        )
+    # Le mot de passe traverse une URL : les caracteres reserves doivent etre
+    # encodes, sinon un simple `@` ou `/` tronquerait l'hote ou la base.
+    return url.replace(
+        DATABASE_PASSWORD_PLACEHOLDER, urllib.parse.quote(secret, safe="")
+    )
 
 
 class ProductionConfigurationError(RuntimeError):
@@ -410,12 +471,21 @@ def init_db():
         with db() as conn:
             migrate_schema(conn)
 
-    # L'amorcage de l'organisation n'est pas du schema : c'est la premiere
-    # ligne de donnees d'une instance, et elle vaut pour les deux moteurs.
-    # Elle vivait au milieu de `migrate_schema`, donc une base PostgreSQL
-    # neuve n'aurait eu aucune organisation.
+    # L'amorcage n'est pas du schema : ce sont les premieres lignes de donnees
+    # d'une instance, et elles valent pour les deux moteurs. Les trois vivaient
+    # au milieu de `migrate_schema`, qui ne s'execute que sur le chemin SQLite ;
+    # une base PostgreSQL neuve n'aurait donc eu ni organisation, ni
+    # configuration de fournisseur, ni slug de decouverte. La premiere avait ete
+    # sortie, les deux autres etaient restees derriere -- et un serveur
+    # PostgreSQL neuf repondait `ready:true` en n'annoncant que le code e-mail,
+    # sans qu'aucune connexion SSO soit possible.
+    #
+    # Les trois sont idempotentes par conception : sur SQLite, `migrate_schema`
+    # les a deja appelees et ce second passage ne reecrit rien.
     with db() as conn:
-        bootstrap_organization(conn)
+        organization_id = bootstrap_organization(conn)
+        bootstrap_provider_configs(conn, organization_id)
+        bootstrap_discovery(conn, organization_id)
 
 
 # L'ancien `init_db` construisait ici tout le schema, en parallele de
@@ -1575,6 +1645,14 @@ SERVICE_ENDPOINT = os.getenv("NOVA_SERVICE_ENDPOINT", "").strip().rstrip("/")
 # Le code que l'utilisateur saisit. Ce n'est **pas** un secret : le connaître ne
 # donne rien. C'est un identifiant public, comme un nom de domaine.
 DISCOVERY_SLUG = os.getenv("NOVA_DISCOVERY_SLUG", "").strip()
+# La decouverte etait le seul reglage d'amorcage sans variable : `discovery_enabled`
+# vaut 0 par defaut et ne s'ecrivait que par `/api/admin/discovery`, protege par une
+# session d'administration -- qui exige que la console ait resolu l'organisation,
+# donc que la decouverte soit deja active. Une installation neuve n'avait aucun
+# moyen produit de sortir de cette boucle : il fallait un UPDATE a la main.
+DISCOVERY_ENABLED = (
+    os.getenv("NOVA_DISCOVERY_ENABLED", "").strip().lower() == "true"
+)
 # Hors production, un endpoint en clair sur la boucle locale est légitime.
 DISCOVERY_ALLOW_INSECURE_ENDPOINT = (
     os.getenv("NOVA_DISCOVERY_ALLOW_INSECURE_ENDPOINT", "").strip().lower() == "true"
@@ -1745,7 +1823,8 @@ def bootstrap_discovery(conn, organization_id: str):
     ne réécrit pas, et une valeur corrigée en base n'est pas écrasée.
     """
     row = conn.execute(
-        "SELECT discovery_slug, service_endpoint FROM organizations WHERE id=?",
+        "SELECT discovery_slug, service_endpoint, discovery_enabled "
+        "FROM organizations WHERE id=?",
         (organization_id,),
     ).fetchone()
     if row is None:
@@ -1759,6 +1838,11 @@ def bootstrap_discovery(conn, organization_id: str):
             updates["discovery_slug"] = normalize_discovery_slug(slug)
     if not row["service_endpoint"] and SERVICE_ENDPOINT:
         updates["service_endpoint"] = SERVICE_ENDPOINT
+    # Comme le reste de cet amorcage : on n'active jamais une decouverte que
+    # l'exploitant aurait desactivee en base. La variable decide du premier
+    # demarrage, pas des suivants.
+    if DISCOVERY_ENABLED and not row["discovery_enabled"]:
+        updates["discovery_enabled"] = 1
     if updates:
         assignments = ", ".join(f"{name}=?" for name in updates)
         conn.execute(

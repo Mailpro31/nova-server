@@ -377,5 +377,40 @@ class ImportSideEffectTests(unittest.TestCase):
         self.assertGreater(result["explicit"], 20, "init_db must still build the schema")
 
 
+    def test_every_test_module_that_uses_main_asks_for_its_schema(self):
+        """Le corollaire du test precedent, cote suite.
+
+        Si l'import ne migre rien, alors chaque module de test qui se sert du
+        schema doit l'appeler lui-meme. `test_deployment.py` ne le faisait pas :
+        il passait quand meme, parce qu'un autre module importe `main` avant lui
+        et que le premier `NOVA_DB` pose vaut pour tous -- les tables existaient,
+        creees par quelqu'un d'autre. Lance seul, il echouait dix-huit fois sur
+        « no such table: deployment_profiles ».
+
+        Un test dont le resultat depend de ses voisins ne verifie pas ce qu'il
+        annonce, et l'ordre qui le sauve n'est garanti par rien.
+        """
+        import ast
+
+        root = Path(os.path.abspath(__file__)).parent
+        oublis = []
+        for module in sorted(root.glob("test_*.py")):
+            source = module.read_text(encoding="utf-8")
+            arbre = ast.parse(source)
+            # Un import au niveau du module seulement : `test_production_database`
+            # importe `main` dans un sous-processus, et n'a aucun schema a batir.
+            importe = any(
+                (isinstance(noeud, ast.Import)
+                 and any(nom.name == "main" for nom in noeud.names))
+                or (isinstance(noeud, ast.ImportFrom) and noeud.module == "main")
+                for noeud in arbre.body
+            )
+            if importe and "init_db" not in source:
+                oublis.append(module.name)
+        self.assertEqual(
+            oublis, [],
+            "ces modules empruntent le schema d'un autre au lieu de le demander",
+        )
+
 if __name__ == "__main__":
     unittest.main()

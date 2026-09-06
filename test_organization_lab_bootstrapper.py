@@ -438,11 +438,26 @@ def test_the_database_password_cannot_break_the_connection_url():
     secret = source[source.index("function Get-OrCreateSecret"):]
     secret = secret[:secret.index("\nfunction ")]
     assert ".Replace('+','-').Replace('/','_')" in secret, "new secrets must be URL-safe"
-    # and a password written by an earlier version is encoded at the point of use
-    assert source.count("urllib.parse.quote(open(") == 2, (
-        "migrate and api must both percent-encode the password")
+    # The encoding moved, the property did not. It used to happen in the compose
+    # command, which built the URL with an `export` -- invisible to every process
+    # started later by `docker exec`, so admin_cli.py fell back to SQLite and
+    # answered "unable to open database file". The URL now carries a placeholder,
+    # the secret is designated by file, and main.py substitutes it percent-encoded.
+    assert "${NOVA_DATABASE_PASSWORD}" in source, (
+        "the compose must carry the placeholder, not the secret")
+    assert "NOVA_DATABASE_PASSWORD_FILE: /run/secrets/postgres_password" in source, (
+        "the secret must be designated by file, never interpolated")
+    assert "export NOVA_DATABASE_URL" not in source, (
+        "an URL built in the command is invisible to docker exec")
     assert "postgresql://nova:`$(cat /run/secrets/postgres_password)" not in source, (
         "the raw secret must never be interpolated into the URL")
+
+    # And the substitution percent-encodes, server-side, before the password
+    # can reach the authority part of the URL.
+    server = (Path(__file__).resolve().parent / "main.py").read_text(encoding="utf-8")
+    resolver = server[server.index("def _resolve_database_password"):][:4000]
+    assert 'urllib.parse.quote(secret, safe="")' in resolver, (
+        "the password must be percent-encoded before it enters the URL")
 
 
 # --- compose output interpretation ---------------------------------------------
@@ -990,3 +1005,52 @@ def test_supply_chain_checks_survive_the_domain_changes():
                  "OCI_PLATFORM_UNEXPECTED", "RELEASE_PUBLIC_KEY_NOT_CONFIGURED"):
         assert code in body
     assert "$script:AllowedManifestOrigin = 'https://releases.novaspeak.app'" in body
+
+
+def test_a_rollback_does_not_leave_the_state_announcing_the_failed_release():
+    """L'etat doit suivre le compose, pas l'intention.
+
+    Le 5 septembre 2026, une installation de la release 2026.09.05.1 a echoue
+    au demarrage des conteneurs. Le retour arriere a bien remis le compose
+    precedent -- date du 31 aout, epinglant une image plus ancienne -- mais
+    `setup-state.json` a continue d'annoncer la release qui venait d'echouer.
+    L'exploitant croyait faire tourner une version et en faisait tourner une
+    autre, et l'ecart n'apparaissait nulle part.
+    """
+    body = setup_source()
+    body = body[body.index("function Restore-PreviousConfiguration"):]
+    body = body[:body.index("\nfunction ")]
+    assert "Save-State" in body, (
+        "un retour arriere qui ne corrige pas l'etat laisse une installation "
+        "qui ment sur sa propre version")
+    assert "rolled-back" in body, "l'etat doit nommer ce qui s'est passe"
+    # La release annoncee doit venir du compose restaure, jamais du manifeste
+    # que l'on tentait de deployer.
+    assert "Get-ComposeStamp $previous" in body, (
+        "la release annoncee doit etre lue dans le compose effectivement restaure")
+
+
+def test_the_compose_stamp_is_read_from_the_file_it_describes():
+    body = setup_source()
+    body = body[body.index("function Get-ComposeStamp"):]
+    body = body[:body.index("\nfunction ")]
+    for champ in ("release_id", "profile_id"):
+        assert champ in body, f"le tampon doit porter {champ}"
+
+
+def test_the_readme_names_the_override_as_the_way_to_customise():
+    """Le fichier genere n'est pas modifiable, et le README doit le dire.
+
+    L'installateur l'ecrit sous SYSTEM : le compte qui exploite le lab n'a que
+    la lecture. Et meme avec les droits, `install`, `update` et `reconfigure`
+    le reecrivent -- une edition directe est perdue au passage suivant. La voie
+    normale est un fichier d'override separe, que l'installateur ne touche
+    jamais.
+    """
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "override" in readme.lower(), (
+        "la seule voie de personnalisation durable doit etre documentee")
+    assert "--file" in readme, "la forme a deux fichiers doit etre montree"
+    # Et l'avertissement qui explique pourquoi editer le fichier genere echoue.
+    assert "rewrite it" in readme or "rewrites it" in readme, (
+        "le README doit dire que le fichier genere est reecrit")

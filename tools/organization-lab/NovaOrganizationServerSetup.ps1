@@ -794,8 +794,13 @@ services:
     restart: unless-stopped
   migrate:
     image: $($Manifest.images.server)
-    entrypoint: ["/bin/sh", "-ec"]
-    command: ["export NOVA_DATABASE_URL=postgresql://nova:`$(python -c 'import urllib.parse;print(urllib.parse.quote(open(\"/run/secrets/postgres_password\").read().strip(), safe=\"\"))')@postgres:5432/nova; python -m migrations migrate"]
+    # L'URL etait construite dans la commande, donc perdue pour tout processus
+    # lance ensuite par `docker exec` : `admin_cli.py` retombait sur SQLite.
+    # Elle est desormais declaree ici, le mot de passe venant du secret.
+    command: ["python", "-m", "migrations", "migrate"]
+    environment:
+      NOVA_DATABASE_URL: "postgresql://nova:`$`${NOVA_DATABASE_PASSWORD}@postgres:5432/nova"
+      NOVA_DATABASE_PASSWORD_FILE: /run/secrets/postgres_password
     secrets: [postgres_password]
     depends_on: { postgres: { condition: service_healthy } }
   whisper:
@@ -817,15 +822,16 @@ $llmEnvironment
     restart: unless-stopped
   api:
     image: $($Manifest.images.server)
-    entrypoint: ["/bin/sh", "-ec"]
-    command: ["export NOVA_DATABASE_URL=postgresql://nova:`$(python -c 'import urllib.parse;print(urllib.parse.quote(open(\"/run/secrets/postgres_password\").read().strip(), safe=\"\"))')@postgres:5432/nova; exec python serve.py"]
+    command: ["python", "serve.py"]
     environment:
+      NOVA_DATABASE_URL: "postgresql://nova:`$`${NOVA_DATABASE_PASSWORD}@postgres:5432/nova"
+      NOVA_DATABASE_PASSWORD_FILE: /run/secrets/postgres_password
       NOVA_ENV: development
       NOVA_REDIS_URL: redis://redis:6379/0
       NOVA_REQUIRE_AUTH: "true"
       NOVA_ORGANIZATION_ID: "$orgId"
       NOVA_ORGANIZATION_NAME: "$OrganizationName"
-      NOVA_ORGANIZATION_TYPE: "$OrganizationType"
+      NOVA_ORGANIZATION_TYPE: "$(ConvertTo-ServerOrganizationType $OrganizationType)"
       NOVA_DOMAINS: "$script:ResolvedDomains"
       NOVA_AI_TEXT_BASE_URL: http://llm:8000/v1
       NOVA_AI_TEXT_MODEL: "$($Profile.language.model_id)"
@@ -966,12 +972,32 @@ function Get-Health {
     [pscustomobject]@{ Livez = $live; Readyz = $ready; Containers = (Run-Captured 'docker.exe' @('ps','--filter','label=com.docker.compose.project=nova-organization-lab','--format','{{.Names}}: {{.Status}}')).Output }
 }
 
+function Get-ComposeStamp([string]$Path) {
+    # Le compose porte sa provenance dans `x-nova-lab`. C'est la seule source qui
+    # dise ce qui tourne reellement, par opposition a ce que l'installateur avait
+    # l'intention de deployer.
+    if (-not (Test-Path -LiteralPath $Path)) { return $null }
+    $text = Get-Content -LiteralPath $Path -Raw
+    return [pscustomobject]@{
+        ReleaseId = [regex]::Match($text, 'release_id:\s*"([^"]+)"').Groups[1].Value
+        ProfileId = [regex]::Match($text, 'profile_id:\s*"([^"]+)"').Groups[1].Value
+    }
+}
+
 function Restore-PreviousConfiguration {
     $previous = Join-Path $script:Generated 'compose.previous.yml'
     if (-not (Test-Path -LiteralPath $previous)) { return $false }
     $result = Run-Captured 'docker.exe' @('compose','--file',$previous,'up','-d')
     if ($result.ExitCode -ne 0) { return $false }
     Copy-Item -LiteralPath $previous -Destination (Join-Path $script:Generated 'compose.quick-lab.yml') -Force
+    # L'etat doit suivre le retour arriere. Sans cette ligne, `setup-state.json`
+    # continuait d'annoncer la release qui venait d'echouer, alors que le compose
+    # sur disque etait redevenu le precedent : l'exploitant croyait faire tourner
+    # une version et en faisait tourner une autre, sans que rien ne le signale.
+    # C'est exactement ce qui s'est produit le 5 septembre 2026, ou l'etat
+    # annoncait 2026.09.05.1 au-dessus d'un compose du 31 aout.
+    $stamp = Get-ComposeStamp $previous
+    if ($stamp) { Save-State 'rolled-back' $stamp.ProfileId $stamp.ReleaseId }
     return $true
 }
 
@@ -1073,6 +1099,21 @@ function Get-LabSettings {
     $path = Join-Path $script:LabRoot 'lab.json'
     if (-not (Test-Path -LiteralPath $path)) { return $null }
     try { return Get-Content -LiteralPath $path -Raw | ConvertFrom-Json } catch { throw 'LAB_SETTINGS_UNREADABLE' }
+}
+
+function ConvertTo-ServerOrganizationType([string]$Type) {
+    # « Campus » est le nom produit ; le serveur, lui, ne connait que
+    # `education` et `business` (ORGANIZATION_TYPES dans main.py) et normalise
+    # silencieusement tout le reste vers `education`. Ecrire « campus » dans le
+    # compose produisait donc un fichier qui decrivait une configuration
+    # differente de celle appliquee : l'installeur annoncait un type que le
+    # serveur remplacait sans le dire. La traduction est faite ici, une fois,
+    # pour que le compose dise la verite.
+    switch ($Type) {
+        'campus'    { return 'education' }
+        'business'  { return 'business' }
+        default     { throw "ORGANIZATION_TYPE_UNKNOWN: $Type" }
+    }
 }
 
 function Write-LabGatewayCompose($Manifest, $Settings) {

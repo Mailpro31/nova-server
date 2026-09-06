@@ -362,3 +362,34 @@ class EnforcementTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_the_env_example_says_the_issuer_must_be_https():
+    """La documentation doit dire ce que le code refuse.
+
+    `issuer_url_is_allowed` rejette tout schema autre que https **avant** de
+    consulter `allow_private`. Un exploitant qui lit seulement la note sur les
+    reseaux prives en conclut raisonnablement qu'un `http://` interne passe --
+    il ne passe pas, et l'echec (`issuer_rejected:scheme_not_https`) arrive au
+    premier clic de connexion, pas a la configuration.
+    """
+    from pathlib import Path
+
+    example = (Path(__file__).resolve().parent / ".env.example").read_text(encoding="utf-8")
+    assert "The issuer must be https" in example, (
+        "l'exigence de schema doit etre ecrite la ou l'emetteur se configure")
+    # Et la note sur les reseaux prives doit dire ce qu'elle ne relache pas.
+    private = example[example.index("NOVA_OIDC_ALLOW_PRIVATE_ISSUER") - 900:]
+    private = private[:private.index("NOVA_OIDC_ALLOW_PRIVATE_ISSUER=")]
+    assert "still has to be https" in private, (
+        "la variable qui relache l'adresse ne relache pas le schema, et doit le dire")
+
+    # Le code et la documentation doivent rester d'accord.
+    server = (Path(__file__).resolve().parent / "main.py").read_text(encoding="utf-8")
+    check = server[server.index("def issuer_url_is_allowed"):]
+    check = check[:check.index("\nasync def ") if "\nasync def " in check else 4000]
+    assert 'return False, "scheme_not_https"' in check
+    # Comparer a l'*usage* de allow_private, pas a la signature : le parametre
+    # est nomme des la premiere ligne, ce qui ne dit rien de l'ordre des tests.
+    assert check.index('scheme_not_https') < check.index("allow_private and reason"), (
+        "le controle de schema doit rester avant celui d'adresse privee")
