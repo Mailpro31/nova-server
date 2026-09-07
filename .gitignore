@@ -25,3 +25,7 @@ tools/organization-lab/dist/
 
 # Dependances locales des suites de test (adresses, mots de passe de test)
 nova-test.env
+
+# Surcharge compose locale : reglages propres a une machine (modele, ports),
+# jamais un defaut produit.
+docker-compose.override.yml

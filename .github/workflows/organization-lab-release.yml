@@ -35,12 +35,50 @@ jobs:
         uses: docker/build-push-action@v6
         with: { context: ., push: true, tags: "ghcr.io/mailpro31/nova-server:${{ inputs.version }}" }
 
-  speech:
+  profiles:
+    # La matrice n'est pas ecrite ici : elle est derivee de
+    # `profiles.manifest.json`, la seule table qui decrive les paliers
+    # materiels. Une liste tenue en double finirait par diverger, et c'est
+    # l'installeur qui refuserait un profil absent du manifeste signe.
     runs-on: ubuntu-latest
     outputs:
-      digest: ${{ steps.build.outputs.digest }}
+      matrix: ${{ steps.derive.outputs.matrix }}
+      tiers: ${{ steps.derive.outputs.tiers }}
     steps:
       - uses: actions/checkout@v4
+      - id: derive
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          profils = json.load(open("tools/organization-lab/profiles.manifest.json", encoding="utf-8"))["profiles"]
+          retenus = [p for p in profils if p.get("gpu") and p.get("supported")]
+          entrees = [{
+              "id": p["id"],
+              # `LAB_GPU_24GB_PLUS` -> `24gb-plus` : une etiquette d'image lisible
+              # et stable, qui ne depend pas de l'ordre des profils.
+              "tier": p["id"].removeprefix("LAB_GPU_").lower().replace("_", "-"),
+              "speech_model": p["speech_model"],
+              "speech_compute_type": p["speech_compute_type"],
+              "text_model": p["text_model"],
+          } for p in retenus]
+          print("matrix=" + json.dumps({"include": entrees}))
+          print("tiers=" + json.dumps([e["tier"] for e in entrees]))
+          PY
+      - run: |
+          echo "paliers construits par cette release :"
+          echo '${{ steps.derive.outputs.tiers }}'
+
+  speech:
+    needs: profiles
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.profiles.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reclaim runner space for the model image
+        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
@@ -50,12 +88,17 @@ jobs:
           context: .
           file: tools/organization-lab/images/whisper.Dockerfile
           push: true
-          tags: ghcr.io/mailpro31/nova-quick-lab-speech:${{ inputs.version }}
+          build-args: |
+            WHISPER_MODEL=${{ matrix.speech_model }}
+            WHISPER_COMPUTE_TYPE=${{ matrix.speech_compute_type }}
+          tags: ghcr.io/mailpro31/nova-quick-lab-speech:${{ inputs.version }}-${{ matrix.tier }}
 
   language:
+    needs: profiles
     runs-on: ubuntu-latest
-    outputs:
-      digest: ${{ steps.build.outputs.digest }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.profiles.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v4
       - name: Reclaim runner space for the model image
@@ -69,7 +112,9 @@ jobs:
           context: .
           file: tools/organization-lab/images/llm.Dockerfile
           push: true
-          tags: ghcr.io/mailpro31/nova-quick-lab-language:${{ inputs.version }}
+          build-args: |
+            LLM_MODEL=${{ matrix.text_model }}
+          tags: ghcr.io/mailpro31/nova-quick-lab-language:${{ inputs.version }}-${{ matrix.tier }}
 
   installer:
     runs-on: windows-latest
@@ -127,7 +172,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: [server, speech, language, installer]
+    needs: [profiles, server, speech, language, installer]
     runs-on: ubuntu-latest
     environment: organization-lab-release
     steps:
@@ -135,6 +180,7 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
           CHANNEL: ${{ inputs.channel }}
+          DIGESTS: ${{ steps.dependencies.outputs.digests }}
           SIGNING_KEY: ${{ secrets.NOVA_RELEASE_SIGNING_KEY_PEM }}
           VERCEL_TOKEN: ${{ secrets.NOVA_RELEASE_VERCEL_TOKEN }}
         run: |
@@ -150,8 +196,7 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
           SERVER_INDEX: ${{ needs.server.outputs.digest }}
-          SPEECH_INDEX: ${{ needs.speech.outputs.digest }}
-          LANGUAGE_INDEX: ${{ needs.language.outputs.digest }}
+          TIERS: ${{ needs.profiles.outputs.tiers }}
         run: |
           set -euo pipefail
 
@@ -216,8 +261,28 @@ jobs:
           emit postgres "$(amd64_digest docker.io library/postgres 16-alpine)"
           emit redis    "$(amd64_digest docker.io library/redis 7-alpine)"
           emit server   "$(amd64_digest ghcr.io mailpro31/nova-server   "$SERVER_INDEX")"
-          emit speech   "$(amd64_digest ghcr.io mailpro31/nova-quick-lab-speech   "$SPEECH_INDEX")"
-          emit language "$(amd64_digest ghcr.io mailpro31/nova-quick-lab-language "$LANGUAGE_INDEX")"
+          # Un couple d'images par palier. Les empreintes sont resolues depuis
+          # l'etiquette que la matrice vient de pousser : c'est la vue du
+          # registre, pas la sortie d'un job -- une matrice n'expose pas ses
+          # sorties palier par palier.
+          : > /tmp/digests.json
+          {
+            printf '{'
+            premier=1
+            for tier in $(printf '%s' "$TIERS" | python3 -c 'import json,sys;print(" ".join(json.load(sys.stdin)))'); do
+              for genre in speech language; do
+                image="mailpro31/nova-quick-lab-${genre}"
+                digest=$(amd64_digest ghcr.io "$image" "${VERSION}-${tier}")
+                [ -z "$digest" ] && { echo "empreinte introuvable : $image:${VERSION}-${tier}" >&2; exit 1; }
+                [ $premier -eq 0 ] && printf ','
+                printf '"%s-%s":"%s"' "$genre" "$tier" "$digest"
+                premier=0
+                echo "resolu ${genre}-${tier} -> ${digest}" >&2
+              done
+            done
+            printf '}'
+          } > /tmp/digests.json
+          echo "digests=$(cat /tmp/digests.json)" >> "$GITHUB_OUTPUT"
 
       - name: Stage the Windows installer for publication
         uses: actions/download-artifact@v4
@@ -238,30 +303,84 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
           SERVER_DIGEST: ${{ steps.dependencies.outputs.server }}
-          SPEECH_DIGEST: ${{ steps.dependencies.outputs.speech }}
-          LANGUAGE_DIGEST: ${{ steps.dependencies.outputs.language }}
           POSTGRES_DIGEST: ${{ steps.dependencies.outputs.postgres }}
           REDIS_DIGEST: ${{ steps.dependencies.outputs.redis }}
           SERVER_INDEX: ${{ needs.server.outputs.digest }}
-          SPEECH_INDEX: ${{ needs.speech.outputs.digest }}
-          LANGUAGE_INDEX: ${{ needs.language.outputs.digest }}
           INSTALLER_SHA256: ${{ needs.installer.outputs.sha256 }}
           CHANNEL: ${{ inputs.channel }}
+          DIGESTS: ${{ steps.dependencies.outputs.digests }}
           SIGNING_KEY: ${{ secrets.NOVA_RELEASE_SIGNING_KEY_PEM }}
         run: |
           set -euo pipefail
           mkdir -p "release-site/public/server/${CHANNEL}"
-          python - <<'PY'
+          python3 - <<'PY'
           import json, os
+
           version = os.environ['VERSION']
           channel = os.environ['CHANNEL']
+          digests = json.loads(os.environ['DIGESTS'])
+          paliers = json.load(open('tools/organization-lab/profiles.manifest.json',
+                                   encoding='utf-8'))['profiles']
+          paliers = [p for p in paliers if p.get('gpu') and p.get('supported')]
+
+          def tier(identifiant):
+              return identifiant.removeprefix('LAB_GPU_').lower().replace('_', '-')
+
+          # Les images communes, identiques a tous les paliers.
           artifacts = [
-            ('nova-server', f'ghcr.io/mailpro31/nova-server@{os.environ["SERVER_DIGEST"]}', f'nova-local/server:{version}', 'Proprietary-Nova'),
-            ('postgres', f'docker.io/library/postgres@{os.environ["POSTGRES_DIGEST"]}', 'nova-local/postgres:16', 'PostgreSQL'),
-            ('redis', f'docker.io/library/redis@{os.environ["REDIS_DIGEST"]}', 'nova-local/redis:7', 'RSALv2 OR SSPLv1'),
-            ('speech-6gb', f'ghcr.io/mailpro31/nova-quick-lab-speech@{os.environ["SPEECH_DIGEST"]}', f'nova-local/speech:{version}', 'MIT AND Apache-2.0'),
-            ('language-6gb', f'ghcr.io/mailpro31/nova-quick-lab-language@{os.environ["LANGUAGE_DIGEST"]}', f'nova-local/language:{version}', 'Apache-2.0'),
+            {'id': 'nova-server', 'kind': 'oci_image',
+             'image': f'ghcr.io/mailpro31/nova-server@{os.environ["SERVER_DIGEST"]}',
+             'local_image': f'nova-local/server:{version}',
+             'license': 'Proprietary-Nova', 'platform': 'linux/amd64'},
+            {'id': 'postgres', 'kind': 'oci_image',
+             'image': f'docker.io/library/postgres@{os.environ["POSTGRES_DIGEST"]}',
+             'local_image': 'nova-local/postgres:16',
+             'license': 'PostgreSQL', 'platform': 'linux/amd64'},
+            {'id': 'redis', 'kind': 'oci_image',
+             'image': f'docker.io/library/redis@{os.environ["REDIS_DIGEST"]}',
+             'local_image': 'nova-local/redis:7',
+             'license': 'RSALv2 OR SSPLv1', 'platform': 'linux/amd64'},
           ]
+
+          profils = []
+          for palier in paliers:
+              t = tier(palier['id'])
+              parole, langue = f'speech-{t}', f'language-{t}'
+              artifacts.append({
+                  'id': parole, 'kind': 'oci_image',
+                  'image': f'ghcr.io/mailpro31/nova-quick-lab-speech@{digests[parole]}',
+                  'local_image': f'nova-local/speech-{t}:{version}',
+                  'license': 'MIT AND Apache-2.0', 'platform': 'linux/amd64'})
+              artifacts.append({
+                  'id': langue, 'kind': 'oci_image',
+                  'image': f'ghcr.io/mailpro31/nova-quick-lab-language@{digests[langue]}',
+                  'local_image': f'nova-local/language-{t}:{version}',
+                  'license': 'Apache-2.0', 'platform': 'linux/amd64'})
+              profils.append({
+                  'id': palier['id'],
+                  'minimum_ram_gib': palier['minimum_ram_gib'],
+                  'minimum_vram_mib': palier['minimum_vram_mib'],
+                  'maximum_vram_mib': palier['maximum_vram_mib'],
+                  'estimated_disk_gib': palier.get('estimated_disk_gib', 25),
+                  'max_concurrent_text': palier['max_concurrent_text'],
+                  'max_concurrent_speech': palier['max_concurrent_speech'],
+                  'queue_size': palier.get('queue_size', 2),
+                  # Le chemin dans l'image ne varie pas d'un palier a l'autre :
+                  # c'est le modele cuit dedans qui change.
+                  'speech': {'artifact_id': parole,
+                             'image': f'nova-local/speech-{t}:{version}',
+                             'model_id': f'/models/speech',
+                             'model_path': '/models/speech',
+                             'compute_type': palier['speech_compute_type']},
+                  'language': {'artifact_id': langue,
+                               'image': f'nova-local/language-{t}:{version}',
+                               'model_id': palier['text_model'],
+                               'model_path': '/models/language',
+                               'quantization': 'AWQ',
+                               'max_model_len': palier['text_max_model_len'],
+                               'gpu_memory_utilization': palier['text_gpu_memory_utilization']},
+              })
+
           manifest = {
             'schema_version': 1, 'release_id': f'{channel}-{version}',
             'installer': {
@@ -270,25 +389,20 @@ jobs:
               'sha256': os.environ['INSTALLER_SHA256'],
               'authenticode_signed': False,
             },
-            'images': {'server': f'nova-local/server:{version}', 'postgres': 'nova-local/postgres:16', 'redis': 'nova-local/redis:7'},
-            'artifacts': [{'id': i, 'kind': 'oci_image', 'image': image, 'local_image': local, 'license': license_name, 'platform': 'linux/amd64'} for i, image, local, license_name in artifacts],
+            'images': {'server': f'nova-local/server:{version}',
+                       'postgres': 'nova-local/postgres:16',
+                       'redis': 'nova-local/redis:7'},
+            'artifacts': artifacts,
             'provenance': {
-              'index_digests': {
-                'nova-server': os.environ['SERVER_INDEX'],
-                'speech-6gb': os.environ['SPEECH_INDEX'],
-                'language-6gb': os.environ['LANGUAGE_INDEX'],
-              },
-              'note': 'artifacts pin the linux/amd64 manifest digest; these are the index digests the release built',
+              'index_digests': {'nova-server': os.environ['SERVER_INDEX']},
+              'note': 'artifacts pin the linux/amd64 manifest digest; the server index digest is the one this release built',
             },
-            'profiles': [{
-              'id': 'LAB_GPU_6GB', 'minimum_ram_gib': 16, 'minimum_vram_mib': 5120, 'maximum_vram_mib': 7167,
-              'estimated_disk_gib': 25, 'max_concurrent_text': 1, 'max_concurrent_speech': 1, 'queue_size': 2,
-              'speech': {'artifact_id': 'speech-6gb', 'image': f'nova-local/speech:{version}', 'model_id': '/models/whisper-small', 'model_path': '/models/whisper-small', 'compute_type': 'int8_float16'},
-              'language': {'artifact_id': 'language-6gb', 'image': f'nova-local/language:{version}', 'model_id': 'Qwen/Qwen2.5-1.5B-Instruct-AWQ', 'model_path': '/models/qwen2.5-1.5b-instruct-awq', 'quantization': 'AWQ', 'max_model_len': 2048, 'gpu_memory_utilization': 0.55}
-            }]
+            'profiles': profils,
           }
-          with open(f'release-site/public/server/{channel}/manifest.json', 'w', encoding='utf-8', newline='\n') as handle:
-              json.dump(manifest, handle, ensure_ascii=False, separators=(',', ':'))
+          chemin = f'release-site/public/server/{channel}/manifest.json'
+          with open(chemin, 'w', encoding='utf-8', newline=chr(10)) as sortie:
+              json.dump(manifest, sortie, ensure_ascii=False, separators=(',', ':'))
+          print(f"{len(profils)} profils, {len(artifacts)} artefacts")
           PY
           printf '%s' "$SIGNING_KEY" > "$RUNNER_TEMP/nova-release-signing.pem"
           chmod 600 "$RUNNER_TEMP/nova-release-signing.pem"
@@ -297,27 +411,50 @@ jobs:
           rm -f "$RUNNER_TEMP/nova-release-signing.pem" "$RUNNER_TEMP/manifest.sig.bin"
           printf '{"status":"ready","release":"%s"}\n' "$VERSION" > release-site/public/index.json
           printf '%s\n' '{"headers":[{"source":"/server/(.*)","headers":[{"key":"Cache-Control","value":"public, max-age=300, must-revalidate"},{"key":"X-Content-Type-Options","value":"nosniff"}]}]}' > release-site/vercel.json
-      - name: Re-stage the channels this release does not publish
+      - name: Re-stage every channel this release does not publish
         env:
           CHANNEL: ${{ inputs.channel }}
+          VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
           # `vercel deploy` publie le contenu de `release-site`, et rien d'autre :
           # le site en ligne est remplace, pas complete. Un dossier qui ne
-          # contient que le canal du jour effacerait donc tous les autres --
-          # l'installeur de production disparaitrait le jour d'une publication
-          # de lab, sans qu'aucune etape n'echoue.
+          # contient que le canal du jour efface donc tous les autres.
           #
-          # Les autres canaux sont donc retelecharges depuis le site en ligne et
-          # remis en place a l'identique. Un canal qui existe et qu'on n'arrive
-          # pas a recuperer arrete la publication : mieux vaut ne rien publier
-          # que publier un site ampute.
+          # Une premiere version de cette garde parcourait une liste ecrite en
+          # dur. Elle n'a protege que ce dont quelqu'un s'etait souvenu : le
+          # 7 septembre 2026, une publication de `quick-lab` a efface le canal
+          # `test-channel`, absent de la liste, sans qu'aucune etape n'echoue.
+          #
+          # Le site porte donc son propre registre. `index.json` enumere les
+          # canaux publies ; chaque publication le relit, s'y ajoute, et remet
+          # en place tout ce qu'elle ne publie pas. Aucune liste a tenir a jour
+          # a la main, donc aucune liste a oublier.
           origine=https://releases.novaspeak.app
-          for autre in quick-lab production; do
-            [ "$autre" = "$CHANNEL" ] && continue
+          python3 - "$origine" "$CHANNEL" > /tmp/canaux.txt <<'PY'
+          import json, sys, urllib.request
+          origine, canal = sys.argv[1], sys.argv[2]
+          try:
+              with urllib.request.urlopen(f"{origine}/index.json", timeout=30) as reponse:
+                  index = json.load(reponse)
+          except Exception as erreur:            # noqa: BLE001
+              # Un site injoignable n'autorise pas a publier a l'aveugle : on ne
+              # sait pas ce qu'on effacerait.
+              print(f"index.json illisible : {erreur}", file=sys.stderr)
+              raise SystemExit(1)
+          # Le premier passage precede le registre : le seul canal existant
+          # alors est celui que l'installeur pointe depuis toujours.
+          canaux = index.get("channels") or ["quick-lab"]
+          for autre in canaux:
+              if autre != canal:
+                  print(autre)
+          PY
+          preserves=0
+          while read -r autre; do
+            [ -z "$autre" ] && continue
             code=$(curl -sS -o /dev/null -w '%{http_code}' "$origine/server/$autre/manifest.json" || echo 000)
             if [ "$code" = "404" ]; then
-              echo "canal $autre : absent du site, rien a preserver"
+              echo "canal $autre : absent du site, retire du registre"
               continue
             fi
             if [ "$code" != "200" ]; then
@@ -327,8 +464,7 @@ jobs:
             echo "canal $autre : preservation"
             mkdir -p "release-site/public/server/$autre"
             for fichier in manifest.json manifest.json.sig NovaOrganizationServerSetup.exe; do
-              url="$origine/server/$autre/$fichier"
-              statut=$(curl -sS -o "release-site/public/server/$autre/$fichier"                        -w '%{http_code}' "$url" || echo 000)
+              statut=$(curl -sS -o "release-site/public/server/$autre/$fichier"                        -w '%{http_code}' "$origine/server/$autre/$fichier" || echo 000)
               if [ "$statut" = "404" ]; then
                 rm -f "release-site/public/server/$autre/$fichier"
                 continue
@@ -338,7 +474,27 @@ jobs:
                 exit 1
               fi
             done
-          done
+            preserves=$((preserves + 1))
+          done < /tmp/canaux.txt
+
+          # Le registre decrit ce que le site contient reellement apres ce
+          # deploiement : les canaux effectivement remis en place, plus celui
+          # qu'on publie. Un canal disparu n'y revient pas.
+          python3 - "$CHANNEL" "$VERSION" > release-site/public/index.json <<'PY'
+          import json, os, sys
+          canal, version = sys.argv[1], sys.argv[2]
+          racine = "release-site/public/server"
+          canaux = sorted({canal} | {
+              nom for nom in os.listdir(racine)
+              if os.path.exists(os.path.join(racine, nom, "manifest.json"))
+          })
+          json.dump({"status": "ready", "release": version,
+                     "channel": canal, "channels": canaux},
+                    sys.stdout, separators=(",", ":"))
+          print()
+          PY
+          echo "canaux preserves : $preserves"
+          cat release-site/public/index.json
 
       - name: Deploy manifest to releases.novaspeak.app
         working-directory: release-site

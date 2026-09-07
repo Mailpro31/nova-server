@@ -160,6 +160,55 @@ def test_signature_verification_is_not_bypassable():
     assert "VerifyData" in source
 
 
+def release_workflow() -> str:
+    return (Path(__file__).parent / ".github" / "workflows"
+            / "organization-lab-release.yml").read_text(encoding="utf-8")
+
+
+def test_every_supported_profile_gets_its_own_images():
+    """Un palier declare est un palier publie, sinon il ne sert a rien.
+
+    L'installeur choisit le profil sur le materiel qu'il trouve, puis le
+    cherche dans le manifeste signe :
+
+        if (-not $releaseProfile) { throw 'PROFILE_NOT_IN_SIGNED_RELEASE_MANIFEST' }
+
+    Tant qu'une seule paire d'images etait construite, six des sept profils
+    n'existaient que sur le papier : une machine de 24 Go echouait exactement
+    comme une machine trop faible, et le message ne parlait ni de l'une ni de
+    l'autre. La table decrivait un choix que la publication ne permettait pas.
+
+    Le workflow derive donc sa matrice de cette table. Ce test tient le lien :
+    une nouvelle ligne dans `profiles.manifest.json` doit produire ses images
+    sans que personne ait a modifier le workflow.
+    """
+    workflow = release_workflow()
+    paliers = [p for p in manifest()["profiles"] if p.get("gpu") and p.get("supported")]
+    assert len(paliers) > 1, "un seul palier GPU rendrait ce test vide"
+
+    assert "profiles.manifest.json" in workflow, (
+        "la matrice doit etre derivee de la table des profils, pas reecrite")
+    assert "fromJSON(needs.profiles.outputs.matrix)" in workflow, (
+        "les images doivent etre construites par palier")
+
+    # Le modele doit etre un argument de construction, sinon toutes les
+    # variantes porteraient le meme.
+    for image, argument in (("llm.Dockerfile", "LLM_MODEL"),
+                            ("whisper.Dockerfile", "WHISPER_MODEL")):
+        source = (ROOT / "images" / image).read_text(encoding="utf-8")
+        assert f"ARG {argument}" in source, f"{image} doit accepter {argument}"
+        assert "${" + argument + "}" in source, (
+            f"{image} declare {argument} sans s'en servir")
+
+    # Et aucun palier ne doit rester code en dur dans la generation du
+    # manifeste : c'est ce qui n'en publiait qu'un.
+    generation = workflow[workflow.index("Generate signed public manifest"):]
+    generation = generation[:generation.index("Re-stage every channel")]
+    for palier in paliers:
+        assert palier["id"] not in generation, (
+            f"{palier['id']} est ecrit en dur : le manifeste doit venir de la table")
+
+
 def setup_source() -> str:
     return (ROOT / "NovaOrganizationServerSetup.ps1").read_text(encoding="utf-8")
 
@@ -206,9 +255,16 @@ def test_release_workflow_pins_platform_manifest_digests():
     # the manifest must be built from the resolved platform digests, not the
     # index digests the build step emits
     assert "SERVER_DIGEST: ${{ steps.dependencies.outputs.server }}" in workflow
-    assert "SPEECH_DIGEST: ${{ steps.dependencies.outputs.speech }}" in workflow
-    assert "LANGUAGE_DIGEST: ${{ steps.dependencies.outputs.language }}" in workflow
+    # Les images de modeles sont devenues une par palier : leurs empreintes ne
+    # tiennent plus dans deux variables, elles voyagent en JSON. La propriete
+    # est la meme -- ce sont les empreintes resolues qui sont epinglees, pas
+    # celles que les jobs de construction annoncent.
+    assert "DIGESTS: ${{ steps.dependencies.outputs.digests }}" in workflow
+    assert 'digest=$(amd64_digest ghcr.io "$image" "${VERSION}-${tier}")' in workflow
     assert "SERVER_DIGEST: ${{ needs.server.outputs.digest }}" not in workflow
+    for genre in ("speech", "language"):
+        assert ("${{ needs.%s.outputs.digest }}" % genre) not in workflow, (
+            f"l'empreinte d'index de {genre} epinglerait l'index, pas la plateforme")
 
 
 def test_release_workflow_verifies_published_images():
@@ -392,10 +448,15 @@ def test_the_speech_model_is_named_by_path_so_the_client_never_calls_hugging_fac
     # name such as 'small' sends faster-whisper to huggingface_hub, which fails
     # offline and would reach Hugging Face from the client machine.
     workflow = workflow_source()
-    assert "'model_id': '/models/whisper-small'" in workflow
-    assert "'model_id': 'small'" not in workflow
+    # Le chemin ne porte plus le nom du modele : il y a desormais une image par
+    # palier, et c'est le modele cuit dedans qui change, pas l'emplacement. La
+    # propriete tenue ici est inchangee -- un chemin absolu, jamais un nom nu.
+    assert "'model_id': f'/models/speech'" in workflow or "'model_id': '/models/speech'" in workflow
+    for nu in ("'model_id': 'small'", "'model_id': 'tiny'", "'model_id': 'medium'",
+               "'model_id': 'large-v3-turbo'"):
+        assert nu not in workflow, "un nom nu enverrait le client chez Hugging Face"
     dockerfile = (ROOT / "images" / "whisper.Dockerfile").read_text(encoding="utf-8")
-    assert "WHISPER__MODEL=/models/whisper-small" in dockerfile
+    assert "WHISPER__MODEL=/models/speech" in dockerfile
     assert "HF_HUB_OFFLINE=1" in dockerfile
     assert "GRADIO_ANALYTICS_ENABLED=0" in dockerfile
 
