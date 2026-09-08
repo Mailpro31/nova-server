@@ -8983,6 +8983,40 @@ def organization_vocabulary(organization_id: str) -> list[dict]:
     return entries
 
 
+def organization_shared_terms(conn, organization_id: str) -> list[dict]:
+    """Le vocabulaire que l'organisation impose, quelle que soit sa source.
+
+    Deux sources coexistent : la table historique `shared_dictionary`, et les
+    packages de vocabulaire publies depuis Nova Admin. `writing_context` les
+    fusionnait deja pour la dictee ; deux autres consommateurs ne lisaient que
+    la table, et ignoraient donc silencieusement un package publie --
+    `/api/vocabulary`, qui alimente l'ecran Dictionnaire du poste, et
+    `vocabulary_context`, qui alimente les AI Skills.
+
+    Un administrateur publiait donc du vocabulaire, le voyait actif dans la
+    console, et ne le retrouvait nulle part sur les postes.
+
+    Le package l'emporte sur l'heritage : c'est lui que l'organisation vient
+    d'ecrire. Les entrees issues d'un package portent un identifiant synthetique
+    -- elles ne sont pas des lignes de table, et rien ne doit tenter de les
+    supprimer une par une ; on retire le package.
+    """
+    merged: dict[str, dict] = {}
+    for row in legacy_shared_vocabulary(conn):
+        merged[row["term"].casefold()] = {
+            "id": row["id"] if "id" in row.keys() else None,
+            "term": row["term"],
+            "replacement": row["replacement"],
+        }
+    for entry in organization_vocabulary(organization_id):
+        merged[entry["term"].casefold()] = {
+            "id": "package:" + entry["term"].casefold(),
+            "term": entry["term"],
+            "replacement": entry.get("replacement"),
+        }
+    return sorted(merged.values(), key=lambda e: e["term"].casefold())
+
+
 def legacy_shared_vocabulary(conn) -> list:
     """Le vocabulaire partage historique — **mode dedie uniquement**.
 
@@ -9078,9 +9112,9 @@ def vocabulary_context(user: str) -> str:
     `command_prompt`.
     """
     with db() as conn:
-        shared = conn.execute(
-            "SELECT term,replacement FROM shared_dictionary ORDER BY term LIMIT 200"
-        ).fetchall()
+        # Meme source que la dictee et que l'ecran Dictionnaire : sans cela une
+        # skill ignorait le vocabulaire que l'organisation venait de publier.
+        shared = organization_shared_terms(conn, nova_organization_id())[:200]
         personal = conn.execute(
             "SELECT term,replacement FROM personal_dictionary WHERE email=? "
             "ORDER BY term LIMIT 200", (user,)
@@ -9140,9 +9174,10 @@ def command_prompt(instruction: str, vocabulary: str) -> str:
 @app.get("/api/vocabulary", dependencies=[Depends(product_capability("dictionary", "organization_vocabulary"))])
 def vocabulary(user: str = Depends(current_user)):
     with db() as conn:
-        shared = conn.execute(
-            "SELECT id,term,replacement FROM shared_dictionary ORDER BY term"
-        ).fetchall()
+        # Les packages autant que la table : un vocabulaire publie depuis la
+        # console n'apparaissait pas ici, et l'ecran du poste affichait « Aucun
+        # terme partage par l'etablissement » alors qu'il venait d'en recevoir.
+        shared = organization_shared_terms(conn, nova_organization_id())
         personal = conn.execute(
             "SELECT id,term,replacement,source FROM personal_dictionary "
             "WHERE email=? ORDER BY term", (user,)
@@ -9152,7 +9187,7 @@ def vocabulary(user: str = Depends(current_user)):
             (user,),
         ).fetchall()
     return {
-        "shared": [dict(row) for row in shared],
+        "shared": shared,
         "personal": [dict(row) for row in personal],
         "snippets": [dict(row) for row in snippets],
     }
