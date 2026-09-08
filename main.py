@@ -9108,9 +9108,27 @@ def command_prompt(instruction: str, vocabulary: str) -> str:
       "always sign with your full name" onto an explanation would corrupt it.
       To be revisited once the Skill type is part of the request.
     """
+    # « Return only the transformed text » interdisait ce que certaines
+    # instructions demandent explicitement. Une skill qui dit « commence par
+    # [DIFFUSION OK] » se voyait contredite par le serveur lui-meme : mesure sur
+    # ce deploiement, huit tirages par configuration, le marqueur demande
+    # n'apparaissait dans AUCUNE sortie -- et dans cinq sur seize une fois la
+    # consigne reformulee.
+    #
+    # Ce qu'il fallait interdire n'etait pas d'ajouter, mais de commenter : le
+    # modele qui explique ce qu'il vient de faire est le vrai bruit.
+    #
+    # « Preserve facts and the original language » etait lu comme « ne change
+    # rien » : sur huit tirages, le modele recopiait le texte mot pour mot cinq
+    # fois, alors que l'instruction lui demandait de le reecrire. Zero fois une
+    # fois dit ce que « preserver » recouvre -- les faits et la langue, pas la
+    # formulation, que l'instruction est justement la pour changer.
     prompt = (
-        "Execute the user's editing instruction. Return only the transformed text. "
-        "Preserve facts and the original language.\n\nInstruction: " + instruction
+        "Execute the user's editing instruction exactly, including any prefix, "
+        "marker or wrapper it asks for. Return the result and nothing else: no "
+        "commentary, no explanation of what you did. "
+        "Rewrite the wording as the instruction asks; keep the facts and the "
+        "original language unchanged.\n\nInstruction: " + instruction
     )
     if vocabulary:
         prompt += (
