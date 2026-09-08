@@ -311,8 +311,15 @@ label {
   font-size: 13px;
   color: var(--text-muted);
 }
-input[type="text"],
-input[type="password"],
+/* Tous les champs de saisie, et pas seulement ceux qui declarent leur type.
+   La regle ne visait que `input[type="text"]` et `input[type="password"]` :
+   un `<input>` sans attribut `type` EST un champ texte, mais ne correspond a
+   aucun des deux, et les `textarea` n'etaient pas vises du tout. Resultat, sur
+   le theme sombre, tous ces champs s'affichaient en blanc -- seul `select`
+   suivait. La negation couvre ce qui vient sans type comme ce qui viendra plus
+   tard, sans toucher aux cases a cocher ni aux boutons. */
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="color"]):not([type="submit"]):not([type="button"]),
+textarea,
 select {
   font: inherit;
   font-size: 13.5px;
@@ -410,6 +417,24 @@ input[aria-invalid="true"] {
 .policy-setting > label {
   flex: 0 0 auto;
 }
+/* L'editeur de version est un formulaire empile, pas un reglage sur une ligne.
+   Ses champs etaient deposes directement dans `.policy-setting` -- un conteneur
+   en ligne, `align-items: center` et `flex-wrap: wrap`. Chaque `.field` y
+   declare `flex: 1 1 220px` : en passant a la ligne, les lignes s'etiraient en
+   hauteur et chaque champ se centrait dans la sienne, d'ou environ trois cents
+   pixels de vide entre deux libelles. */
+.version-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  flex: 1 1 100%;
+}
+/* Un champ ne grandit pas en hauteur : il fait la taille de son contenu. */
+.version-editor .field {
+  flex: 0 0 auto;
+}
+
 .policy-hint {
   font-size: 12.5px;
   color: var(--text-faint);
@@ -438,5 +463,4 @@ input[aria-invalid="true"] {
 }
 .field textarea {
   resize: vertical;
-  font: inherit;
 }

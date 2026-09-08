@@ -648,12 +648,14 @@ function PackageCard({
               <h3 className="policy-group">
                 {t.packages.editing} v{detail.version_number}
               </h3>
-              <ContentEditor
-                packageType={entry.package_type}
-                content={draft}
-                onChange={setDraft}
-                disabled={busy}
-              />
+              <div className="version-editor">
+                <ContentEditor
+                  packageType={entry.package_type}
+                  content={draft}
+                  onChange={setDraft}
+                  disabled={busy}
+                />
+              </div>
               <Notice>{t.packages.unsaved}</Notice>
               <div className="row">
                 <button
