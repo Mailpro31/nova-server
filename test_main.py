@@ -443,7 +443,13 @@ class CommandContextTests(unittest.TestCase):
             "Improve", main.vocabulary_context("etu@example.com")
         )
         self.assertNotIn("{text}", prompt)
-        self.assertIn("transformed text", prompt)
+        # La consigne demande bien un resultat, et rien d'autre. Elle disait
+        # « Return only the transformed text » ; cette phrase interdisait aussi
+        # les prefixes que certaines skills demandent, et elle a ete reformulee.
+        # La garantie tenue ici est inchangee : le prompt reclame le resultat,
+        # pas un commentaire, et l'instruction y figure telle quelle.
+        self.assertIn("Return the result and nothing else", prompt)
+        self.assertIn("Instruction: Improve", prompt)
 
     # -- API contract ------------------------------------------------------
     def test_request_contract_is_unchanged(self):
@@ -5878,6 +5884,35 @@ class SeatsTests(AdminTestCase):
         self.assertEqual(body["seats"]["used"],
                          main.seats_in_use(main.nova_organization_id()))
 
+
+
+def test_a_skill_may_ask_for_a_prefix_without_the_server_forbidding_it():
+    """La consigne systeme ne doit pas contredire l'instruction de la skill.
+
+    Elle disait « Return only the transformed text ». Une skill qui demande
+    « commence par [DIFFUSION OK] » se voyait donc contredite par le serveur
+    lui-meme -- et le marqueur n'apparaissait dans AUCUNE sortie sur seize
+    tirages, contre cinq une fois la consigne reformulee.
+
+    Ce qu'il faut interdire n'est pas d'ajouter, mais de commenter : un modele
+    qui explique ce qu'il vient de faire est le vrai bruit.
+    """
+    prompt = main.command_prompt("Commence par [DIFFUSION OK]", "")
+    assert "Return only the transformed text" not in prompt, (
+        "cette phrase interdit ce que certaines instructions demandent")
+    # Ajouter reste permis, commenter reste interdit.
+    assert "including any prefix" in prompt
+    assert "no commentary" in prompt
+
+    # Et « preserver » doit dire ce qu'il recouvre. « Preserve facts and the
+    # original language » etait lu comme « ne change rien » : sur huit tirages,
+    # le modele recopiait le texte mot pour mot cinq fois. Zero fois une fois la
+    # formulation distinguee des faits.
+    assert "Preserve facts and the original language" not in prompt, (
+        "cette formulation est lue comme une interdiction de reecrire")
+    assert "Rewrite the wording as the instruction asks" in prompt
+    # Et l'instruction de la skill est toujours transmise telle quelle.
+    assert "Commence par [DIFFUSION OK]" in prompt
 
 if __name__ == "__main__":
     unittest.main()

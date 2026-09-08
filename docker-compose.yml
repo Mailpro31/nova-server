@@ -1,58 +1,118 @@
+x-nova-environment: &nova-environment
+  # Un seul endroit ou l'environnement du serveur est decrit. Deux services
+  # le partagent : celui qui prepare la base et celui qui sert l'API.
+  #
+  # Ce n'est pas une commodite. `init_db` importe la configuration du
+  # fournisseur d'identite depuis ces variables : une preparation qui ne les
+  # verrait pas creerait une organisation sans aucun fournisseur, et le
+  # serveur n'annoncerait que le code e-mail -- sans que rien ne l'explique.
+    NOVA_DOMAINS: "${NOVA_DOMAINS:?NOVA_DOMAINS must be set explicitly}"
+    NOVA_MAX_SEATS: "${NOVA_MAX_SEATS:-300}"
+    NOVA_MAX_MACHINES: "${NOVA_MAX_MACHINES:-3}"
+    NOVA_REQUIRE_AUTH: "${NOVA_REQUIRE_AUTH:-true}"
+    NOVA_TOKEN_TTL_SECONDS: "${NOVA_TOKEN_TTL_SECONDS:-2592000}"
+    NOVA_ORGANIZATION_ID: "${NOVA_ORGANIZATION_ID:-nova}"
+    NOVA_ORGANIZATION_NAME: "${NOVA_ORGANIZATION_NAME:-Nova}"
+    NOVA_ORGANIZATION_SHORT_NAME: "${NOVA_ORGANIZATION_SHORT_NAME:-}"
+    NOVA_ORGANIZATION_CAMPUS: "${NOVA_ORGANIZATION_CAMPUS:-}"
+    NOVA_EDUCATION_MODE: "${NOVA_EDUCATION_MODE:-normal}"
+    NOVA_AI_SKILLS_REQUIRED: "${NOVA_AI_SKILLS_REQUIRED:-false}"
+    NOVA_AI_SKILLS_TRACK_PROGRESS: "${NOVA_AI_SKILLS_TRACK_PROGRESS:-true}"
+    # --- Ce que `main.py` lit et qu'aucun compose ne transmettait --------------
+    #
+    # Six variables existaient dans le serveur sans qu'aucun fichier de
+    # deploiement ne les passe. Le symptome n'est jamais une erreur : le serveur
+    # demarre, et se comporte comme si l'exploitant n'avait rien demande.
+    #
+    # `NOVA_ORGANIZATION_TYPE` decide entre Campus et Business ; sans elle, une
+    # organisation d'entreprise restait `education`.
+    NOVA_ORGANIZATION_TYPE: "${NOVA_ORGANIZATION_TYPE:-education}"
+    # Sans origine declaree, la console web n'a aucune origine autorisee.
+    NOVA_ADMIN_ORIGINS: "${NOVA_ADMIN_ORIGINS:-}"
+    # L'adresse annoncee aux postes, et le slug par lequel ils trouvent
+    # l'organisation.
+    NOVA_SERVICE_ENDPOINT: "${NOVA_SERVICE_ENDPOINT:-}"
+    NOVA_DISCOVERY_SLUG: "${NOVA_DISCOVERY_SLUG:-}"
+    # `discovery_enabled` vaut 0 par defaut et ne s'ecrit sinon que par une
+    # route qui exige une session d'administration -- laquelle exige que la
+    # console ait resolu l'organisation, donc que la decouverte soit active.
+    # Cette variable est le seul moyen produit de sortir de la boucle, et elle
+    # n'atteignait aucun conteneur.
+    NOVA_DISCOVERY_ENABLED: "${NOVA_DISCOVERY_ENABLED:-}"
+    # Une adresse privee ou en clair n'est acceptable qu'ici, cote serveur :
+    # une valeur venue de la decouverte publique ne peut pas l'activer.
+    NOVA_DISCOVERY_ALLOW_INSECURE_ENDPOINT: "${NOVA_DISCOVERY_ALLOW_INSECURE_ENDPOINT:-}"
+
+    NOVA_ENTRA_TENANT_ID: "${NOVA_ENTRA_TENANT_ID:-organizations}"
+    NOVA_ENTRA_CLIENT_ID: "${NOVA_ENTRA_CLIENT_ID:-}"
+    NOVA_ENTRA_ALLOWED_TENANT_ID: "${NOVA_ENTRA_ALLOWED_TENANT_ID:-}"
+    NOVA_GOOGLE_CLIENT_ID: "${NOVA_GOOGLE_CLIENT_ID:-}"
+    NOVA_GOOGLE_CLIENT_SECRET: "${NOVA_GOOGLE_CLIENT_SECRET:-}"
+    NOVA_GOOGLE_ALLOWED_HOSTED_DOMAIN: "${NOVA_GOOGLE_ALLOWED_HOSTED_DOMAIN:-}"
+    NOVA_OIDC_ISSUER: "${NOVA_OIDC_ISSUER:-}"
+    NOVA_OIDC_CLIENT_ID: "${NOVA_OIDC_CLIENT_ID:-}"
+    NOVA_OIDC_CLIENT_SECRET: "${NOVA_OIDC_CLIENT_SECRET:-}"
+    NOVA_OIDC_CLIENT_AUTH_METHOD: "${NOVA_OIDC_CLIENT_AUTH_METHOD:-none}"
+    NOVA_OIDC_DISPLAY_NAME: "${NOVA_OIDC_DISPLAY_NAME:-}"
+    NOVA_OIDC_ALLOW_PRIVATE_ISSUER: "${NOVA_OIDC_ALLOW_PRIVATE_ISSUER:-false}"
+    NOVA_ENV: "${NOVA_ENV:-development}"
+    NOVA_SMTP_HOST: "${NOVA_SMTP_HOST:-}"
+    NOVA_SMTP_PORT: "${NOVA_SMTP_PORT:-587}"
+    NOVA_SMTP_USER: "${NOVA_SMTP_USER:-}"
+    NOVA_SMTP_PASS: "${NOVA_SMTP_PASS:-}"
+    NOVA_SMTP_FROM: "${NOVA_SMTP_FROM:-nova@example.invalid}"
+    # Runtime IA prive de l'organisation. Les noms de modeles vivent ici, dans
+    # la configuration du deploiement : aucun endpoint produit ne les connait.
+    # Le serveur n'invente plus de modele par defaut — un deploiement qui n'en
+    # declare pas obtient AI_MODEL_NOT_READY, jamais un choix silencieux.
+    NOVA_WHISPER_URL: "http://whisper:8000"
+    NOVA_WHISPER_MODEL: "${NOVA_WHISPER_MODEL:-large-v3-turbo}"
+    NOVA_LLM_URL: "http://llm:8000/v1"
+    NOVA_LLM_MODEL: "${NOVA_LLM_MODEL:-Qwen/Qwen2.5-14B-Instruct}"
+    NOVA_AI_PROFILE: "${NOVA_AI_PROFILE:-standard}"
+    NOVA_AI_REASONING_ALLOWED: "${NOVA_AI_REASONING_ALLOWED:-false}"
+    NOVA_AI_MAX_CONCURRENT_TEXT: "${NOVA_AI_MAX_CONCURRENT_TEXT:-2}"
+    NOVA_AI_MAX_CONCURRENT_SPEECH: "${NOVA_AI_MAX_CONCURRENT_SPEECH:-1}"
+    NOVA_AI_MAX_QUEUE: "${NOVA_AI_MAX_QUEUE:-4}"
+    # Profil `custom` : declare par le deploiement, ou pas du tout. Les deux
+    # premieres valeurs sont exigees ensemble ; sans elles, `custom` n'est pas
+    # proposable dans Nova Admin. Ni URL, ni modele, ni secret ici.
+    NOVA_AI_CUSTOM_MAX_OUTPUT_TOKENS: "${NOVA_AI_CUSTOM_MAX_OUTPUT_TOKENS:-}"
+    NOVA_AI_CUSTOM_TEMPERATURE: "${NOVA_AI_CUSTOM_TEMPERATURE:-}"
+    NOVA_AI_CUSTOM_REASONING: "${NOVA_AI_CUSTOM_REASONING:-auto}"
+
 services:
+  # La preparation de la base, explicite : le schema puis les premieres lignes
+  # de donnees. Le service, lui, ne prepare jamais rien au demarrage -- c'est
+  # l'effet de bord qui a migre deux bases de production, et `serve.py` ne le
+  # fait donc pas.
+  #
+  # Restait qu'ici personne ne le faisait. `docker compose up`, la commande du
+  # README, donnait un serveur qui repondait 500 sur toutes ses routes, sur
+  # `no such table: server_state`, sans que rien ne dise pourquoi.
+  #
+  # `init_db` et non `migrations migrate` : les migrations ne posent que le
+  # schema. L'organisation, la configuration du fournisseur d'identite et le
+  # slug de decouverte sont des donnees, et sans elles le serveur demarre en
+  # n'annoncant que le code e-mail -- une pile entierement configuree pour SSO
+  # repondait ainsi `legacy_email_code` seul.
+  #
+  # Un passage, puis le conteneur sort. `api` attend qu'il ait reussi.
+  prepare:
+    build: .
+    command: ["python", "-c", "import main; main.init_db()"]
+    environment:
+      <<: *nova-environment
+    volumes:
+      - nova-data:/data
+    restart: "no"
+
   api:
     build: .
     ports:
       - "8080:8000"
     environment:
-      NOVA_DOMAINS: "${NOVA_DOMAINS:?NOVA_DOMAINS must be set explicitly}"
-      NOVA_MAX_SEATS: "${NOVA_MAX_SEATS:-300}"
-      NOVA_MAX_MACHINES: "${NOVA_MAX_MACHINES:-3}"
-      NOVA_REQUIRE_AUTH: "${NOVA_REQUIRE_AUTH:-true}"
-      NOVA_TOKEN_TTL_SECONDS: "${NOVA_TOKEN_TTL_SECONDS:-2592000}"
-      NOVA_ORGANIZATION_ID: "${NOVA_ORGANIZATION_ID:-ipsa}"
-      NOVA_ORGANIZATION_NAME: "${NOVA_ORGANIZATION_NAME:-IPSA}"
-      NOVA_ORGANIZATION_SHORT_NAME: "${NOVA_ORGANIZATION_SHORT_NAME:-IPSA}"
-      NOVA_ORGANIZATION_CAMPUS: "${NOVA_ORGANIZATION_CAMPUS:-Paris}"
-      NOVA_EDUCATION_MODE: "${NOVA_EDUCATION_MODE:-normal}"
-      NOVA_AI_SKILLS_REQUIRED: "${NOVA_AI_SKILLS_REQUIRED:-false}"
-      NOVA_AI_SKILLS_TRACK_PROGRESS: "${NOVA_AI_SKILLS_TRACK_PROGRESS:-true}"
-      NOVA_ENTRA_TENANT_ID: "${NOVA_ENTRA_TENANT_ID:-organizations}"
-      NOVA_ENTRA_CLIENT_ID: "${NOVA_ENTRA_CLIENT_ID:-}"
-      NOVA_ENTRA_ALLOWED_TENANT_ID: "${NOVA_ENTRA_ALLOWED_TENANT_ID:-}"
-      NOVA_GOOGLE_CLIENT_ID: "${NOVA_GOOGLE_CLIENT_ID:-}"
-      NOVA_GOOGLE_CLIENT_SECRET: "${NOVA_GOOGLE_CLIENT_SECRET:-}"
-      NOVA_GOOGLE_ALLOWED_HOSTED_DOMAIN: "${NOVA_GOOGLE_ALLOWED_HOSTED_DOMAIN:-}"
-      NOVA_OIDC_ISSUER: "${NOVA_OIDC_ISSUER:-}"
-      NOVA_OIDC_CLIENT_ID: "${NOVA_OIDC_CLIENT_ID:-}"
-      NOVA_OIDC_CLIENT_SECRET: "${NOVA_OIDC_CLIENT_SECRET:-}"
-      NOVA_OIDC_CLIENT_AUTH_METHOD: "${NOVA_OIDC_CLIENT_AUTH_METHOD:-none}"
-      NOVA_OIDC_DISPLAY_NAME: "${NOVA_OIDC_DISPLAY_NAME:-}"
-      NOVA_OIDC_ALLOW_PRIVATE_ISSUER: "${NOVA_OIDC_ALLOW_PRIVATE_ISSUER:-false}"
-      NOVA_ENV: "${NOVA_ENV:-development}"
-      NOVA_SMTP_HOST: "${NOVA_SMTP_HOST:-}"
-      NOVA_SMTP_PORT: "${NOVA_SMTP_PORT:-587}"
-      NOVA_SMTP_USER: "${NOVA_SMTP_USER:-}"
-      NOVA_SMTP_PASS: "${NOVA_SMTP_PASS:-}"
-      NOVA_SMTP_FROM: "${NOVA_SMTP_FROM:-nova@example.invalid}"
-      # Runtime IA prive de l'organisation. Les noms de modeles vivent ici, dans
-      # la configuration du deploiement : aucun endpoint produit ne les connait.
-      # Le serveur n'invente plus de modele par defaut — un deploiement qui n'en
-      # declare pas obtient AI_MODEL_NOT_READY, jamais un choix silencieux.
-      NOVA_WHISPER_URL: "http://whisper:8000"
-      NOVA_WHISPER_MODEL: "${NOVA_WHISPER_MODEL:-large-v3-turbo}"
-      NOVA_LLM_URL: "http://llm:8000/v1"
-      NOVA_LLM_MODEL: "${NOVA_LLM_MODEL:-Qwen/Qwen2.5-14B-Instruct}"
-      NOVA_AI_PROFILE: "${NOVA_AI_PROFILE:-standard}"
-      NOVA_AI_REASONING_ALLOWED: "${NOVA_AI_REASONING_ALLOWED:-false}"
-      NOVA_AI_MAX_CONCURRENT_TEXT: "${NOVA_AI_MAX_CONCURRENT_TEXT:-2}"
-      NOVA_AI_MAX_CONCURRENT_SPEECH: "${NOVA_AI_MAX_CONCURRENT_SPEECH:-1}"
-      NOVA_AI_MAX_QUEUE: "${NOVA_AI_MAX_QUEUE:-4}"
-      # Profil `custom` : declare par le deploiement, ou pas du tout. Les deux
-      # premieres valeurs sont exigees ensemble ; sans elles, `custom` n'est pas
-      # proposable dans Nova Admin. Ni URL, ni modele, ni secret ici.
-      NOVA_AI_CUSTOM_MAX_OUTPUT_TOKENS: "${NOVA_AI_CUSTOM_MAX_OUTPUT_TOKENS:-}"
-      NOVA_AI_CUSTOM_TEMPERATURE: "${NOVA_AI_CUSTOM_TEMPERATURE:-}"
-      NOVA_AI_CUSTOM_REASONING: "${NOVA_AI_CUSTOM_REASONING:-auto}"
+      <<: *nova-environment
       # Canal de controle local. `unix` en production : les permissions du
       # socket font l'authentification, et il n'y a aucun secret partage a
       # gerer, faire tourner ou oublier dans un fichier de deploiement.
@@ -63,7 +123,13 @@ services:
       - nova-data:/data
       # Le seul chemin partage entre les deux services, et rien d'autre.
       - nova-run:/run/nova
-    depends_on: [whisper, llm]
+    depends_on:
+      prepare:
+        condition: service_completed_successfully
+      whisper:
+        condition: service_started
+      llm:
+        condition: service_started
 
   # Le pont vers le plan de controle Nova. Processus separe : une boucle
   # reseau qui tourne indefiniment n'a pas sa place dans un serveur d'API.

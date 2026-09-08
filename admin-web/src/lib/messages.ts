@@ -666,7 +666,7 @@ export const t = {
     publish: "Publish",
     publishTitle: "Publish this version?",
     publishBody: (version: number) =>
-      `Version ${version} will be distributed to members of this organization. Published versions can never be edited — to change the content, create a new draft.`,
+      `Version ${version} becomes the active version and is distributed to members of this organization. Publishing and activating are two states: an earlier version stays published but inactive, and can be made active again to roll back. Published versions can never be edited — to change the content, create a new draft.`,
     activate: "Make active",
     activateTitle: "Change the active version?",
     activateBody: (version: number) =>

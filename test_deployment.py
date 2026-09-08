@@ -96,6 +96,109 @@ def test_the_production_compose_carries_the_password_placeholder_the_server_expe
         "sans le fichier designe, le marqueur reste et la connexion echoue")
 
 
+def test_a_fresh_stack_applies_its_schema_without_being_asked():
+    """`docker compose up` doit donner un serveur qui repond.
+
+    Le schema s'applique explicitement, jamais au demarrage du service : c'est
+    l'effet de bord qui a migre deux bases de production, et `serve.py` ne le
+    fait donc pas. Mais personne d'autre ne le faisait ici. La commande du
+    README donnait un serveur qui repondait 500 sur toutes ses routes --
+
+        database.OperationalError: no such table: server_state
+
+    -- sans qu'aucun conteneur n'echoue ni qu'aucun journal ne dise quoi faire.
+    """
+    root = Path(__file__).resolve().parent
+    compose = (root / "docker-compose.yml").read_text(encoding="utf-8")
+
+    # `init_db` et non `migrations migrate` : les migrations ne posent que le
+    # schema. L'organisation, la configuration du fournisseur d'identite et le
+    # slug de decouverte sont des donnees -- sans elles une pile entierement
+    # configuree pour SSO repondait `legacy_email_code` seul.
+    assert "main.init_db()" in compose, (
+        "la preparation doit poser le schema ET les premieres donnees")
+    assert "service_completed_successfully" in compose, (
+        "l'API doit attendre la fin de la preparation, pas son demarrage")
+    # Et le service, lui, ne migre toujours pas tout seul.
+    serveur = (root / "serve.py").read_text(encoding="utf-8")
+    assert "init_db" not in serveur and "migrations" not in serveur, (
+        "un service qui migre au demarrage est ce qui a migre deux bases de "
+        "production")
+
+
+def test_no_real_organization_is_shipped_as_a_default():
+    """Aucun defaut ne nomme une organisation reelle.
+
+    Le nom, le nom court et le campus sont annonces au poste par `/api/config`
+    et affiches tels quels. Un defaut qui nomme une organisation reelle
+    s'installe donc chez tous ceux qui ne l'ont pas remplace, et rien ne le
+    signale -- le serveur demarre parfaitement.
+
+    Le cas s'est produit sur une installation `orgatest1`, qui affichait
+    « Paris » : le correctif precedent avait retire les defauts du code, mais
+    ils survivaient dans le compose et dans le fichier d'exemple.
+    """
+    root = Path(__file__).resolve().parent
+    herites = ("ipsa", "IPSA", "Paris")
+    for nom in ("docker-compose.yml", ".env.example", "docker-compose.production.yml"):
+        texte = (root / nom).read_text(encoding="utf-8")
+        for interdit in herites:
+            assert interdit not in texte, f"{nom} livre encore « {interdit} »"
+
+    # Et le compose ne doit pas rendre un reglage ineffacable : `:-` traite une
+    # valeur vide comme absente, donc un defaut non vide ne peut pas etre
+    # efface en vidant la variable.
+    compose = (root / "docker-compose.yml").read_text(encoding="utf-8")
+    for variable in ("NOVA_ORGANIZATION_SHORT_NAME", "NOVA_ORGANIZATION_CAMPUS"):
+        assert f'"${{{variable}:-}}"' in compose, (
+            f"{variable} doit pouvoir etre efface en vidant la variable")
+
+
+def test_every_setting_the_server_reads_can_reach_it():
+    """Un reglage que le serveur lit doit pouvoir lui parvenir.
+
+    Six variables existaient dans `main.py` sans qu'aucun fichier de
+    deploiement ne les transmette. Le symptome n'est jamais une erreur : le
+    serveur demarre et se comporte comme si l'exploitant n'avait rien demande.
+
+    Une organisation d'entreprise restait `education`. La console web n'avait
+    aucune origine autorisee. Et `NOVA_DISCOVERY_ENABLED` -- ecrite pour etre
+    le seul chemin produit hors du blocage circulaire de la decouverte --
+    n'atteignait aucun conteneur : l'echappatoire existait, la porte n'etait
+    pas percee.
+    """
+    root = Path(__file__).resolve().parent
+    compose = (root / "docker-compose.yml").read_text(encoding="utf-8")
+    production = (root / "docker-compose.production.yml").read_text(encoding="utf-8")
+
+    # Les reglages d'exploitation, par opposition aux secrets et aux valeurs
+    # propres a une machine : ceux qu'un deploiement declare et que le serveur
+    # doit voir.
+    attendus = (
+        "NOVA_ORGANIZATION_TYPE",
+        "NOVA_ADMIN_ORIGINS",
+        "NOVA_SERVICE_ENDPOINT",
+        "NOVA_DISCOVERY_SLUG",
+        "NOVA_DISCOVERY_ENABLED",
+        "NOVA_DISCOVERY_ALLOW_INSECURE_ENDPOINT",
+    )
+    for variable in attendus:
+        assert f"getenv(\"{variable}\"" in (root / "main.py").read_text(encoding="utf-8"), (
+            f"{variable} n'est plus lue par le serveur : ce test a vieilli")
+        assert variable in compose, f"{variable} n'atteint aucun conteneur"
+
+    # La preparation de la base lit la configuration du fournisseur d'identite :
+    # elle doit voir le meme environnement que l'API, sinon elle creerait une
+    # organisation sans aucun fournisseur -- et l'import ne se fait qu'une fois.
+    assert compose.count("<<: *nova-environment") >= 2, (
+        "`prepare` et `api` doivent partager la meme definition")
+
+    # Le compose de production declare les siennes en dur, pas par ancre.
+    for variable in ("NOVA_SERVICE_ENDPOINT", "NOVA_ADMIN_ORIGINS",
+                     "NOVA_ORGANIZATION_TYPE"):
+        assert variable in production, f"{variable} manque au compose de production"
+
+
 def test_an_empty_domain_list_says_so_at_startup():
     """Le defaut herite a disparu ; le silence qu'il laisse ne doit pas rester.
 

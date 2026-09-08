@@ -117,8 +117,12 @@ TOKEN_TTL_SECONDS = int(os.getenv("NOVA_TOKEN_TTL_SECONDS", str(30 * 24 * 3600))
 
 # Configuration publique Campus. Les valeurs restent sobres et génériques par
 # défaut ; un établissement peut les remplacer sans modifier le client.
-ORGANIZATION_ID = os.getenv("NOVA_ORGANIZATION_ID", "ipsa")
-ORGANIZATION_NAME = os.getenv("NOVA_ORGANIZATION_NAME", "IPSA")
+# Ces deux-la nomment l'organisation partout : dans la console, sur le poste,
+# dans le slug de decouverte. Un defaut qui nomme une organisation reelle
+# s'installe donc chez tous ceux qui ne l'ont pas remplace -- et rien ne le
+# signale, puisque le serveur demarre parfaitement.
+ORGANIZATION_ID = os.getenv("NOVA_ORGANIZATION_ID", "nova")
+ORGANIZATION_NAME = os.getenv("NOVA_ORGANIZATION_NAME", "Nova")
 # Ces deux-la sont annonces au poste par `/api/config`, et le poste les affiche
 # tels quels. Un defaut qui nomme une organisation reelle -- « IPSA », « Paris »
 # -- s'affichait donc chez tous les utilisateurs d'une organisation qui porte un
@@ -9104,9 +9108,27 @@ def command_prompt(instruction: str, vocabulary: str) -> str:
       "always sign with your full name" onto an explanation would corrupt it.
       To be revisited once the Skill type is part of the request.
     """
+    # « Return only the transformed text » interdisait ce que certaines
+    # instructions demandent explicitement. Une skill qui dit « commence par
+    # [DIFFUSION OK] » se voyait contredite par le serveur lui-meme : mesure sur
+    # ce deploiement, huit tirages par configuration, le marqueur demande
+    # n'apparaissait dans AUCUNE sortie -- et dans cinq sur seize une fois la
+    # consigne reformulee.
+    #
+    # Ce qu'il fallait interdire n'etait pas d'ajouter, mais de commenter : le
+    # modele qui explique ce qu'il vient de faire est le vrai bruit.
+    #
+    # « Preserve facts and the original language » etait lu comme « ne change
+    # rien » : sur huit tirages, le modele recopiait le texte mot pour mot cinq
+    # fois, alors que l'instruction lui demandait de le reecrire. Zero fois une
+    # fois dit ce que « preserver » recouvre -- les faits et la langue, pas la
+    # formulation, que l'instruction est justement la pour changer.
     prompt = (
-        "Execute the user's editing instruction. Return only the transformed text. "
-        "Preserve facts and the original language.\n\nInstruction: " + instruction
+        "Execute the user's editing instruction exactly, including any prefix, "
+        "marker or wrapper it asks for. Return the result and nothing else: no "
+        "commentary, no explanation of what you did. "
+        "Rewrite the wording as the instruction asks; keep the facts and the "
+        "original language unchanged.\n\nInstruction: " + instruction
     )
     if vocabulary:
         prompt += (
