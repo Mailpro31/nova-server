@@ -117,8 +117,12 @@ TOKEN_TTL_SECONDS = int(os.getenv("NOVA_TOKEN_TTL_SECONDS", str(30 * 24 * 3600))
 
 # Configuration publique Campus. Les valeurs restent sobres et génériques par
 # défaut ; un établissement peut les remplacer sans modifier le client.
-ORGANIZATION_ID = os.getenv("NOVA_ORGANIZATION_ID", "ipsa")
-ORGANIZATION_NAME = os.getenv("NOVA_ORGANIZATION_NAME", "IPSA")
+# Ces deux-la nomment l'organisation partout : dans la console, sur le poste,
+# dans le slug de decouverte. Un defaut qui nomme une organisation reelle
+# s'installe donc chez tous ceux qui ne l'ont pas remplace -- et rien ne le
+# signale, puisque le serveur demarre parfaitement.
+ORGANIZATION_ID = os.getenv("NOVA_ORGANIZATION_ID", "nova")
+ORGANIZATION_NAME = os.getenv("NOVA_ORGANIZATION_NAME", "Nova")
 # Ces deux-la sont annonces au poste par `/api/config`, et le poste les affiche
 # tels quels. Un defaut qui nomme une organisation reelle -- « IPSA », « Paris »
 # -- s'affichait donc chez tous les utilisateurs d'une organisation qui porte un

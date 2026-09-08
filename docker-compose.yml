@@ -1,4 +1,18 @@
 services:
+  # Le schema s'applique explicitement, jamais au demarrage du service : c'est
+  # l'effet de bord qui a migre deux bases de production, et `serve.py` ne le
+  # fait donc pas. Restait qu'ici personne ne le faisait -- `docker compose up`,
+  # la commande du README, donnait un serveur qui repondait 500 sur toutes ses
+  # routes, sur `no such table: server_state`, sans que rien ne dise pourquoi.
+  #
+  # Un passage, puis le conteneur sort. `api` attend qu'il ait reussi.
+  migrate:
+    build: .
+    command: ["python", "-m", "migrations", "migrate"]
+    volumes:
+      - nova-data:/data
+    restart: "no"
+
   api:
     build: .
     ports:
@@ -9,10 +23,10 @@ services:
       NOVA_MAX_MACHINES: "${NOVA_MAX_MACHINES:-3}"
       NOVA_REQUIRE_AUTH: "${NOVA_REQUIRE_AUTH:-true}"
       NOVA_TOKEN_TTL_SECONDS: "${NOVA_TOKEN_TTL_SECONDS:-2592000}"
-      NOVA_ORGANIZATION_ID: "${NOVA_ORGANIZATION_ID:-ipsa}"
-      NOVA_ORGANIZATION_NAME: "${NOVA_ORGANIZATION_NAME:-IPSA}"
-      NOVA_ORGANIZATION_SHORT_NAME: "${NOVA_ORGANIZATION_SHORT_NAME:-IPSA}"
-      NOVA_ORGANIZATION_CAMPUS: "${NOVA_ORGANIZATION_CAMPUS:-Paris}"
+      NOVA_ORGANIZATION_ID: "${NOVA_ORGANIZATION_ID:-nova}"
+      NOVA_ORGANIZATION_NAME: "${NOVA_ORGANIZATION_NAME:-Nova}"
+      NOVA_ORGANIZATION_SHORT_NAME: "${NOVA_ORGANIZATION_SHORT_NAME:-}"
+      NOVA_ORGANIZATION_CAMPUS: "${NOVA_ORGANIZATION_CAMPUS:-}"
       NOVA_EDUCATION_MODE: "${NOVA_EDUCATION_MODE:-normal}"
       NOVA_AI_SKILLS_REQUIRED: "${NOVA_AI_SKILLS_REQUIRED:-false}"
       NOVA_AI_SKILLS_TRACK_PROGRESS: "${NOVA_AI_SKILLS_TRACK_PROGRESS:-true}"
@@ -63,7 +77,13 @@ services:
       - nova-data:/data
       # Le seul chemin partage entre les deux services, et rien d'autre.
       - nova-run:/run/nova
-    depends_on: [whisper, llm]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      whisper:
+        condition: service_started
+      llm:
+        condition: service_started
 
   # Le pont vers le plan de controle Nova. Processus separe : une boucle
   # reseau qui tourne indefiniment n'a pas sa place dans un serveur d'API.

@@ -96,6 +96,60 @@ def test_the_production_compose_carries_the_password_placeholder_the_server_expe
         "sans le fichier designe, le marqueur reste et la connexion echoue")
 
 
+def test_a_fresh_stack_applies_its_schema_without_being_asked():
+    """`docker compose up` doit donner un serveur qui repond.
+
+    Le schema s'applique explicitement, jamais au demarrage du service : c'est
+    l'effet de bord qui a migre deux bases de production, et `serve.py` ne le
+    fait donc pas. Mais personne d'autre ne le faisait ici. La commande du
+    README donnait un serveur qui repondait 500 sur toutes ses routes --
+
+        database.OperationalError: no such table: server_state
+
+    -- sans qu'aucun conteneur n'echoue ni qu'aucun journal ne dise quoi faire.
+    """
+    root = Path(__file__).resolve().parent
+    compose = (root / "docker-compose.yml").read_text(encoding="utf-8")
+
+    assert "python\", \"-m\", \"migrations\", \"migrate" in compose.replace("'", '"'), (
+        "aucun service n'applique le schema")
+    assert "service_completed_successfully" in compose, (
+        "l'API doit attendre la fin de la migration, pas son demarrage")
+    # Et le service, lui, ne migre toujours pas tout seul.
+    serveur = (root / "serve.py").read_text(encoding="utf-8")
+    assert "init_db" not in serveur and "migrations" not in serveur, (
+        "un service qui migre au demarrage est ce qui a migre deux bases de "
+        "production")
+
+
+def test_no_real_organization_is_shipped_as_a_default():
+    """Aucun defaut ne nomme une organisation reelle.
+
+    Le nom, le nom court et le campus sont annonces au poste par `/api/config`
+    et affiches tels quels. Un defaut qui nomme une organisation reelle
+    s'installe donc chez tous ceux qui ne l'ont pas remplace, et rien ne le
+    signale -- le serveur demarre parfaitement.
+
+    Le cas s'est produit sur une installation `orgatest1`, qui affichait
+    « Paris » : le correctif precedent avait retire les defauts du code, mais
+    ils survivaient dans le compose et dans le fichier d'exemple.
+    """
+    root = Path(__file__).resolve().parent
+    herites = ("ipsa", "IPSA", "Paris")
+    for nom in ("docker-compose.yml", ".env.example", "docker-compose.production.yml"):
+        texte = (root / nom).read_text(encoding="utf-8")
+        for interdit in herites:
+            assert interdit not in texte, f"{nom} livre encore « {interdit} »"
+
+    # Et le compose ne doit pas rendre un reglage ineffacable : `:-` traite une
+    # valeur vide comme absente, donc un defaut non vide ne peut pas etre
+    # efface en vidant la variable.
+    compose = (root / "docker-compose.yml").read_text(encoding="utf-8")
+    for variable in ("NOVA_ORGANIZATION_SHORT_NAME", "NOVA_ORGANIZATION_CAMPUS"):
+        assert f'"${{{variable}:-}}"' in compose, (
+            f"{variable} doit pouvoir etre efface en vidant la variable")
+
+
 def test_an_empty_domain_list_says_so_at_startup():
     """Le defaut herite a disparu ; le silence qu'il laisse ne doit pas rester.
 
