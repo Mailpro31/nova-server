@@ -5886,6 +5886,41 @@ class SeatsTests(AdminTestCase):
 
 
 
+def test_published_vocabulary_reaches_every_consumer():
+    """Un vocabulaire publie doit arriver partout, pas seulement a la dictee.
+
+    Trois consommateurs lisent le vocabulaire de l'organisation :
+    `writing_context` pour la dictee, `vocabulary_context` pour les AI Skills,
+    et `/api/vocabulary` pour l'ecran Dictionnaire du poste. Seul le premier
+    fusionnait les packages ; les deux autres ne lisaient que la table
+    historique `shared_dictionary`.
+
+    Un administrateur publiait donc du vocabulaire depuis Nova Admin, le voyait
+    actif dans la console, et le poste affichait « Aucun terme partage par
+    l'etablissement ». Aucune erreur nulle part.
+    """
+    source = (Path(__file__).resolve().parent / "main.py").read_text(encoding="utf-8")
+    # La route et le contexte des skills passent par la fusion, pas par la table.
+    contexte = source[source.index("def vocabulary_context"):]
+    contexte = contexte[:contexte.index(chr(10) + "def ")]
+    assert "organization_shared_terms" in contexte, (
+        "les AI Skills ignoreraient un vocabulaire publie")
+    assert "FROM shared_dictionary" not in contexte, (
+        "lire la table seule laisse tomber les packages")
+
+    route = source[source.index('@app.get("/api/vocabulary"'):]
+    route = route[:route.index(chr(10) + "@app.")]
+    assert "organization_shared_terms" in route, (
+        "l'ecran Dictionnaire afficherait un vocabulaire vide")
+    assert "FROM shared_dictionary" not in route
+
+    # Et la fusion donne bien le package par-dessus l'heritage : c'est lui que
+    # l'organisation vient d'ecrire.
+    fusion = source[source.index("def organization_shared_terms"):]
+    fusion = fusion[:fusion.index(chr(10) + "def ")]
+    assert fusion.index("legacy_shared_vocabulary") < fusion.index("organization_vocabulary("), (
+        "l'heritage doit etre pose en premier pour que le package l'ecrase")
+
 def test_a_skill_may_ask_for_a_prefix_without_the_server_forbidding_it():
     """La consigne systeme ne doit pas contredire l'instruction de la skill.
 
