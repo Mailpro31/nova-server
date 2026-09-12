@@ -155,6 +155,23 @@ Codes d'erreur, tous stables et sûrs à journaliser :
 `DEPLOYMENT_CONFIG_MALFORMED`, `…_SCHEMA_UNSUPPORTED`, `…_FIELD_MISSING`,
 `…_VALUE_INVALID`, `…_FIELD_UNKNOWN`, `…_ORIGIN_NOT_PINNED`, `…_UNREADABLE`.
 
+### Repli Personal (`PersonalFallback`)
+
+La stratégie machine porte aussi une valeur qui n'appartient pas au contrat de
+déploiement : `PersonalFallback` (`DWORD`). À `0`, un poste Organization sans
+session — révoquée, expirée ou fermée — exige une nouvelle connexion avant toute
+dictée ; absente ou à `1`, il continue en Personal, avec la dictée locale.
+
+Elle vit **uniquement** dans le registre, lue indépendamment de `Managed`, et
+jamais dans `organization.json` : ce schéma est en `deny_unknown_fields`, et un
+champ nouveau y rendrait le fichier invalide pour tous les postes déjà
+déployés. Un poste plus ancien ignore, lui, une valeur de registre qu'il ne
+connaît pas.
+
+Le refus est appliqué par le poste lui-même, pas seulement par l'écran : sans
+session et avec le repli interdit, le moteur n'ouvre plus aucun enregistrement,
+puisque les raccourcis globaux restent actifs derrière l'écran de connexion.
+
 ---
 
 ## 6. Origine du Control Plane
