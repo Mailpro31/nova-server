@@ -2990,9 +2990,14 @@ def current_user(authorization: str = Header(default="")) -> str:
         # Le jeton porte son identité et son organisation : il mène directement
         # au compte, sans passer par une recherche d'adresse qui, en
         # multi-tenant, pourrait tomber sur l'homonyme d'un autre tenant.
+        #
+        # Un jeton désactivé est lu lui aussi, sans jamais être accepté :
+        # suspendre un compte coupe ses jetons, et le poste doit apprendre la
+        # suspension (403) plutôt qu'une session expirée (401), qui l'inviterait
+        # à se reconnecter alors qu'il ne le peut pas.
         session = conn.execute(
-            "SELECT email, user_id, organization_id, expires_at FROM tokens "
-            "WHERE token_hash=? AND active=1", (token_hash,)
+            "SELECT email, user_id, organization_id, expires_at, active FROM tokens "
+            "WHERE token_hash=?", (token_hash,)
         ).fetchone()
         if not session:
             raise HTTPException(401, "Token invalide ou révoqué")
@@ -3006,6 +3011,8 @@ def current_user(authorization: str = Header(default="")) -> str:
     if account is not None:
         if account["disabled"] or (account["status"] or "active") != "active":
             raise HTTPException(403, "Compte suspendu — contactez votre administrateur")
+    if not session["active"]:
+        raise HTTPException(401, "Token invalide ou révoqué")
     if session["expires_at"] and session["expires_at"] < time.time():
         with db() as conn:
             conn.execute("UPDATE tokens SET active=0 WHERE token_hash=?", (token_hash,))
