@@ -155,6 +155,16 @@ standard ne peut pas l'écrire.
 | `UpdatePolicy` | `SZ` | `manual`, `notify` ou `automatic` |
 | `ConfigRevision` | `DWORD` | révision |
 | `Autostart` | `DWORD` | démarrage à l'ouverture de session |
+| `PersonalFallback` | `DWORD` | `0` : un poste sans session exige une nouvelle connexion avant toute dictée ; `1` ou absent : Nova continue en Personal |
+
+`PersonalFallback` est lue **indépendamment de `Managed`** : elle peut être posée
+seule, y compris sur un poste configuré par `organization.json`. Elle ne
+concerne que l'absence de session — révoquée, expirée ou fermée. Un membre
+suspendu par l'administrateur, ou un poste simplement hors ligne, n'est pas
+concerné. Les versions de Nova qui ne connaissent pas cette valeur l'ignorent.
+
+Ne l'ajoutez **pas** à `organization.json` : ce fichier refuse tout champ
+inconnu, et le poste se déclarerait alors non géré.
 
 Priorité : **registre > `ProgramData` > défauts du package > `campus-config.json`
 (hérité)**. Une stratégie invalide **fait échouer** la résolution ; elle ne se
