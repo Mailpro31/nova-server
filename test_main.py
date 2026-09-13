@@ -5663,6 +5663,60 @@ class MemberManagementTests(AdminTestCase):
         self.assertEqual(active, 0)
         self.assertEqual(main.account_status(account), "active")
 
+    def device_of(self, email: str) -> tuple[str, str]:
+        """Un membre connecte sur son poste : son `user_id` et le jeton du poste."""
+        device = self.sign_in(email, machine=f"poste-{email}")
+        with main.db() as conn:
+            user_id = main.user_by_email(conn, self.organization(), email)["user_id"]
+        return user_id, device
+
+    def test_a_suspended_member_s_device_learns_it_is_suspended(self):
+        """Le poste d'un membre suspendu doit l'apprendre, pas se croire deconnecte.
+
+        Suspendre coupe les jetons, et `/api/me` repondait alors 401 — la
+        reponse d'une session expiree. Le poste effacait sa session et
+        annoncait « reconnectez-vous » a quelqu'un qui ne le peut pas. Le jeton
+        reste refuse ; seule la raison donnee change.
+        """
+        admin = self.admin_session()
+        target, device = self.device_of("suspendu-poste@example.com")
+        self.assertEqual(
+            self.client.get("/api/me", headers=self.auth(device)).status_code, 200)
+
+        self.client.post(self.members(f"/{target}/status"), headers=self.auth(admin),
+                         json={"status": "disabled"})
+
+        refused = self.client.get("/api/me", headers=self.auth(device))
+        self.assertEqual(refused.status_code, 403, refused.text)
+        self.assertIn("suspendu", refused.json()["detail"].lower())
+        with main.db() as conn:
+            active = conn.execute(
+                "SELECT COUNT(*) c FROM tokens WHERE user_id=? AND active=1",
+                (target,)).fetchone()["c"]
+        # La suspension coupe toujours les jetons : rien n'est rendu au poste.
+        self.assertEqual(active, 0)
+
+    def test_after_reactivation_the_old_device_session_is_expired_not_suspended(self):
+        """Reactive, le membre se reconnecte : son ancien jeton dit 401, pas 403."""
+        admin = self.admin_session()
+        target, device = self.device_of("revenu-poste@example.com")
+        for status in ("disabled", "active"):
+            self.client.post(self.members(f"/{target}/status"),
+                             headers=self.auth(admin), json={"status": status})
+
+        self.assertEqual(
+            self.client.get("/api/me", headers=self.auth(device)).status_code, 401)
+
+    def test_signing_an_active_member_out_everywhere_still_reads_as_signed_out(self):
+        """Deconnecter partout n'est pas suspendre : le poste doit se reconnecter."""
+        admin = self.admin_session()
+        target, device = self.device_of("partout@example.com")
+        self.client.post(self.members(f"/{target}/sessions/revoke"),
+                         headers=self.auth(admin))
+
+        self.assertEqual(
+            self.client.get("/api/me", headers=self.auth(device)).status_code, 401)
+
     def test_an_unknown_status_is_refused(self):
         token = self.admin_session()
         target = self.member("statut@example.com")
