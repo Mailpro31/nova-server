@@ -23,6 +23,9 @@ tools/organization-lab/dist/
 # Divers
 .DS_Store
 
+# Graphe de code genere localement par Graphify : jamais commite
+graphify-out/
+
 # Dependances locales des suites de test (adresses, mots de passe de test)
 nova-test.env
 
