@@ -1,0 +1,37 @@
+name: tests
+
+# La suite de tests du serveur, sur chaque PR et chaque push sur master.
+#
+# Python 3.12 : la version de l'image de production (Dockerfile). Les tests qui
+# demandent un service externe (PostgreSQL, variables NOVA_TEST_*) se sautent
+# d'eux-memes quand il manque ; ce workflow ne leur fournit rien.
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Installer les dependances
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pytest
+      - name: Lancer la suite
+        run: python -m pytest -q -p no:cacheprovider
