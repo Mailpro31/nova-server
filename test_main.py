@@ -203,6 +203,72 @@ class NovaServerTests(unittest.TestCase):
             {"enabled": True, "required": False, "trackProgress": True},
         )
 
+    def test_auth_methods_announce_a_usable_oidc_provider(self):
+        """`auth_methods` annonce l'OIDC quand `/api/auth/providers` le propose.
+
+        Mesure sur le serveur IPSA : `/api/health` et `/api/config` ne disaient
+        que `email_code`, pendant que `/api/auth/providers` proposait le
+        fournisseur OIDC « IPSA ». Deux routes publiques, deux reponses.
+        """
+        organization_id = main.nova_organization_id()
+        with main.db() as conn:
+            saved = [
+                dict(row)
+                for row in conn.execute(
+                    "SELECT * FROM organization_provider_configs "
+                    "WHERE organization_id=? AND provider_type='oidc'",
+                    (organization_id,),
+                ).fetchall()
+            ]
+            conn.execute(
+                "DELETE FROM organization_provider_configs "
+                "WHERE organization_id=? AND provider_type='oidc'",
+                (organization_id,),
+            )
+
+        def announced(route):
+            return self.client.get(route).json()["auth_methods"]
+
+        try:
+            for route in ("/api/health", "/api/config"):
+                self.assertNotIn("oidc", announced(route))
+
+            config_id = ensure_provider_config(
+                "oidc", display_name="IPSA", enabled=0,
+                oidc_issuer="https://idp.example.com",
+                oidc_client_id="nova-desktop", oidc_client_auth_method="none",
+            )
+            # Desactivee : `/api/auth/providers` ne la propose pas, donc rien.
+            for route in ("/api/health", "/api/config"):
+                self.assertNotIn("oidc", announced(route))
+
+            with main.db() as conn:
+                conn.execute(
+                    "UPDATE organization_provider_configs SET enabled=1 WHERE id=?",
+                    (config_id,),
+                )
+            self.assertIn("oidc", self.client.get("/api/auth/providers").json()["providers"])
+            for route in ("/api/health", "/api/config"):
+                methods = announced(route)
+                self.assertIn("oidc", methods)
+                # Le code par adresse reste le chemin de repli.
+                self.assertIn("email_code", methods)
+        finally:
+            with main.db() as conn:
+                conn.execute(
+                    "DELETE FROM organization_provider_configs "
+                    "WHERE organization_id=? AND provider_type='oidc'",
+                    (organization_id,),
+                )
+                for row in saved:
+                    names = ",".join(row)
+                    placeholders = ",".join("?" for _ in row)
+                    conn.execute(
+                        f"INSERT INTO organization_provider_configs({names}) "
+                        f"VALUES ({placeholders})",
+                        tuple(row.values()),
+                    )
+
     def test_auth_writing_preferences_ai_skills_and_logout(self):
         headers = self.sign_in()
         self.assertEqual(self.client.get("/api/me", headers=headers).status_code, 200)

@@ -3838,6 +3838,14 @@ def public_campus_config(organization_id: str | None = None) -> dict:
     if ENTRA_CLIENT_ID:
         auth_methods.append("entra")
     resolved_organization_id = organization_id or nova_organization_id()
+    # Meme source que `/api/auth/providers` : une configuration OIDC activee et
+    # valide. Sans cela, `/api/health` et `/api/config` annoncaient seulement
+    # `email_code` pendant que `/api/auth/providers` proposait l'OIDC.
+    if any(
+        config["provider_type"] == "oidc"
+        for config in provider_configs_for_organization(resolved_organization_id)
+    ):
+        auth_methods.append("oidc")
     policy = organization_policy(resolved_organization_id)
     config = {
         # Identifiant Nova immuable de l'organisation. Distinct du slug lisible
