@@ -25,11 +25,19 @@ n'importe quoi au modele en se reclamant d'un exercice.
 from __future__ import annotations
 
 import json
+import re
 import threading
 from pathlib import Path
 from typing import Any
 
-CATALOG_PATH = Path(__file__).resolve().parent / "catalog.json"
+CATALOG_DIR = Path(__file__).resolve().parent
+CATALOG_PATH = CATALOG_DIR / "catalog.json"
+
+# La langue du catalogue de reference. Une traduction vit a cote de lui sous le
+# nom `catalog.<langue>.json` et garde exactement le meme squelette : la
+# progression est enregistree par identifiant, pas par langue.
+DEFAULT_LOCALE = "en"
+_LANGUAGE = re.compile(r"^[a-z]{2,3}$")
 
 # Les trois piliers. Leurs noms internes restent stables en anglais ; ce que
 # l'interface affiche vient du catalogue, et pourra venir d'une traduction.
@@ -351,36 +359,65 @@ def validate_catalog(catalog: Any) -> dict:
     return catalog
 
 
-_CACHE: dict | None = None
+_CACHE: dict[str, dict] = {}
 _CACHE_LOCK = threading.Lock()
 
 
-def load_catalog(path: Path | None = None) -> dict:
-    """Catalogue valide, lu une fois puis garde en memoire.
+def catalog_language(locale: str | None) -> str:
+    """La langue demandee, reduite a sa forme de base (`fr-FR` -> `fr`).
+
+    Ce qui n'a pas la forme d'un code de langue retombe sur l'anglais : la
+    valeur vient du poste et finit dans un nom de fichier.
+    """
+    base = str(locale or "").strip().replace("_", "-").split("-")[0].lower()
+    return base if _LANGUAGE.match(base) else DEFAULT_LOCALE
+
+
+def available_locales() -> list[str]:
+    """Les traductions livrees a cote du catalogue anglais."""
+    found = []
+    for candidate in CATALOG_DIR.glob("catalog.*.json"):
+        language = candidate.name.split(".")[1]
+        if _LANGUAGE.match(language) and language != DEFAULT_LOCALE:
+            found.append(language)
+    return sorted(found)
+
+
+def load_catalog(path: Path | None = None, locale: str | None = None) -> dict:
+    """Catalogue valide, lu une fois par langue puis garde en memoire.
 
     Le fichier est livre avec le serveur et ne change pas en cours
     d'execution ; le relire a chaque requete n'aurait servi qu'a multiplier les
-    occasions d'echouer.
+    occasions d'echouer. Une langue sans traduction recoit le catalogue
+    anglais plutot qu'une erreur : Learn reste lisible, et le poste signale la
+    langue du contenu.
     """
-    global _CACHE
     if path is not None:
         with path.open(encoding="utf-8") as handle:
             return validate_catalog(json.load(handle))
+    language = catalog_language(locale)
+    source = CATALOG_DIR / f"catalog.{language}.json"
+    if language == DEFAULT_LOCALE or not source.is_file():
+        language, source = DEFAULT_LOCALE, CATALOG_PATH
     with _CACHE_LOCK:
-        if _CACHE is None:
-            with CATALOG_PATH.open(encoding="utf-8") as handle:
-                _CACHE = validate_catalog(json.load(handle))
-        return _CACHE
+        if language not in _CACHE:
+            with source.open(encoding="utf-8") as handle:
+                catalog = validate_catalog(json.load(handle))
+            _require(
+                catalog["locale"] == language,
+                f"catalogue `{source.name}`: `locale` devrait valoir `{language}`",
+            )
+            _CACHE[language] = catalog
+        return _CACHE[language]
 
 
 def reset_cache() -> None:
     """Vide le cache. Reserve aux tests."""
-    global _CACHE
     with _CACHE_LOCK:
-        _CACHE = None
+        _CACHE.clear()
 
 
-def public_catalog(catalog: dict | None = None) -> dict:
+def public_catalog(catalog: dict | None = None, locale: str | None = None) -> dict:
     """Le catalogue tel qu'un poste a le droit de le voir.
 
     `exercises` en est retire : ce bloc ne contient que des instructions
@@ -388,7 +425,7 @@ def public_catalog(catalog: dict | None = None) -> dict:
     reecrire, ce que `/api/learning/exercises/{id}/feedback` refuse justement
     de faire.
     """
-    source = catalog if catalog is not None else load_catalog()
+    source = catalog if catalog is not None else load_catalog(locale=locale)
     return {key: value for key, value in source.items() if key != "exercises"}
 
 

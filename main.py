@@ -9836,13 +9836,15 @@ def learning_progress_view(row) -> dict:
 
 @app.get("/api/learning/catalog",
          dependencies=[Depends(product_capability("learning", "learning"))])
-def learning_catalog(user: str = Depends(current_user)):
+def learning_catalog(locale: str | None = None, user: str = Depends(current_user)):
     """Le catalogue, sans les instructions destinees au modele.
 
     Statique et identique pour tout le monde : aucun appel d'inference n'a lieu
-    ici. Ouvrir Learn ne doit rien couter au moteur.
+    ici. Ouvrir Learn ne doit rien couter au moteur. `locale` est la langue de
+    l'interface du poste ; sans traduction pour elle, le catalogue anglais —
+    comme pour un poste qui n'envoie rien.
     """
-    return learning.public_catalog()
+    return learning.public_catalog(locale=locale)
 
 
 @app.get("/api/learning/progress",

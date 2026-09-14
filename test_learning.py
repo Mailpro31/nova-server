@@ -147,6 +147,97 @@ class CatalogValidatorTests(unittest.TestCase):
         self.assert_refused(catalog, "trois piliers")
 
 
+def catalogue_skeleton(catalog: dict) -> dict:
+    """Tout ce qu'une traduction n'a pas le droit de changer.
+
+    Identifiants, ordres, types, bonnes reponses, durees, versions : la
+    progression est enregistree par identifiant et jugee sur ces champs. Une
+    traduction qui en toucherait un ferait diverger la progression d'un membre
+    selon la langue de son poste.
+    """
+
+    def options(content):
+        return [option["id"] for option in content.get("options", [])]
+
+    return {
+        "catalog_version": catalog["catalog_version"],
+        "exercises": catalog.get("exercises", []),
+        "paths": [
+            {
+                "id": path["id"],
+                "pillar": path["pillar"],
+                "icon": path.get("icon"),
+                "order": path["order"],
+                "tags": path.get("tags"),
+                "modules": [
+                    {
+                        "id": module["id"],
+                        "order": module["order"],
+                        "lessons": [
+                            {
+                                "id": lesson["id"],
+                                "order": lesson["order"],
+                                "version": lesson["version"],
+                                "difficulty": lesson["difficulty"],
+                                "estimated_minutes": lesson["estimated_minutes"],
+                                "tags": lesson.get("tags"),
+                                "blocks": [
+                                    {
+                                        "id": block["id"],
+                                        "type": block["type"],
+                                        "order": block["order"],
+                                        "options": options(block["content"]),
+                                        "correct_option_id": block["content"].get(
+                                            "correct_option_id"
+                                        ),
+                                        "exercise_id": block["content"].get("exercise_id"),
+                                    }
+                                    for block in lesson["blocks"]
+                                ],
+                            }
+                            for lesson in module["lessons"]
+                        ],
+                    }
+                    for module in path["modules"]
+                ],
+            }
+            for path in catalog["paths"]
+        ],
+    }
+
+
+class CatalogTranslationTests(unittest.TestCase):
+    """Une traduction change les mots, jamais la lecon."""
+
+    def test_a_french_catalogue_is_shipped(self):
+        self.assertIn("fr", learning.available_locales())
+        self.assertEqual(learning.load_catalog(locale="fr")["locale"], "fr")
+
+    def test_every_translation_keeps_the_english_skeleton(self):
+        english = catalogue_skeleton(learning.load_catalog())
+        for locale in learning.available_locales():
+            with self.subTest(locale=locale):
+                translated = learning.load_catalog(locale=locale)
+                self.assertEqual(catalogue_skeleton(translated), english)
+
+    def test_the_french_catalogue_is_actually_french(self):
+        """Une copie de l'anglais passerait le squelette : il faut aussi le texte."""
+        english = learning.lessons_index(learning.load_catalog())
+        french = learning.lessons_index(learning.load_catalog(locale="fr"))
+        for lesson_id, entry in english.items():
+            with self.subTest(lesson=lesson_id):
+                self.assertNotEqual(french[lesson_id]["lesson"]["title"], entry["lesson"]["title"])
+
+    def test_a_regional_locale_uses_its_language(self):
+        self.assertEqual(learning.load_catalog(locale="fr-FR")["locale"], "fr")
+        self.assertEqual(learning.load_catalog(locale="FR_ca")["locale"], "fr")
+
+    def test_a_language_without_translation_falls_back_to_english(self):
+        for locale in ("de", "xx", "", None, "../catalog", "fr/../../main"):
+            with self.subTest(locale=locale):
+                self.assertEqual(learning.load_catalog(locale=locale)["locale"], "en")
+
+
 class CompletionRuleTests(unittest.TestCase):
     """Terminee doit vouloir dire quelque chose."""
 
@@ -208,6 +299,33 @@ class LearningApiTests(AdminTestCase):
         with patch.object(main, "execute_text") as never:
             self.client.get("/api/learning/catalog", headers=self.member())
         never.assert_not_called()
+
+    def test_the_catalogue_follows_the_language_of_the_workstation(self):
+        response = self.client.get(
+            "/api/learning/catalog", params={"locale": "fr-FR"}, headers=self.member()
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertEqual(body["locale"], "fr")
+        self.assertNotIn("exercises", body)
+
+    def test_a_workstation_that_sends_no_language_still_gets_english(self):
+        """Les postes deja installes n'envoient rien : rien ne change pour eux."""
+        body = self.client.get("/api/learning/catalog", headers=self.member()).json()
+        self.assertEqual(body["locale"], "en")
+
+    def test_progress_recorded_in_french_counts_in_english(self):
+        """La progression suit l'identifiant de la lecon, pas sa langue."""
+        headers = self.member()
+        french = learning.lessons_index(learning.load_catalog(locale="fr"))
+        lesson = french["ask-better-questions"]["lesson"]
+        blocks = [b["id"] for b in sorted(lesson["blocks"], key=lambda b: b["order"])]
+        response = self.client.put(
+            "/api/learning/progress/ask-better-questions",
+            headers=headers,
+            json={"completed_blocks": blocks},
+        )
+        self.assertEqual(response.json()["status"], learning.STATUS_COMPLETED)
 
     # ---------------------------------------------------------------- progression
 
