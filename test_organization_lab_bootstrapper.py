@@ -2,6 +2,7 @@ import json
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -689,11 +690,13 @@ def test_the_regeneration_test_is_shipped_and_offline():
 
 
 def test_a_regeneration_can_be_verified_on_this_machine():
-    # Execute pour de vrai quand PowerShell est disponible ; ignore ailleurs,
-    # le generateur etant un script Windows.
+    # Execute pour de vrai sous Windows ; ignore ailleurs, le generateur etant
+    # un script Windows. « PowerShell present » ne suffit pas : Linux a pwsh,
+    # mais pas les API Windows (WindowsIdentity) dont le script depend. La CI
+    # l'execute sur son job Windows.
     powershell = shutil.which("powershell") or shutil.which("pwsh")
-    if not powershell:
-        pytest.skip("PowerShell absent")
+    if sys.platform != "win32" or not powershell:
+        pytest.skip("script Windows : Windows et PowerShell requis")
     completed = subprocess.run(
         [powershell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
          "-File", str(ROOT / "test-regeneration.ps1")],
@@ -907,11 +910,13 @@ def test_the_first_admin_test_covers_the_four_situations():
 
 
 def test_the_first_admin_path_can_be_verified_on_this_machine():
-    # Execute pour de vrai quand PowerShell est disponible ; ignore ailleurs,
-    # l'installateur etant un script Windows.
+    # Execute pour de vrai sous Windows ; ignore ailleurs, l'installateur etant
+    # un script Windows. « PowerShell present » ne suffit pas : Linux a pwsh,
+    # mais pas les API Windows (WindowsIdentity) dont le script depend. La CI
+    # l'execute sur son job Windows.
     powershell = shutil.which("powershell") or shutil.which("pwsh")
-    if not powershell:
-        pytest.skip("PowerShell absent")
+    if sys.platform != "win32" or not powershell:
+        pytest.skip("script Windows : Windows et PowerShell requis")
     completed = subprocess.run(
         [powershell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
          "-File", str(ROOT / "test-first-admin.ps1")],
