@@ -27,12 +27,12 @@ jobs:
     outputs:
       digest: ${{ steps.build.outputs.digest }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
         with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
       - id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with: { context: ., push: true, tags: "ghcr.io/mailpro31/nova-server:${{ inputs.version }}" }
 
   profiles:
@@ -45,7 +45,7 @@ jobs:
       matrix: ${{ steps.derive.outputs.matrix }}
       tiers: ${{ steps.derive.outputs.tiers }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - id: derive
         run: |
           set -euo pipefail
@@ -76,14 +76,14 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.profiles.outputs.matrix) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Reclaim runner space for the model image
         run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
         with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
       - id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: tools/organization-lab/images/whisper.Dockerfile
@@ -100,14 +100,14 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.profiles.outputs.matrix) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Reclaim runner space for the model image
         run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
         with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
       - id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: tools/organization-lab/images/llm.Dockerfile
@@ -121,7 +121,7 @@ jobs:
     outputs:
       sha256: ${{ steps.build.outputs.sha256 }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - id: build
         shell: pwsh
         run: |
@@ -164,7 +164,7 @@ jobs:
           # PostgreSQL and a running Whisper were both reported as COMPOSE_FAILED.
           if ($result -notmatch 'COMPOSE_OUTPUT_OK stderr_is_not_failure=1 exit_code_is_read=1') { throw 'The installer still treats stderr as failure.' }
           if ($result -notmatch 'SERVICE_STATE_OK') { throw 'The installer does not classify container states correctly.' }
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: organization-lab-${{ inputs.version }}-installer
           path: tools/organization-lab/dist/NovaOrganizationServerSetup.exe
@@ -285,7 +285,7 @@ jobs:
           echo "digests=$(cat /tmp/digests.json)" >> "$GITHUB_OUTPUT"
 
       - name: Stage the Windows installer for publication
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: organization-lab-${{ inputs.version }}-installer
           path: release-site/public/server/${{ inputs.channel }}
@@ -503,7 +503,7 @@ jobs:
           VERCEL_ORG_ID: ${{ vars.NOVA_RELEASE_VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ vars.NOVA_RELEASE_VERCEL_PROJECT_ID }}
         run: npx --yes vercel@48 deploy --prod --yes --token "$VERCEL_TOKEN"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: organization-lab-${{ inputs.version }}-manifest
           path: release-site/public/server/${{ inputs.channel }}/
@@ -513,7 +513,7 @@ jobs:
     needs: publish
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Verify the published images against the signed manifest
         run: |
           set -euo pipefail

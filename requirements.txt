@@ -1,12 +1,14 @@
-fastapi
-uvicorn[standard]
-httpx
-pydantic[email]
-python-multipart
-pyjwt[crypto]
+# Versions exactes : celles avec lesquelles la suite de tests passe. Une
+# montee de version se fait ici, dans une PR, et la CI la valide.
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+httpx==0.28.1
+pydantic[email]==2.13.4
+python-multipart==0.0.32
+pyjwt[crypto]==2.13.0
 
 # Production. Importes paresseusement : le service tourne sans eux tant qu'il
 # reste sur SQLite sans limitation partagee, ce qui est le cas en dev et en
 # test. En production, les deux sont requis.
-psycopg[binary]>=3.1
-redis>=5.0
+psycopg[binary]==3.3.4
+redis==8.1.0
