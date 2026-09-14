@@ -1,0 +1,670 @@
+{
+  "catalog_version": 1,
+  "locale": "fr",
+  "paths": [
+    {
+      "id": "use-ai",
+      "pillar": "use_ai",
+      "title": "Utiliser l'IA",
+      "description": "Obtenir de meilleures réponses en demandant mieux.",
+      "icon": "message-square",
+      "order": 1,
+      "tags": ["general"],
+      "modules": [
+        {
+          "id": "use-ai-foundations",
+          "title": "Bien demander",
+          "description": "Les trois habitudes qui changent la réponse obtenue.",
+          "order": 1,
+          "lessons": [
+            {
+              "id": "ask-better-questions",
+              "title": "Poser de meilleures questions",
+              "description": "Dites ce que vous voulez, pour qui, et sous quelle forme.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 1,
+              "version": 1,
+              "tags": ["general"],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Vous demandez un résumé. Vous recevez trois paragraphes fades qu'il faut de toute façon réécrire. Le modèle n'a pas échoué : personne ne lui a dit à quoi ressemblerait une bonne réponse."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Une demande a trois parties",
+                    "body": "Une demande utile nomme la tâche, le lecteur et la forme de la réponse. Retirez-en une, et le modèle comble le vide avec une supposition moyenne. La tâche dit quoi faire. Le lecteur fixe le vocabulaire et le niveau de détail. La forme — longueur, format, ce qu'il faut garder — est ce qui vous évite de réécrire le résultat."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "comparison",
+                  "order": 3,
+                  "content": {
+                    "worse_label": "Vague",
+                    "worse": "Résume ce texte.",
+                    "better_label": "Précise",
+                    "better": "Résume ce texte en 5 points pour quelqu'un qui découvre le sujet. Garde les chiffres importants, et termine par les 2 idées à retenir.",
+                    "note": "La seconde version nomme la tâche, le lecteur et la forme. Elle n'a rien d'astucieux : elle est simplement complète."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 4,
+                  "content": {
+                    "question": "Quelle partie manque dans : « Réécris ce mail pour qu'il soit plus court » ?",
+                    "options": [
+                      { "id": "a", "label": "La tâche" },
+                      { "id": "b", "label": "Le lecteur" },
+                      { "id": "c", "label": "Rien ne manque" }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "La tâche et la forme sont là. Qui le lit — un client, votre responsable, un collègue — décide du ton, et le modèle doit le deviner."
+                  }
+                },
+                {
+                  "id": "try-it",
+                  "type": "prompt_exercise",
+                  "order": 5,
+                  "content": {
+                    "instruction": "Réécrivez cette demande pour qu'elle nomme la tâche, le lecteur et la forme.",
+                    "starting_text": "Explique le machine learning.",
+                    "hint": "Qui lit ? Quelle longueur ? Que doit contenir la réponse ?",
+                    "sample_answer": "Explique le machine learning à un collègue sans formation technique, en moins de 150 mots, avec un exemple du quotidien et sans jargon."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "Tâche, lecteur, forme. Quand une réponse déçoit, l'une des trois manquait."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "give-useful-context",
+              "title": "Donner un contexte utile",
+              "description": "Ce que le modèle doit savoir, et ce qui n'ajoute que du bruit.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 2,
+              "version": 1,
+              "tags": ["general"],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Le modèle ne sait rien de votre projet, de votre équipe ni de la décision prise la semaine dernière. Il répond à partir de ce qu'il a sous les yeux — et pour tout ce que vous omettez, il invente un substitut plausible."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Le contexte, c'est ce qui change la réponse",
+                    "body": "Un contexte utile, c'est tout ce qui changerait la réponse d'une personne compétente : contraintes, public, ce que vous avez déjà essayé, le format à respecter. Le reste est du bruit. Coller un document entier quand trois phrases comptent ne rend pas la réponse meilleure — cela dilue ce que vous vouliez vraiment."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "Même question, autre contexte",
+                    "body": "« Est-ce une bonne conception ? » obtient une liste de contrôle générique.\n\n« Est-ce une bonne conception pour une équipe de trois personnes qui livre chaque semaine, sans ingénieur d'exploitation dédié ? » obtient une réponse sur le coût d'exploitation — parce que la contrainte a été énoncée."
+                  }
+                },
+                {
+                  "id": "warning",
+                  "type": "warning",
+                  "order": 4,
+                  "content": {
+                    "body": "Le contexte n'est pas un endroit où coller des secrets. Identifiants, données personnelles sur d'autres personnes et documents confidentiels ne deviennent pas sûrs parce qu'ils sont utiles."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 5,
+                  "content": {
+                    "question": "Vous voulez un avis sur une candidature. Quel détail vaut la peine d'être ajouté ?",
+                    "options": [
+                      { "id": "a", "label": "Le poste et ce que demande l'annonce" },
+                      { "id": "b", "label": "Votre adresse complète et votre date de naissance" },
+                      { "id": "c", "label": "La date à laquelle vous avez commencé à l'écrire" }
+                    ],
+                    "correct_option_id": "a",
+                    "explanation": "Le poste change la réponse. Votre adresse, non — et c'est une donnée personnelle qui n'a aucune raison d'être là."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "Ajoutez ce qui changerait la réponse d'une personne compétente. Laissez le reste, et ne collez jamais ce que vous ne voudriez pas voir conservé."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "iterate-instead-of-restarting",
+              "title": "Itérer plutôt que recommencer",
+              "description": "C'est le deuxième message qui fait la valeur.",
+              "estimated_minutes": 3,
+              "difficulty": "beginner",
+              "order": 3,
+              "version": 1,
+              "tags": ["general"],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "La réponse est presque bonne. La plupart des gens la suppriment et réécrivent toute la demande. C'est jeter la partie qui fonctionnait."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Corriger, pas recommencer",
+                    "body": "Traitez la première réponse comme un brouillon que vous modifiez en parlant. Dites ce qu'il faut garder, puis ce qu'il faut changer. « Garde la structure, rends le deuxième point concret, supprime le dernier paragraphe » vous y mène en une étape. Recommencer, c'est relancer les dés."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "comparison",
+                  "order": 3,
+                  "content": {
+                    "worse_label": "Recommencer",
+                    "worse": "Ce n'est pas ce que je voulais. Écris-moi un meilleur résumé.",
+                    "better_label": "Corriger",
+                    "better": "Bonne structure. Le point 2 est trop abstrait — remplace-le par le chiffre exact du texte. Supprime le paragraphe de conclusion.",
+                    "note": "La seconde garde ce qui fonctionnait. La première demande au modèle de deviner à nouveau, sans plus d'informations qu'avant."
+                  }
+                },
+                {
+                  "id": "tip",
+                  "type": "tip",
+                  "order": 4,
+                  "content": {
+                    "body": "Si deux corrections successives ne convergent pas, le problème vient généralement de la demande de départ, pas de la réponse. Revenez-y et ajoutez ce qui manquait."
+                  }
+                },
+                {
+                  "id": "practice",
+                  "type": "prompt_exercise",
+                  "order": 5,
+                  "content": {
+                    "instruction": "La réponse obtenue est trop formelle et trop longue. Écrivez la correction — ne réécrivez pas la demande.",
+                    "starting_text": "",
+                    "hint": "Nommez une chose à garder et deux à changer.",
+                    "sample_answer": "Garde les trois parties. Réduis d'environ moitié, et adopte le ton que tu prendrais avec un collègue plutôt qu'avec un client."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "Dites ce qu'il faut garder avant de dire ce qu'il faut changer. Recommencer jette la partie qui fonctionnait déjà."
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "learn-ai",
+      "pillar": "learn_ai",
+      "title": "Comprendre l'IA",
+      "description": "Comment ces systèmes fonctionnent vraiment — sans les maths.",
+      "icon": "brain",
+      "order": 2,
+      "tags": ["general"],
+      "modules": [
+        {
+          "id": "learn-ai-foundations",
+          "title": "Ce qui se passe vraiment",
+          "description": "Assez de compréhension pour prévoir où ça échouera.",
+          "order": 1,
+          "lessons": [
+            {
+              "id": "what-an-llm-does",
+              "title": "Ce que fait réellement un LLM",
+              "description": "Il prédit du texte. Ce seul fait explique l'essentiel de son comportement.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 1,
+              "version": 1,
+              "tags": ["general"],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Un modèle de langage ne va pas chercher d'informations, et il ne raisonne pas comme une personne. Il prédit le texte qui vient plausiblement ensuite. Presque tout ce qui surprend dans ces systèmes découle de cette seule phrase."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "De la prédiction, entraînée à grande échelle",
+                    "body": "Pendant l'entraînement, le modèle a vu d'énormes quantités de texte et est devenu très bon pour le prolonger. Rien n'y est stocké sous forme de faits, comme dans une base de données. Ce qu'il a appris, c'est quels mots ont tendance à suivre quels autres — grammaire, structure d'un argument, code, conventions.\n\nC'est pourquoi il écrit avec aisance sur des choses qu'il n'a aucun moyen de savoir, et pourquoi l'aisance ne prouve pas l'exactitude."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "Pourquoi il est utile de le savoir",
+                    "body": "Demandez une formule bien connue : vous l'obtiendrez généralement juste, car elle apparaissait de façon constante dans les textes d'entraînement.\n\nDemandez le numéro de page d'une citation dans une édition précise : vous obtiendrez peut-être un numéro inventé, donné avec assurance. C'est une suite plausible. Ce n'a jamais été une recherche."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 4,
+                  "content": {
+                    "question": "Pourquoi un modèle peut-il écrire une réponse fluide mais fausse ?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "L'aisance et l'exactitude viennent du même processus — la suite plausible"
+                      },
+                      { "id": "b", "label": "Il a manqué de mémoire" },
+                      { "id": "c", "label": "Il a été entraîné sur une grammaire incorrecte" }
+                    ],
+                    "correct_option_id": "a",
+                    "explanation": "Paraître juste et être juste viennent du même mécanisme. C'est pourquoi le style d'une réponse ne dit rien de sa vérité."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 5,
+                  "content": {
+                    "body": "Il prédit du texte. L'assurance est une propriété de l'écriture, pas des faits."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "why-ai-hallucinates",
+              "title": "Pourquoi l'IA peut halluciner",
+              "description": "Et comment savoir quelles réponses méritent une vérification.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 2,
+              "version": 1,
+              "tags": ["general"],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Une hallucination n'est pas un bug. C'est le système qui fait exactement ce qu'il fait — produire une suite plausible — là où plausible et vrai ont divergé."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Où le risque se concentre",
+                    "body": "L'invention est la plus probable là où le texte est précis et vérifiable, mais rare : citations exactes, numéros de page, statistiques, références juridiques, méthodes d'API, biographies. Le modèle a vu la forme de ces éléments des milliers de fois ; il peut donc en produire un convaincant à la demande.\n\nElle est la moins probable quand la réponse relève de la culture générale, ou quand vous avez fourni vous-même le texte source."
+                  }
+                },
+                {
+                  "id": "tip",
+                  "type": "tip",
+                  "order": 3,
+                  "content": {
+                    "body": "Demander « quelle est ta source ? » n'aide pas en soi — la source peut aussi être inventée. Vérifier la source, si."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 4,
+                  "content": {
+                    "question": "Quelle réponse mérite le plus une vérification ?",
+                    "options": [
+                      { "id": "a", "label": "La reformulation d'un paragraphe que vous avez collé" },
+                      { "id": "b", "label": "Une statistique précise, avec une année et un pourcentage" },
+                      { "id": "c", "label": "Une liste d'idées de nom d'équipe" }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "Précise, vérifiable et non fournie par vous : c'est exactement là qu'une invention plausible est la plus difficile à repérer."
+                  }
+                },
+                {
+                  "id": "reflection",
+                  "type": "reflection",
+                  "order": 5,
+                  "content": {
+                    "prompt": "Pensez à une tâche pour laquelle vous utilisez l'IA. Quelle partie de sa réponse poserait un vrai problème si elle était discrètement fausse ?",
+                    "hint": "C'est cette partie qu'il faut vérifier, à chaque fois."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "Vérifiez ce qui est précis, vérifiable et ne vient pas de vous. Ne faites confiance à rien parce que cela a l'air sûr."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "context-and-tokens",
+              "title": "Contexte et tokens",
+              "description": "Pourquoi les longues conversations dérivent, et ce que le modèle voit vraiment.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 3,
+              "version": 1,
+              "tags": ["general"],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Au milieu d'une longue conversation, le modèle oublie une contrainte posée au début. Ce n'est pas de la négligence. Ce qu'il peut voir d'un coup a une limite, et vous l'avez dépassée."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Les tokens et la fenêtre",
+                    "body": "Le texte est découpé en tokens — à peu près des fragments de mots. En anglais, un token vaut souvent environ trois quarts de mot. Tout ce que le modèle prend en compte à la fois, vos messages comme ses propres réponses, doit tenir dans une fenêtre de contexte de taille fixe.\n\nQuand la conversation la dépasse, les parties les plus anciennes ne sont plus visibles. Le modèle ne se souvient pas d'une conversation : il relit ce qui tient encore."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "Ce que cela change en pratique",
+                    "body": "Si une règle compte — « réponds toujours en français », « ne dépasse jamais 200 mots » — répétez-la dans le message où elle compte, plutôt que de supposer qu'elle a survécu à vingt échanges.\n\nEt si la conversation a beaucoup dérivé, repartir d'une nouvelle conversation avec un résumé clair vaut généralement mieux que de continuer dans une conversation encombrée."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 4,
+                  "content": {
+                    "question": "Une longue conversation ne suit plus une consigne donnée au début. Quelle est la cause la plus probable ?",
+                    "options": [
+                      { "id": "a", "label": "La consigne est sortie de la fenêtre de contexte" },
+                      { "id": "b", "label": "Le modèle a décidé de vous ignorer" },
+                      { "id": "c", "label": "La consigne était grammaticalement incorrecte" }
+                    ],
+                    "correct_option_id": "a",
+                    "explanation": "Ce qui n'est plus dans la fenêtre pourrait tout aussi bien n'avoir jamais été dit. Répétez la contrainte là où elle compte."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 5,
+                  "content": {
+                    "body": "Le modèle voit une fenêtre, pas une mémoire. Répétez ce qui compte, et repartez de zéro quand la conversation est encombrée."
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "adapt-ai",
+      "pillar": "adapt_ai",
+      "title": "Adapter l'IA",
+      "description": "La faire correspondre à votre travail, plutôt que l'inverse.",
+      "icon": "settings-2",
+      "order": 3,
+      "tags": [
+        "general",
+        "student",
+        "engineering",
+        "marketing",
+        "developer",
+        "creator",
+        "management"
+      ],
+      "modules": [
+        {
+          "id": "adapt-ai-foundations",
+          "title": "L'ajuster à votre travail",
+          "description": "Des réponses ponctuelles à quelque chose de réutilisable.",
+          "order": 1,
+          "lessons": [
+            {
+              "id": "an-assistant-for-your-work",
+              "title": "Faire de l'IA un assistant de travail ou d'études",
+              "description": "Décrivez votre situation une fois, et arrêtez de la répéter.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 1,
+              "version": 1,
+              "tags": ["general", "student", "management"],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "La plupart des gens réexpliquent qui ils sont et sur quoi ils travaillent à chaque demande. L'assistant qui fait vraiment gagner du temps, c'est celui que vous avez décrit une fois."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Une consigne permanente",
+                    "body": "Une consigne permanente, ce sont trois ou quatre phrases qui restent vraies d'une demande à l'autre : votre rôle, le public pour qui vous écrivez d'habitude, le ton souhaité, et ce que vous ne voulez jamais. Écrite une fois, elle raccourcit chaque demande suivante.\n\nDans Nova, c'est le rôle d'un Style : la consigne vit à un seul endroit et s'applique chaque fois que vous le choisissez."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "Une consigne permanente",
+                    "body": "« Je suis en deuxième année d'école d'ingénieurs. J'écris des comptes rendus de TP pour un encadrant qui préfère la précision à la longueur. Utilise un français simple et technique. Ne remplis jamais avec des introductions ou des conclusions qui répètent le corps du texte. »\n\nChaque demande suivante peut désormais tenir en deux lignes au lieu de dix."
+                  }
+                },
+                {
+                  "id": "practice",
+                  "type": "prompt_exercise",
+                  "order": 4,
+                  "content": {
+                    "instruction": "Écrivez votre propre consigne permanente en trois ou quatre phrases.",
+                    "starting_text": "",
+                    "hint": "Rôle, public habituel, ton, et une chose que vous ne voulez jamais.",
+                    "sample_answer": "Je suis chef de produit et j'écris pour des ingénieurs et des designers. Sois concret et bref ; préfère les exemples aux adjectifs. Ne commence jamais par un résumé de ce que je viens de demander."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 5,
+                  "content": {
+                    "body": "Décrivez votre situation une fois, à un endroit qui la conserve. Ensuite, chaque demande raccourcit."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "build-a-reusable-workflow",
+              "title": "Construire une méthode réutilisable",
+              "description": "Transformer une tâche répétée en quelque chose que l'on relance.",
+              "estimated_minutes": 4,
+              "difficulty": "intermediate",
+              "order": 2,
+              "version": 1,
+              "tags": ["general", "engineering", "marketing", "developer"],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Si vous avez écrit presque la même demande trois fois, ce n'est plus une demande. C'est une méthode que vous n'avez pas encore mise par écrit."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Consigne fixe, entrée variable",
+                    "body": "Une méthode sépare la partie qui ne change jamais de celle qui change. La consigne — quoi faire, pour qui, sous quelle forme, quoi vérifier — est fixe. Le texte que vous lui donnez change à chaque fois.\n\nUne fois séparée, la partie fixe peut être enregistrée et réutilisée, et elle cesse de dériver chaque fois que vous la retapez de mémoire."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "comparison",
+                  "order": 3,
+                  "content": {
+                    "worse_label": "Retapée à chaque fois",
+                    "worse": "Tu peux regarder ces notes de réunion et en sortir ce que je dois faire ?",
+                    "better_label": "Une méthode",
+                    "better": "À partir des notes ci-dessous, extrais uniquement les actions qui me sont attribuées. Une ligne par action, commençant par un verbe, avec l'échéance si elle est indiquée. Si aucune action ne m'est attribuée, dis-le et arrête-toi.",
+                    "note": "La seconde vaut la peine d'être enregistrée. Elle dit aussi quoi faire quand il n'y a rien à trouver — c'est là que la version retapée invente discrètement des tâches."
+                  }
+                },
+                {
+                  "id": "tip",
+                  "type": "tip",
+                  "order": 4,
+                  "content": {
+                    "body": "Dites toujours à une méthode quoi faire quand l'entrée ne correspond pas. Cette seule phrase évite la plupart des contenus inventés."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 5,
+                  "content": {
+                    "question": "Qu'est-ce qui appartient à la partie fixe d'une méthode ?",
+                    "options": [
+                      { "id": "a", "label": "Le texte à traiter cette fois-ci" },
+                      { "id": "b", "label": "Les règles qui définissent un bon résultat" },
+                      { "id": "c", "label": "La date du jour" }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "Les règles sont ce que vous ne voulez plus retaper. L'entrée est ce qui change."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "Séparez la consigne fixe de l'entrée qui change, et dites quoi faire quand il n'y a rien à trouver."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "adapt-ai-to-your-domain",
+              "title": "Adapter l'IA à votre domaine",
+              "description": "Le vocabulaire, les conventions et les vérifications qu'attend votre domaine.",
+              "estimated_minutes": 5,
+              "difficulty": "intermediate",
+              "order": 3,
+              "version": 1,
+              "tags": ["engineering", "marketing", "developer", "creator", "student", "management"],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Une réponse générique est générique parce que rien dans la demande ne disait dans quel domaine vous travaillez. Votre domaine a un vocabulaire, des conventions et un niveau d'exigence — et rien de cela n'est évident vu de l'extérieur."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Trois choses qu'attend votre domaine",
+                    "body": "Nommez le vocabulaire que vous utilisez, pour que la réponse ne se traduise pas dans les termes de quelqu'un d'autre. Nommez la convention que vous suivez — une structure de rapport, un style de commit, un ton maison. Et nommez la vérification : ce qui rend une réponse acceptable dans votre domaine, et pas seulement raisonnable.\n\nC'est la troisième que la plupart des gens oublient, et c'est elle qui fait le plus de travail."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "La même demande dans trois domaines",
+                    "body": "Ingénierie : « Indique l'hypothèse derrière chaque chiffre. Si une valeur est estimée plutôt que mesurée, signale-le. »\n\nMarketing : « Respecte notre ton maison : direct, sans superlatifs. Propose deux options pour qu'on puisse comparer. »\n\nDéveloppement : « Suis les conventions déjà présentes dans le fichier. Si une approche demande une dépendance que nous n'avons pas, dis-le au lieu de l'ajouter. »"
+                  }
+                },
+                {
+                  "id": "ai-practice",
+                  "type": "ai_exercise",
+                  "order": 4,
+                  "content": {
+                    "exercise_id": "adapt-domain-request",
+                    "instruction": "Écrivez une demande pour une tâche de votre propre domaine. Nommez le vocabulaire, la convention et la vérification qui rend une réponse acceptable.",
+                    "starting_text": "",
+                    "hint": "La vérification est la partie que la plupart des gens oublient : qu'est-ce qui vous ferait rejeter une réponse pourtant raisonnable ?"
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 5,
+                  "content": {
+                    "body": "Vocabulaire, convention, et la vérification propre à votre domaine. C'est la vérification qui transforme une réponse raisonnable en réponse utilisable."
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "exercises": [
+    {
+      "id": "adapt-domain-request",
+      "task": "learning_feedback",
+      "instruction": "You are helping someone learn to write better requests to an AI assistant. They were asked to write a request for a task in their own professional or academic field, naming three things: the vocabulary of their field, the convention they follow, and the check that makes an answer acceptable rather than merely reasonable.\n\nRead their attempt and reply in at most four short sentences. Say plainly which of the three are present and which are missing. Then give one concrete improvement, rewriting a fragment of their own request rather than replacing it with yours. Do not score them, do not use percentages, and do not praise without a reason. If their request is already complete, say so and name the strongest part.\n\nReply in the language they wrote in."
+    }
+  ]
+}
