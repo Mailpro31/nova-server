@@ -157,6 +157,9 @@ class SecretTests(unittest.TestCase):
             path = os.path.join(directory, "google_client_secret")
             with open(path, "w", encoding="utf-8") as handle:
                 handle.write("G0c-9f3b21aa77de4419bc0e\n")
+            # Lisible par son seul proprietaire, comme un vrai secret : sous
+            # POSIX, un fichier lisible par tous est refuse.
+            os.chmod(path, 0o600)
             reference = "file://" + path.replace("\\", "/")
             with environment(**BASE, NOVA_GOOGLE_CLIENT_ID="id",
                              NOVA_GOOGLE_CLIENT_SECRET=reference):

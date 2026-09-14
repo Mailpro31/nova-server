@@ -47,6 +47,11 @@ class FileReferenceTests(unittest.TestCase):
         path = os.path.join(self.directory.name, name)
         with open(path, "wb") as handle:
             handle.write(content)
+        # Un secret correctement protege : lisible par son seul proprietaire.
+        # Sans cela, le masque par defaut (souvent 022) le laisse lisible par
+        # tous sous POSIX, et le fournisseur le refuse a juste titre. Le cas
+        # d'un secret trop ouvert est teste a part, avec un chmod explicite.
+        os.chmod(path, 0o600)
         return path
 
     def test_a_file_reference_is_resolved(self):
