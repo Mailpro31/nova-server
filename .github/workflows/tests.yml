@@ -30,6 +30,13 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
+    # bash partout, y compris sous Windows. Le shell par defaut du runner
+    # Windows est PowerShell 7 : il ajoute ses modules a PSModulePath, que
+    # Python transmet ensuite au powershell.exe (5.1) des tests du Lab, qui ne
+    # sait plus charger Get-Acl.
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
