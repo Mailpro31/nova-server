@@ -24,6 +24,7 @@ import {
 } from "./components/AuthScreens";
 import { peekHandoffOrganization } from "./lib/handoff";
 import { t } from "./lib/messages";
+import { NAV_SECTIONS } from "./lib/navigation";
 import { secondsRemaining } from "./lib/session";
 import { useSession } from "./lib/useAdminSession";
 import { Administrators } from "./pages/Administrators";
@@ -33,7 +34,7 @@ import { Members } from "./pages/Members";
 import { Packages } from "./pages/Packages";
 import { Provisioning } from "./pages/Provisioning";
 import { Overview } from "./pages/Overview";
-import { Configuration, Deployment, Diagnostics, Security } from "./pages/Rest";
+import { AuditLog, Configuration, Deployment, Diagnostics, Security } from "./pages/Rest";
 
 const PAGES = [
   { path: "overview", label: t.nav.overview, element: <Overview /> },
@@ -50,8 +51,11 @@ const PAGES = [
   { path: "deployment", label: t.nav.deployment, element: <Deployment /> },
   { path: "configuration", label: t.nav.configuration, element: <Configuration /> },
   { path: "security", label: t.nav.security, element: <Security /> },
+  { path: "audit", label: t.nav.audit, element: <AuditLog /> },
   { path: "diagnostics", label: t.nav.diagnostics, element: <Diagnostics /> },
 ];
+
+const PAGE_BY_PATH = new Map(PAGES.map((page) => [page.path, page]));
 
 function Console() {
   const { session, signOutAdmin, signOutCompletely } = useSession();
@@ -65,11 +69,32 @@ function Console() {
           <small>{session.organizationName}</small>
         </div>
         <div className="nav">
-          {PAGES.map((page) => (
-            <NavLink key={page.path} to={page.path} end>
-              {page.label}
-            </NavLink>
-          ))}
+          {NAV_SECTIONS.map((section) => {
+            const pages = section.pages.flatMap((path) => {
+              const page = PAGE_BY_PATH.get(path);
+              return page ? [page] : [];
+            });
+            // Un domaine d'une seule page n'a pas de titre : son lien porte
+            // le nom du domaine. Au-delà, le titre regroupe ses pages.
+            const single = pages.length === 1;
+            return (
+              <div
+                key={section.id}
+                className="nav-section"
+                role="group"
+                aria-label={t.navGroups[section.id]}
+              >
+                {!single && (
+                  <span className="nav-section-title">{t.navGroups[section.id]}</span>
+                )}
+                {pages.map((page) => (
+                  <NavLink key={page.path} to={page.path} end>
+                    {single ? t.navGroups[section.id] : page.label}
+                  </NavLink>
+                ))}
+              </div>
+            );
+          })}
         </div>
       </nav>
       <div className="main">
