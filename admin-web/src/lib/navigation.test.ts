@@ -36,6 +36,7 @@ describe("Domains", () => {
       "features",
       "learn",
       "content",
+      "limits",
       "signIn",
       "audit",
       "infrastructure",

@@ -138,6 +138,7 @@ describe("No arbitrary JSON", () => {
       "engineering_notes_enabled",
       "file_import_enabled",
       // Les categories de l'application.
+      "learning_enabled",
       "styles_enabled",
       "generated_instructions_enabled",
       "past_dictations_enabled",
