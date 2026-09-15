@@ -503,3 +503,131 @@ def completion_is_earned(lesson: dict, completed_block_ids: list[str]) -> bool:
     if blocks[-1]["id"] not in seen:
         return False
     return all(block_id in seen for block_id in required_block_ids(lesson))
+
+
+# ── Lecons ecrites par une organisation ──────────────────────────────────────
+#
+# Les memes blocs que le catalogue livre, et les memes regles, plus deux :
+#
+# - un bloc `ai_exercise` est refuse. Son instruction vit dans `exercises`, qui
+#   ne vient que du catalogue livre ; un contenu saisi en console ne peut pas
+#   decider de ce qu'on demande au modele ;
+# - toutes les langues partagent les memes blocs. La progression retient des
+#   identifiants de blocs et une reponse un identifiant d'option : une
+#   traduction qui les changerait ferait compter faux.
+
+MAX_CUSTOM_TITLE = 120
+MAX_CUSTOM_DESCRIPTION = 400
+MAX_CUSTOM_BLOCKS = 40
+MAX_CUSTOM_LESSON_BYTES = 200_000
+_CUSTOM_FIELDS = ("module_id", "source_locale", "estimated_minutes", "difficulty",
+                  "translations")
+_CUSTOM_TRANSLATION_FIELDS = frozenset({"title", "description", "blocks"})
+
+
+def custom_lesson_locales() -> set[str]:
+    """Les langues d'une lecon ecrite en console : celles du catalogue livre."""
+    return {DEFAULT_LOCALE, *available_locales()}
+
+
+def block_skeleton(blocks: list[dict]) -> list[tuple]:
+    """Ce que toutes les langues d'une lecon doivent partager, et ce dont la
+    progression depend : identifiants, types, ordre, options et bonne reponse."""
+    skeleton = []
+    for block in sorted(blocks, key=lambda item: item["order"]):
+        content = block["content"]
+        options = ()
+        if block["type"] in {BLOCK_MULTIPLE_CHOICE, BLOCK_QUESTION}:
+            options = tuple(option["id"] for option in content.get("options", []))
+        skeleton.append((block["id"], block["type"], block["order"], options,
+                         content.get("correct_option_id")))
+    return skeleton
+
+
+def _clean_text(value: Any, limit: int, where: str) -> str:
+    _require(isinstance(value, str) and value.strip() != "", f"{where} vide")
+    _require(len(value) <= limit, f"{where} trop long")
+    return value.strip()
+
+
+def validate_custom_lesson(payload: Any, module_ids: set[str]) -> dict:
+    """Verifie une lecon ecrite en console et la renvoie normalisee.
+
+    Normalisee veut dire : textes sans espaces de bord, blocs ranges par ordre
+    et reduits a leurs quatre champs. Ce qui est stocke est exactement ce qui
+    a ete verifie.
+    """
+    _require(isinstance(payload, dict), "lecon: objet attendu")
+    unknown = sorted(set(payload) - set(_CUSTOM_FIELDS))
+    _require(not unknown, f"lecon: champ inconnu `{unknown[0] if unknown else ''}`")
+    for field in _CUSTOM_FIELDS:
+        _require(field in payload, f"lecon: champ obligatoire absent `{field}`")
+    _require(payload["module_id"] in module_ids, "lecon: `module_id` ne designe aucun module")
+    _require(payload["difficulty"] in DIFFICULTIES, "lecon: difficulte inconnue")
+    minutes = payload["estimated_minutes"]
+    _require(
+        isinstance(minutes, int) and not isinstance(minutes, bool) and 1 <= minutes <= 10,
+        "lecon: `estimated_minutes` hors bornes — Learn tient en 3 a 5 minutes",
+    )
+    locales = custom_lesson_locales()
+    source = payload["source_locale"]
+    _require(isinstance(source, str) and source in locales, "lecon: langue source inconnue")
+    translations = payload["translations"]
+    _require(isinstance(translations, dict) and translations, "lecon: `translations` vide")
+    _require(source in translations, "lecon: la langue source doit etre fournie")
+    _require(
+        len(json.dumps(translations, ensure_ascii=False).encode("utf-8"))
+        <= MAX_CUSTOM_LESSON_BYTES,
+        "lecon: contenu trop volumineux",
+    )
+
+    skeleton = None
+    normalized: dict[str, dict] = {}
+    # La langue source d'abord : c'est a elle que les autres se comparent.
+    for locale in sorted(translations, key=lambda item: (item != source, item)):
+        where = f"lecon ({locale})"
+        _require(locale in locales, f"{where}: langue inconnue")
+        entry = translations[locale]
+        _require(isinstance(entry, dict), f"{where}: objet attendu")
+        _require(set(entry) <= _CUSTOM_TRANSLATION_FIELDS, f"{where}: champ inconnu")
+        title = _clean_text(entry.get("title"), MAX_CUSTOM_TITLE, f"{where}: `title`")
+        description = _clean_text(entry.get("description"), MAX_CUSTOM_DESCRIPTION,
+                                   f"{where}: `description`")
+        blocks = entry.get("blocks")
+        _require(
+            isinstance(blocks, list) and 1 <= len(blocks) <= MAX_CUSTOM_BLOCKS,
+            f"{where}: entre 1 et {MAX_CUSTOM_BLOCKS} blocs",
+        )
+        for block in blocks:
+            _require(isinstance(block, dict), f"{where}: bloc malforme")
+            _require(isinstance(block.get("id"), str), f"{where}: identifiant de bloc attendu")
+            _require(block.get("type") != BLOCK_AI_EXERCISE,
+                     f"{where}: un exercice IA ne se cree pas en console")
+        _validate_orders(blocks, where)
+        block_ids: set[str] = set()
+        for block in blocks:
+            block_where = f"{where} bloc `{block['id']}`"
+            _validate_block(block, block_where, set())
+            _require(block["id"] not in block_ids, f"{block_where}: identifiant en double")
+            block_ids.add(block["id"])
+        shape = block_skeleton(blocks)
+        if skeleton is None:
+            skeleton = shape
+        else:
+            _require(shape == skeleton,
+                     f"{where}: les blocs doivent etre ceux de la langue source")
+        normalized[locale] = {
+            "title": title,
+            "description": description,
+            "blocks": [
+                {key: block[key] for key in _BLOCK_FIELDS}
+                for block in sorted(blocks, key=lambda item: item["order"])
+            ],
+        }
+    return {
+        "module_id": payload["module_id"],
+        "source_locale": source,
+        "estimated_minutes": minutes,
+        "difficulty": payload["difficulty"],
+        "translations": normalized,
+    }
