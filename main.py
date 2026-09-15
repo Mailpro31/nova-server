@@ -2069,6 +2069,9 @@ SECURITY_ROLE_MEMBER = "member"
 SECURITY_ROLE_ORGANIZATION_ADMIN = "organization_admin"
 SECURITY_ROLE_IT_ADMIN = "it_admin"
 SECURITY_ROLE_READ_ONLY = "read_only"
+# Prepare le contenu — lecons d'Apprendre, Styles, Prompts, vocabulaire — sans
+# toucher aux membres, a la securite ni a ce que l'organisation autorise.
+SECURITY_ROLE_CONTENT_EDITOR = "content_editor"
 
 # Capacités : ce que l'on vérifie réellement dans les routes. Les rôles sont
 # des noms commodes, les capacités sont la règle — sans quoi `if role ==` se
@@ -2122,6 +2125,14 @@ CAPABILITIES_BY_ROLE: dict[str, frozenset[str]] = {
     SECURITY_ROLE_READ_ONLY: frozenset({
         CAPABILITY_ORGANIZATION_READ,
         CAPABILITY_DIAGNOSTICS_READ,
+    }),
+    # Deux capacites, et pas une de plus. Confier les lecons ou les Styles a
+    # quelqu'un ne doit pas lui ouvrir les membres ni les policies : c'est
+    # pour cela qu'un role distinct existe, plutot qu'un `organization_admin`
+    # prete « pour le contenu ».
+    SECURITY_ROLE_CONTENT_EDITOR: frozenset({
+        CAPABILITY_ORGANIZATION_READ,
+        CAPABILITY_CONTENT_MANAGE,
     }),
     # Un membre n'a aucune capacité d'administration. La ligne est écrite
     # explicitement : l'absence de clé se lirait comme un oubli.
