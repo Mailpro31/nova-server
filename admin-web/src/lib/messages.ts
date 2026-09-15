@@ -866,6 +866,27 @@ export const t = {
     invalid: "The server rejected this lesson. Check the fields listed and try again.",
     limit: "This organization has reached the number of lessons it can write.",
     notFound: "This lesson no longer exists.",
+    // Personnaliser une lecon livree, puis decider des versions de Nova.
+    customize: "Customize",
+    customizeTitle: "Customize this lesson?",
+    customizeBody:
+      "Nova makes a copy of this lesson, in every language, that your organization can edit. The copy replaces the original for members: the original is archived and its settings move to the copy. Progress on the original is not carried over.",
+    customized: "Customized from a Nova lesson",
+    updateAvailable: "Nova update available",
+    updateTitle: "Nova updated the original lesson",
+    updateBody: (from: number, to: number) =>
+      `This copy is based on version ${from}. Nova now delivers version ${to}. Nothing changes until you decide.`,
+    showUpdate: "Show Nova's version",
+    hideUpdate: "Hide Nova's version",
+    applyUpdate: "Use Nova's version",
+    applyTitle: "Use Nova's version?",
+    applyBody:
+      "This copy's content is replaced by Nova's version in every language. Your edits to this lesson are lost, including unsaved ones. Its settings, groups and due date stay.",
+    keepVersion: "Keep my version",
+    keepHint: "Keeping your version hides this proposal until Nova delivers a newer one.",
+    notCustomizable:
+      "This lesson includes an AI exercise, which only Nova can deliver. It cannot be customized.",
+    updateNotAvailable: "Nova has no newer version of this lesson. Reload to see its current state.",
   },
 
   security: {
@@ -931,6 +952,8 @@ export function errorMessage(kind: ApiErrorKind, code?: string | null): string {
   if (code === "LEARNING_CUSTOM_LESSON_INVALID") return t.learn.invalid;
   if (code === "LEARNING_CUSTOM_LESSON_LIMIT") return t.learn.limit;
   if (code === "LESSON_NOT_FOUND") return t.learn.notFound;
+  if (code === "LEARNING_LESSON_NOT_CUSTOMIZABLE") return t.learn.notCustomizable;
+  if (code === "LEARNING_UPDATE_NOT_AVAILABLE") return t.learn.updateNotAvailable;
   if (code === "AI_RUNTIME_REVISION_CONFLICT") return t.aiRuntime.conflict;
   if (code === "AI_RUNTIME_HARDWARE_INCOMPATIBLE")
     return t.aiRuntime.hardwareIncompatible;

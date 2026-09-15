@@ -38,6 +38,15 @@ export interface CustomLessonDraft {
   translations: Record<string, LessonTranslation>;
 }
 
+/** D'où vient une copie personnalisée, et où en est Nova. */
+export interface LessonOrigin {
+  lesson_id: string;
+  /** La version livrée copiée, ou la dernière que l'organisation a vue. */
+  version: number;
+  latest_version: number;
+  update_available: boolean;
+}
+
 export interface CustomLessonView extends CustomLessonDraft {
   id: string;
   version: number;
@@ -45,6 +54,19 @@ export interface CustomLessonView extends CustomLessonDraft {
   created_at: number;
   updated_at: number;
   updated_by_user_id: string | null;
+  /** `null` pour une leçon écrite depuis zéro. */
+  based_on: LessonOrigin | null;
+}
+
+/** La version plus récente d'une leçon livrée, telle que Nova la propose. */
+export interface NovaUpdateProposal {
+  lesson_id: string;
+  version: number;
+  current_version: number;
+  locale: string;
+  title: string;
+  description: string;
+  blocks: LessonBlock[];
 }
 
 export interface LearningModuleView {
@@ -62,6 +84,10 @@ export interface LearningLessonView {
   module_id: string;
   pillar: string;
   custom: boolean;
+  /** La leçon livrée d'une copie personnalisée, `null` sinon. */
+  based_on_lesson_id: string | null;
+  /** Nova a livré une version plus récente de l'original. */
+  update_available: boolean;
   status: "active" | "archived";
   required: boolean;
   due_at: number | null;
@@ -323,6 +349,19 @@ export function customLessonPayload(draft: CustomLessonDraft): CustomLessonDraft
     difficulty: draft.difficulty,
     translations: draft.translations,
   };
+}
+
+/**
+ * Une leçon livrée se personnalise. Une leçon de l'organisation — copie
+ * personnalisée comprise — s'édite directement.
+ */
+export function canCustomize(lesson: { custom: boolean }): boolean {
+  return !lesson.custom;
+}
+
+/** La proposition de Nova, lue par l'aperçu comme n'importe quelle leçon. */
+export function proposalTranslation(proposal: NovaUpdateProposal): LessonTranslation {
+  return { title: proposal.title, description: proposal.description, blocks: proposal.blocks };
 }
 
 function pad(value: number): string {

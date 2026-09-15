@@ -11,6 +11,7 @@ import type {
   CustomLessonView,
   LearningAdminView,
   LearningLessonView,
+  NovaUpdateProposal,
 } from "./learning";
 
 export interface OrganizationView {
@@ -955,6 +956,36 @@ export class ControlPlane {
       `/api/control/organization/learning/custom-lessons/${encodeURIComponent(lessonId)}` +
         `?expected_revision=${expectedRevision}`,
       { method: "DELETE" },
+    );
+  }
+
+  /**
+   * Copie une leçon livrée dans une leçon de l'organisation, dans toutes ses
+   * langues. La copie remplace l'original pour les membres.
+   */
+  customizeLearningLesson(lessonId: string) {
+    return this.client.request<CustomLessonView>(
+      `/api/control/organization/learning/lessons/${encodeURIComponent(lessonId)}/customize`,
+      { method: "POST", body: {} },
+    );
+  }
+
+  /** La version plus récente que Nova a livrée pour l'original d'une copie. */
+  novaUpdate(lessonId: string) {
+    return this.client.request<NovaUpdateProposal>(
+      `/api/control/organization/learning/custom-lessons/${encodeURIComponent(lessonId)}/nova-update`,
+    );
+  }
+
+  /** Applique la version de Nova, ou garde celle de l'organisation. */
+  decideNovaUpdate(
+    lessonId: string,
+    expectedRevision: number,
+    decision: "apply" | "dismiss",
+  ) {
+    return this.client.request<CustomLessonView>(
+      `/api/control/organization/learning/custom-lessons/${encodeURIComponent(lessonId)}/nova-update`,
+      { method: "POST", body: { expected_revision: expectedRevision, decision } },
     );
   }
 

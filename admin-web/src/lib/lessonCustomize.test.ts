@@ -33,7 +33,9 @@ function code(source: string): string {
     .join("\n");
 }
 
-function listed(overrides: Partial<LearningLessonView> = {}): LearningLessonView {
+function listed(
+  overrides: Partial<LearningLessonView> = {},
+): LearningLessonView {
   return {
     id: "ask-better-questions",
     title: "Ask better questions",
@@ -54,14 +56,18 @@ function listed(overrides: Partial<LearningLessonView> = {}): LearningLessonView
   };
 }
 
-const blocks = [{ id: "intro", type: "text", order: 1, content: { body: "Hello." } }];
+const blocks = [
+  { id: "intro", type: "text", order: 1, content: { body: "Hello." } },
+];
 
 describe("Model", () => {
   test("only a delivered lesson can be customized", () => {
     expect(canCustomize(listed())).toBe(true);
     expect(canCustomize(listed({ custom: true }))).toBe(false);
     expect(
-      canCustomize(listed({ custom: true, based_on_lesson_id: "ask-better-questions" })),
+      canCustomize(
+        listed({ custom: true, based_on_lesson_id: "ask-better-questions" }),
+      ),
     ).toBe(false);
   });
 
@@ -119,7 +125,9 @@ describe("Client", () => {
   });
 
   test("a decision carries the revision it was built on, and nothing else is possible", () => {
-    expect(CONTROL).toMatch(/decideNovaUpdate\(\s*lessonId: string,\s*expectedRevision: number/);
+    expect(CONTROL).toMatch(
+      /decideNovaUpdate\(\s*lessonId: string,\s*expectedRevision: number/,
+    );
     expect(CONTROL).toContain('decision: "apply" | "dismiss"');
   });
 });
@@ -150,7 +158,9 @@ describe("Page", () => {
   test("applying Nova's version goes through a danger confirmation", async () => {
     const { t } = await import("./messages");
     expect(code(PAGE)).toContain("t.learn.applyTitle");
-    expect(code(PAGE)).toContain('decideNovaUpdate(lesson.id, lesson.revision, "apply")');
+    expect(code(PAGE)).toContain(
+      'decideNovaUpdate(lesson.id, lesson.revision, "apply")',
+    );
     const body = t.learn.applyBody.toLowerCase();
     expect(body).toContain("replaced");
     expect(body).toContain("every language");
@@ -158,7 +168,9 @@ describe("Page", () => {
 
   test("keeping our version is one click and says the proposal goes away", async () => {
     const { t } = await import("./messages");
-    expect(code(PAGE)).toContain('decideNovaUpdate(lesson.id, lesson.revision, "dismiss")');
+    expect(code(PAGE)).toContain(
+      'decideNovaUpdate(lesson.id, lesson.revision, "dismiss")',
+    );
     expect(t.learn.keepHint.toLowerCase()).toContain("newer");
   });
 });
