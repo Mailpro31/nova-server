@@ -10,43 +10,50 @@
  * framework pèserait plus que ce qu'il rendrait.
  */
 
+/* Les couleurs de Nova Desktop (`src/styles/theme.css` de l'application) :
+   la console d'une organisation ressemble à l'application que ses membres
+   utilisent. Clair par défaut, sombre quand le système l'est. */
 :root {
-  --bg: #fbfbfc;
+  --bg: #f5f5f7;
+  --sidebar: #ececee;
   --surface: #ffffff;
-  --surface-sunken: #f4f5f7;
-  --border: #e0e2e7;
-  --border-strong: #c8ccd4;
-  --text: #16181d;
-  --text-muted: #5f6672;
-  --text-faint: #8b919c;
-  --accent: #2f5bd7;
-  --accent-soft: #eaefff;
-  --ok: #1f7a45;
-  --warn: #8a5a00;
-  --danger: #b0242a;
-  --danger-soft: #fdeced;
+  --surface-sunken: #f0f0f2;
+  --border: rgba(0, 0, 0, 0.08);
+  --border-strong: rgba(0, 0, 0, 0.14);
+  --text: #1d1d1f;
+  --text-muted: #6e6e73;
+  --text-faint: #8e8e93;
+  --accent: #0a84ff;
+  --accent-soft: rgba(10, 132, 255, 0.12);
+  --ok: #248a3d;
+  --warn: #b25000;
+  --danger: #d70015;
+  --danger-soft: rgba(215, 0, 21, 0.08);
 
-  --radius: 8px;
+  --radius: 13px;
+  --radius-control: 9px;
   --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
-  --sans: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --sans: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, Roboto,
+    "Helvetica Neue", Arial, sans-serif;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #101216;
-    --surface: #171a20;
-    --surface-sunken: #1d2128;
-    --border: #272b34;
-    --border-strong: #3a404c;
-    --text: #e8eaee;
-    --text-muted: #a0a7b4;
-    --text-faint: #757d8a;
-    --accent: #7d9bff;
-    --accent-soft: #1c2440;
-    --ok: #4cc07d;
-    --warn: #d9a441;
-    --danger: #f0868b;
-    --danger-soft: #341a1d;
+    --bg: #1f1f22;
+    --sidebar: #28282c;
+    --surface: #2c2c30;
+    --surface-sunken: #1a1a1d;
+    --border: rgba(255, 255, 255, 0.07);
+    --border-strong: rgba(255, 255, 255, 0.16);
+    --text: #f2f2f4;
+    --text-muted: #98989f;
+    --text-faint: #75757c;
+    --accent: #0a84ff;
+    --accent-soft: rgba(10, 132, 255, 0.18);
+    --ok: #30d158;
+    --warn: #ff9f0a;
+    --danger: #ff453a;
+    --danger-soft: rgba(255, 69, 58, 0.14);
   }
 }
 
@@ -92,17 +99,17 @@ p {
 
 .shell {
   display: grid;
-  grid-template-columns: 232px 1fr;
+  grid-template-columns: 208px 1fr;
   min-height: 100vh;
 }
 
 .sidebar {
   border-right: 1px solid var(--border);
-  background: var(--surface);
-  padding: 20px 12px;
+  background: var(--sidebar);
+  padding: 16px 12px;
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 16px;
 }
 
 .brand {
@@ -121,22 +128,41 @@ p {
 .nav {
   display: flex;
   flex-direction: column;
+  gap: 10px;
+}
+/* Un domaine : un titre discret, puis ses pages. */
+.nav-section {
+  display: flex;
+  flex-direction: column;
   gap: 1px;
 }
+.nav-section-title {
+  padding: 6px 10px 2px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+/* Les dimensions de la barre latérale de Nova Desktop : 34 px par ligne. */
 .nav a {
-  padding: 7px 10px;
-  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  height: 34px;
+  padding: 0 10px;
+  border-radius: var(--radius-control);
   color: var(--text-muted);
   text-decoration: none;
-  font-size: 13.5px;
+  font-size: 14px;
+  transition: background-color 120ms, color 120ms;
 }
 .nav a:hover {
-  background: var(--surface-sunken);
+  background: var(--border);
   color: var(--text);
 }
 .nav a[aria-current="page"] {
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--text);
   font-weight: 500;
 }
 
@@ -273,7 +299,7 @@ button {
   font: inherit;
   font-size: 13.5px;
   padding: 6px 13px;
-  border-radius: 6px;
+  border-radius: var(--radius-control);
   border: 1px solid var(--border-strong);
   background: var(--surface);
   color: var(--text);
@@ -324,7 +350,7 @@ select {
   font: inherit;
   font-size: 13.5px;
   padding: 6px 10px;
-  border-radius: 6px;
+  border-radius: var(--radius-control);
   border: 1px solid var(--border-strong);
   background: var(--surface);
   color: var(--text);
@@ -392,9 +418,17 @@ input[aria-invalid="true"] {
     border-right: none;
     border-bottom: 1px solid var(--border);
   }
-  .nav {
+  /* En largeur réduite, les liens reprennent une seule ligne qui passe à la
+     ligne : empilés par domaine, ils s'étalaient en colonnes enchevêtrées.
+     Chaque domaine reste un groupe ; seul son titre disparaît. */
+  .nav,
+  .nav-section {
     flex-direction: row;
     flex-wrap: wrap;
+    gap: 2px;
+  }
+  .nav-section-title {
+    display: none;
   }
 }
 

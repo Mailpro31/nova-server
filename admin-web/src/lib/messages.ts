@@ -28,10 +28,26 @@ export const t = {
     members: "Members",
     learn: "Learn",
     packages: "Packages",
+    limits: "Limits",
     deployment: "Deployment",
     configuration: "Configuration",
     security: "Security",
+    audit: "Audit log",
     diagnostics: "Diagnostics",
+  },
+
+  // Les domaines de la barre latérale. Un domaine d'une seule page prête son
+  // nom au lien : « App features » mène à Configuration.
+  navGroups: {
+    overview: "Overview",
+    people: "People",
+    features: "App features",
+    learn: "Learn",
+    content: "Content",
+    limits: "Limits",
+    signIn: "Sign-in and security",
+    audit: "Audit log",
+    infrastructure: "Deployment",
   },
 
   bootstrap: {
@@ -589,6 +605,8 @@ export const t = {
     groupWriting: "Writing",
     groupInput: "Input",
     groupCategories: "App categories",
+    learningTitle: "Learn",
+    learningBody: "Show the Learn category, where members follow the organization's lessons.",
     stylesTitle: "Styles",
     // La question qu'un administrateur se pose en fermant Styles : les dictees
     // perdent-elles leur mise en forme ? Non.
@@ -620,6 +638,28 @@ export const t = {
     dictationSafe: "Microphone dictation always stays available.",
     modeRestricted:
       "Some features may still be unavailable because of this deployment's education mode.",
+  },
+
+  limits: {
+    title: "Limits",
+    lead: "Limits that apply to every member of this organization.",
+    dictationTitle: "Dictation length",
+    // Ce que vit le membre, dit a l'ecran : la limite ne perd jamais une dictee.
+    behaviour:
+      "Nova warns members 30 seconds before the limit, then stops the dictation and transcribes what was recorded. Nothing is lost.",
+    current: "Current limit",
+    defaultValue: "Default",
+    minutes: (count: number) => (count === 1 ? "1 minute" : `${count} minutes`),
+    fieldTitle: "Maximum dictation length (minutes)",
+    range: (min: number, max: number) => `Whole minutes, from ${min} to ${max}.`,
+    problems: {
+      empty: "Enter a number of minutes.",
+      whole: "Use whole minutes.",
+      range: "The limit must be between 1 and 120 minutes.",
+    },
+    groups:
+      "A group can set its own limit in Configuration, under Settings by group. When a member belongs to several groups, the shortest limit applies.",
+    readOnly: "You can view this limit, but not change it.",
   },
 
   groupPolicies: {
