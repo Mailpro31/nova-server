@@ -83,6 +83,25 @@ class CategoryPolicyDeliveryTests(AdminTestCase):
                 self.assertNotIn(capability, announced)
         self.assertIn("dictation", announced)
 
+    def test_closed_categories_are_announced_explicitly(self):
+        """Le poste ne ferme une categorie du Nova Core que sur annonce explicite.
+
+        La liste `capabilities` ne suffit pas : un serveur plus ancien, ou une
+        reponse tronquee, n'y citerait pas `history` sans l'avoir ferme, et
+        le poste ne doit jamais eteindre une fonction sur un silence.
+        """
+        self.close(generated_instructions_enabled=False, past_dictations_enabled=False,
+                   styles_enabled=False, learning_enabled=False)
+        token = self.sign_in("etudiant@example.com")
+        body = self.client.get("/api/me", headers=self.auth(token)).json()
+        self.assertEqual(
+            sorted(body["closed_capabilities"]), ["history", "learning", "prompts", "styles"])
+
+    def test_nothing_is_announced_closed_by_default(self):
+        token = self.sign_in("etudiant@example.com")
+        body = self.client.get("/api/me", headers=self.auth(token)).json()
+        self.assertEqual(body["closed_capabilities"], [])
+
     def test_closing_styles_never_stops_the_reformulation_of_dictations(self):
         self.close(styles_enabled=False)
         token = self.sign_in("etudiant@example.com")
