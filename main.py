@@ -8324,6 +8324,46 @@ def member_read_policy(account=Depends(current_account)):
     }
 
 
+def learning_version(organization_id: str) -> str:
+    """Empreinte d'Apprendre pour une organisation, reglages compris.
+
+    `catalog_version` seul ne bouge que lorsque le catalogue livre change. Les
+    decisions de l'organisation — archiver, rendre obligatoire, viser un
+    groupe — font avancer la revision de leur ligne : l'empreinte les suit.
+    """
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT lesson_id, revision FROM organization_learning_lesson_settings "
+            "WHERE organization_id=? ORDER BY lesson_id",
+            (organization_id,),
+        ).fetchall()
+    settings = hashlib.sha256(
+        "|".join(f"{row['lesson_id']}:{row['revision']}" for row in rows).encode("utf-8")
+    ).hexdigest()[:16]
+    return f"{learning.load_catalog()['catalog_version']}:{settings}"
+
+
+@app.get("/api/organization/changes")
+def member_read_changes(user: str = Depends(current_user),
+                        account=Depends(current_account)):
+    """Trois reperes pour savoir ce qui a change, sans rien telecharger.
+
+    Le poste interroge cette route souvent — c'est ce qui fait arriver un
+    changement de la console en moins d'une minute — et ne recharge la policy,
+    les packages ou Apprendre que si leur repere a bouge.
+
+    L'organisation vient du compte, jamais d'un parametre.
+    """
+    organization_id = account_organization(account)
+    return {
+        "policy_revision": organization_policy(organization_id)["revision"],
+        # La meme empreinte que `/api/organization/packages` : le poste la
+        # compare a celle qu'il detient deja.
+        "packages_version": effective_packages(organization_id)["catalog_version"],
+        "learning_version": learning_version(organization_id),
+    }
+
+
 
 # ───────────────────── Administrateurs de l'organisation ──────────────────
 #
