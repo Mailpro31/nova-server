@@ -36,6 +36,10 @@ class StructuredNotesTests(AdminTestCase):
         return {"Authorization": f"Bearer {token}"}
 
     def post(self, payload, token=None):
+        # Ces tests parlent de structure, pas de quotas : la rafale autorisee
+        # par membre ne doit pas decider du resultat a la cinquieme note.
+        main.reset_rate_limiter()
+        self.addCleanup(main.reset_rate_limiter)
         router = OrganizationAIRouter(
             FakeTextInferenceBackend(), FakeSpeechInferenceBackend()
         )

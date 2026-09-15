@@ -26,6 +26,7 @@ from urllib.parse import urlencode, urlparse
 
 import httpx
 import jwt
+from typing import Literal
 from fastapi import Depends, FastAPI, Header, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
@@ -3704,6 +3705,43 @@ class CommandRequest(BaseModel):
 
     instruction: str = Field(max_length=MAX_INFERENCE_TEXT_CHARS)
     text: str = Field(max_length=MAX_ENGINEERING_NOTES_CHARS)
+
+# Notes structurees : un type de note, une structure. Le poste choisit le type,
+# jamais la consigne — elle est ecrite ici, comme celle des notes d'ingenierie,
+# pour qu'un poste ne puisse pas faire executer n'importe quoi au modele sous
+# couvert de mise en forme.
+STRUCTURED_NOTE_TYPES: dict[str, tuple[str, ...]] = {
+    "meeting": ("Summary", "Decisions", "Action items (owner and deadline when stated)",
+                "Open questions"),
+    "lecture": ("Summary", "Key concepts", "Definitions and formulas", "Examples",
+                "Questions to review"),
+    "observation": ("Observation", "Hypothesis", "Method", "Result", "Action"),
+    "ideas": ("Ideas", "Why they matter", "Open questions", "Next steps"),
+    "free": ("Summary", "Key points", "Details", "Next steps"),
+}
+StructuredNoteType = Literal["meeting", "lecture", "observation", "ideas", "free"]
+
+
+def structured_notes_instruction(note_type: str, member_instruction: str = "") -> str:
+    sections = ", ".join(STRUCTURED_NOTE_TYPES[note_type])
+    instruction = (
+        f"Organize the raw notes into these sections, in this order: {sections}. "
+        "Give each section a short heading and use bullet points inside it. Omit a "
+        "section that has nothing to put in it. Keep every fact, number, name and "
+        "date exactly as written, never invent anything, and mark what is unclear "
+        "as uncertain. Write in the same language as the notes."
+    )
+    if member_instruction.strip():
+        instruction += f"\nAdditional instruction: {member_instruction.strip()}"
+    return instruction
+
+
+class StructuredNotesRequest(BaseModel):
+    """Le corps de `/api/structured-notes`. Sans type, la note est libre."""
+
+    text: str = Field(max_length=MAX_ENGINEERING_NOTES_CHARS)
+    note_type: StructuredNoteType = "free"
+    instruction: str = Field(default="", max_length=MAX_INFERENCE_TEXT_CHARS)
 
 class EntraStartRequest(BaseModel):
     machine: str = "poste inconnu"
@@ -9777,6 +9815,26 @@ async def engineering_notes(body: CommandRequest, user: str = Depends(current_us
         prompt += f"\n\n{context}"
     return {"text": await execute_text(TaskType.ENGINEERING_NOTES, prompt, source_text)}
 
+
+@app.post("/api/structured-notes",
+          dependencies=[Depends(product_capability("engineeringNotes", "engineering_notes"))])
+async def structured_notes(body: StructuredNotesRequest, user: str = Depends(current_user),
+                           account=Depends(current_account)):
+    """Des notes brutes rangees selon le type choisi par le membre.
+
+    Meme capacite, meme policy et meme quota que `/api/engineering-notes`, qui
+    reste en place pour les postes deja installes : c'est la meme fonction,
+    ouverte au-dela d'un seul metier.
+    """
+    organization_id = account_organization(account)
+    enforce_inference_quota("text", user, organization_id)
+    context, snippets = writing_context(user, organization_id)
+    source_text = apply_snippets(body.text, snippets)
+    prompt = structured_notes_instruction(body.note_type, body.instruction)
+    if context:
+        prompt += f"\n\n{context}"
+    text = await execute_text(TaskType.ENGINEERING_NOTES, prompt, source_text)
+    return {"text": text, "note_type": body.note_type}
 
 # ================================================================ LEARN
 #

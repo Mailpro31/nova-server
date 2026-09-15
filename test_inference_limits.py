@@ -50,6 +50,7 @@ TEXT_ROUTES = (
     ("/api/reformulate", {"text": "bonjour"}),
     ("/api/command", {"instruction": "resume", "text": "bonjour"}),
     ("/api/engineering-notes", {"instruction": "ignore", "text": "bonjour"}),
+    ("/api/structured-notes", {"note_type": "free", "text": "bonjour"}),
 )
 
 
