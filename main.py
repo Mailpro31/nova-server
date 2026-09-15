@@ -2184,13 +2184,31 @@ class PolicySetting:
     de la configuration du produit sans que personne ne sache la relire.
     """
 
-    def __init__(self, key: str, kind: type, default, capability: str | None):
+    def __init__(self, key: str, kind: type, default, capability: str | None,
+                 minimum: int | None = None, maximum: int | None = None):
         self.key = key
         self.kind = kind
         self.default = default
         # La capacite produit que cette policy contraint, cote poste. `None`
         # pour une policy qui n'en gouverne aucune directement.
         self.capability = capability
+        # Bornes d'une valeur entiere. Un type seul laisserait passer une duree
+        # de zero seconde, qui couperait la dictee sans que personne l'ait voulu.
+        self.minimum = minimum
+        self.maximum = maximum
+
+    def accepts(self, value) -> bool:
+        # `isinstance(True, int)` vaut vrai : sans ce controle, un booleen
+        # passerait pour un entier et reciproquement.
+        if isinstance(value, bool) != (self.kind is bool):
+            return False
+        if not isinstance(value, self.kind):
+            return False
+        if self.minimum is not None and value < self.minimum:
+            return False
+        if self.maximum is not None and value > self.maximum:
+            return False
+        return True
 
 
 # ## Ce qui entre ici, et ce qui n'y entre pas
@@ -2221,6 +2239,12 @@ POLICY_SETTINGS: dict[str, PolicySetting] = {
         PolicySetting("engineering_notes_enabled", bool, True, "engineeringNotes"),
         PolicySetting("file_import_enabled", bool, True, "fileTranscription"),
         PolicySetting("learning_enabled", bool, True, "learning"),
+        # Une duree, pas un interrupteur : elle ne ferme aucune capacite. Elle
+        # protege le moteur partage d'un enregistrement sans fin. Le poste
+        # previent avant la limite et arrete ; `/api/transcribe` refuse ce qui
+        # la depasse, pour qu'un poste ancien ne la contourne pas.
+        PolicySetting("max_dictation_seconds", int, 600, None,
+                      minimum=30, maximum=7200),
     )
 }
 
@@ -2263,11 +2287,7 @@ def validate_policy_settings(candidate: dict) -> dict:
     overrides = {}
     for key, value in candidate.items():
         setting = POLICY_SETTINGS[key]
-        # `isinstance(True, int)` vaut vrai : sans ce controle, un booleen
-        # passerait pour un entier et reciproquement.
-        if setting.kind is bool and not isinstance(value, bool):
-            raise ValueError(f"POLICY_VALUE_INVALID:{key}")
-        if not isinstance(value, setting.kind):
+        if not setting.accepts(value):
             raise ValueError(f"POLICY_VALUE_INVALID:{key}")
         if value != setting.default:
             overrides[key] = value
@@ -2293,9 +2313,7 @@ def read_policy_settings(raw: str | None) -> dict:
         if key not in stored:
             continue
         value = stored[key]
-        if setting.kind is bool and not isinstance(value, bool):
-            continue
-        if not isinstance(value, setting.kind):
+        if not setting.accepts(value):
             continue
         overrides[key] = value
     return overrides
@@ -3953,6 +3971,11 @@ def public_campus_config(organization_id: str | None = None) -> dict:
     # document, et sans qu'aucun detail de gouvernance ne transite par un
     # endpoint public.
     config["policy_revision"] = policy["revision"]
+    # Les bornes que le poste applique lui-meme, pour prevenir avant d'arreter
+    # plutot que de voir son enregistrement refuse apres coup.
+    config["limits"] = {
+        "max_dictation_seconds": policy["settings"]["max_dictation_seconds"],
+    }
     return config
 
 # ---------------------------------------------------------------- app
@@ -9599,6 +9622,53 @@ def reject_oversized_declaration(content_length: int | None, limit: int) -> None
         raise auth_error(413, "PAYLOAD_TOO_LARGE")
 
 
+# Le poste arrete l'enregistrement a la limite ; l'arret lui-meme et l'en-tete
+# ajoutent quelques fractions de seconde. Refuser a la seconde pres rejetterait
+# precisement les dictees que le poste a correctement bornees.
+DICTATION_LIMIT_TOLERANCE_SECONDS = 5
+_WAV_HEADER_PROBE_BYTES = 64 * 1024
+
+
+def wav_duration_seconds(header: bytes) -> float | None:
+    """La duree annoncee par l'en-tete d'un WAV, ou `None` si on ne sait pas.
+
+    Seul l'en-tete est lu : le moteur n'est pas sollicite pour mesurer ce
+    qu'il refusera peut-etre. Un flux dont la taille n'est pas ecrite
+    (0 ou 0xFFFFFFFF) ne se mesure pas.
+    """
+    if len(header) < 12 or header[:4] != b"RIFF" or header[8:12] != b"WAVE":
+        return None
+    byte_rate = None
+    offset = 12
+    while offset + 8 <= len(header):
+        chunk_id = header[offset:offset + 4]
+        chunk_size = int.from_bytes(header[offset + 4:offset + 8], "little")
+        body = offset + 8
+        if chunk_id == b"fmt " and body + 12 <= len(header):
+            byte_rate = int.from_bytes(header[body + 8:body + 12], "little")
+        elif chunk_id == b"data":
+            if not byte_rate or chunk_size in (0, 0xFFFFFFFF):
+                return None
+            return chunk_size / byte_rate
+        offset = body + chunk_size + (chunk_size & 1)
+    return None
+
+
+async def reject_overlong_dictation(file: UploadFile, organization_id: str) -> None:
+    """Refuse une dictee plus longue que ce que l'organisation autorise.
+
+    Ce qui ne se mesure pas passe : couper la dictee d'un client qui envoie un
+    autre format serait pire que le risque, et la borne en octets s'applique
+    toujours.
+    """
+    limit = organization_policy(organization_id)["settings"]["max_dictation_seconds"]
+    header = await file.read(_WAV_HEADER_PROBE_BYTES)
+    await file.seek(0)
+    duration = wav_duration_seconds(header)
+    if duration is not None and duration > limit + DICTATION_LIMIT_TOLERANCE_SECONDS:
+        raise HTTPException(413, {"code": "DICTATION_TOO_LONG", "max_seconds": limit})
+
+
 def runtime_http_error(error: AIRuntimeError, task_type: TaskType) -> HTTPException:
     status_by_code = {
         AI_RUNTIME_BUSY: 429,
@@ -9664,6 +9734,8 @@ async def transcribe(
     """
     reject_oversized_declaration(content_length, MAX_TRANSCRIBE_AUDIO_BYTES)
     enforce_inference_quota("transcribe", user, account_organization(account))
+    await reject_overlong_dictation(
+        file, account_organization(account) or nova_organization_id())
     return await transcribe_audio(
         file, user, TaskType.TRANSCRIPTION_REALTIME, MAX_TRANSCRIBE_AUDIO_BYTES
     )
