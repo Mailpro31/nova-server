@@ -1,0 +1,1096 @@
+{
+  "catalog_version": 2,
+  "locale": "vi",
+  "paths": [
+    {
+      "id": "getting-started",
+      "pillar": "learn_ai",
+      "title": "Khởi đầu vững vàng",
+      "description": "AI làm tốt điều gì, sai ở đâu, và cách làm việc cùng nó.",
+      "icon": "brain",
+      "order": 1,
+      "tags": [
+        "general"
+      ],
+      "modules": [
+        {
+          "id": "getting-started-foundations",
+          "title": "Nền tảng",
+          "description": "Đủ để dùng AI một cách tỉnh táo ngay từ ngày đầu.",
+          "order": 1,
+          "lessons": [
+            {
+              "id": "working-with-ai",
+              "title": "Làm việc cùng AI",
+              "description": "Hiểu AI làm được gì và không làm được gì.",
+              "estimated_minutes": 3,
+              "difficulty": "beginner",
+              "order": 1,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "idea",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "heading": "Kiến thức cơ bản về AI",
+                    "body": "AI có thể nhanh chóng đưa ra các phương án hữu ích, nhưng câu chữ trôi chảy không chứng minh câu trả lời là đúng."
+                  }
+                },
+                {
+                  "id": "scenario",
+                  "type": "example",
+                  "order": 2,
+                  "content": {
+                    "label": "Tình huống",
+                    "body": "Một trợ lý AI đề xuất một lựa chọn thiết kế cho dự án hàng không vũ trụ và trình bày rất tự tin."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 3,
+                  "content": {
+                    "question": "Vai trò hữu ích nhất của AI ở đây là gì?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Thay thế quyết định kỹ thuật."
+                      },
+                      {
+                        "id": "b",
+                        "label": "Đưa ra một giải pháp khả dĩ để kỹ sư đánh giá."
+                      },
+                      {
+                        "id": "c",
+                        "label": "Chấp thuận lựa chọn vì lời giải thích nghe có vẻ chuyên môn."
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "Hãy dùng AI để mở rộng các phương án bạn có thể xem xét. Phán đoán kỹ thuật vẫn chịu trách nhiệm về giả định, bằng chứng và quyết định cuối cùng."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 4,
+                  "content": {
+                    "body": "Dùng AI để mở rộng các phương án bạn xem xét. Quyết định, cùng lý do đằng sau nó, vẫn là của bạn."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "what-an-llm-does",
+              "title": "LLM thực sự làm gì",
+              "description": "Nó dự đoán văn bản. Chỉ riêng điều đó đã giải thích phần lớn cách nó hoạt động.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 2,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Một mô hình ngôn ngữ không tra cứu thông tin và cũng không suy luận như con người. Nó dự đoán đoạn văn bản nào có khả năng xuất hiện tiếp theo. Gần như mọi điều đáng ngạc nhiên ở các hệ thống này đều bắt nguồn từ câu đó."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Dự đoán, được huấn luyện ở quy mô lớn",
+                    "body": "Trong quá trình huấn luyện, mô hình đã đọc một lượng văn bản khổng lồ và trở nên rất giỏi trong việc viết tiếp. Không có gì được lưu lại dưới dạng dữ kiện trong một cơ sở dữ liệu. Thứ nó học được là từ nào thường đi sau từ nào – trong ngữ pháp, trong cấu trúc lập luận, trong mã nguồn và trong các quy ước.\n\nVì vậy nó viết trôi chảy về những điều nó không có cách nào biết, và vì vậy sự trôi chảy không chứng minh được độ chính xác."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "Vì sao biết điều này lại hữu ích",
+                    "body": "Hỏi một công thức quen thuộc và bạn thường nhận được câu trả lời đúng – nó đã xuất hiện nhiều lần trong dữ liệu huấn luyện.\n\nHỏi số trang của một trích dẫn trong một ấn bản cụ thể và bạn có thể nhận được một con số bịa đặt đầy tự tin. Đó là một phần viết tiếp hợp lý. Nó chưa bao giờ là một lần tra cứu."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 4,
+                  "content": {
+                    "question": "Vì sao một mô hình có thể viết ra câu trả lời trôi chảy nhưng sai?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Sự trôi chảy và độ chính xác đến từ cùng một quá trình – viết tiếp một cách hợp lý"
+                      },
+                      {
+                        "id": "b",
+                        "label": "Nó hết bộ nhớ"
+                      },
+                      {
+                        "id": "c",
+                        "label": "Nó được huấn luyện bằng văn bản sai ngữ pháp"
+                      }
+                    ],
+                    "correct_option_id": "a",
+                    "explanation": "Nghe có vẻ đúng và thực sự đúng đến từ cùng một cơ chế. Vì thế văn phong của câu trả lời không nói lên điều gì về tính đúng sai của nó."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 5,
+                  "content": {
+                    "body": "Nó dự đoán văn bản. Sự tự tin là đặc điểm của cách viết, không phải của dữ kiện."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "context-and-tokens",
+              "title": "Ngữ cảnh và token",
+              "description": "Vì sao các cuộc trò chuyện dài dễ lạc hướng, và mô hình thực sự nhìn thấy gì.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 3,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Giữa một cuộc trò chuyện dài, mô hình quên mất một điều kiện bạn đặt ra từ đầu. Nó không cẩu thả. Những gì nó có thể nhìn thấy cùng lúc có giới hạn, và bạn đã vượt qua giới hạn đó."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Token và cửa sổ ngữ cảnh",
+                    "body": "Văn bản được chia thành các token – đại khái là các mảnh của từ. Trong tiếng Anh, một token thường tương đương khoảng ba phần tư một từ. Mọi thứ mô hình xem xét cùng lúc, gồm cả tin nhắn của bạn và câu trả lời của nó, đều phải nằm vừa trong một cửa sổ ngữ cảnh có kích thước cố định.\n\nKhi cuộc trò chuyện dài hơn cửa sổ đó, những phần đầu tiên không còn được nhìn thấy. Mô hình không ghi nhớ cuộc trò chuyện; nó đọc lại những gì vẫn còn vừa."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "Điều này thay đổi gì trong thực tế",
+                    "body": "Nếu một quy tắc quan trọng – “luôn trả lời bằng tiếng Việt”, “không bao giờ quá 200 từ” – hãy nhắc lại nó trong tin nhắn cần đến nó, thay vì tin rằng nó vẫn còn sau hai mươi lượt trao đổi.\n\nVà nếu cuộc trò chuyện đã lạc hướng xa, bắt đầu một cuộc trò chuyện mới kèm bản tóm tắt rõ ràng thường tốt hơn là tiếp tục một cuộc trò chuyện đã quá tải."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 4,
+                  "content": {
+                    "question": "Một cuộc trò chuyện dài không còn làm theo chỉ dẫn được đưa ra từ đầu. Nguyên nhân có khả năng nhất là gì?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Chỉ dẫn đã trôi ra khỏi cửa sổ ngữ cảnh"
+                      },
+                      {
+                        "id": "b",
+                        "label": "Mô hình quyết định phớt lờ bạn"
+                      },
+                      {
+                        "id": "c",
+                        "label": "Chỉ dẫn sai ngữ pháp"
+                      }
+                    ],
+                    "correct_option_id": "a",
+                    "explanation": "Điều gì không còn trong cửa sổ thì coi như chưa từng được nói. Hãy nhắc lại điều kiện ở chỗ nó quan trọng."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 5,
+                  "content": {
+                    "body": "Mô hình nhìn thấy một cửa sổ, không phải một trí nhớ. Hãy nhắc lại điều quan trọng và bắt đầu lại khi cuộc trò chuyện quá tải."
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "asking-well",
+      "pillar": "use_ai",
+      "title": "Hỏi đúng cách",
+      "description": "Nhận câu trả lời tốt hơn nhờ đặt câu hỏi tốt hơn.",
+      "icon": "message-square",
+      "order": 2,
+      "tags": [
+        "general"
+      ],
+      "modules": [
+        {
+          "id": "use-ai-foundations",
+          "title": "Những thói quen làm thay đổi câu trả lời",
+          "description": "Ba thói quen làm thay đổi câu trả lời bạn nhận được.",
+          "order": 1,
+          "lessons": [
+            {
+              "id": "ask-better-questions",
+              "title": "Đặt câu hỏi tốt hơn",
+              "description": "Nói rõ bạn muốn gì, cho ai và dưới hình thức nào.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 1,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Bạn yêu cầu một bản tóm tắt. Thứ bạn nhận lại là ba đoạn văn nhạt nhẽo mà dù sao bạn cũng phải viết lại. Mô hình không thất bại – chỉ là không ai nói cho nó biết một câu trả lời tốt trông như thế nào."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Một yêu cầu có ba phần",
+                    "body": "Một yêu cầu hữu ích nêu rõ nhiệm vụ, người đọc và hình thức của câu trả lời. Thiếu bất kỳ phần nào, mô hình sẽ lấp chỗ trống bằng một phỏng đoán trung bình. Nhiệm vụ cho biết cần làm gì. Người đọc quyết định từ ngữ và mức độ chi tiết. Hình thức – độ dài, định dạng, những gì cần giữ lại – là thứ giúp bạn không phải viết lại kết quả."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "comparison",
+                  "order": 3,
+                  "content": {
+                    "worse_label": "Mơ hồ",
+                    "worse": "Tóm tắt cái này.",
+                    "better_label": "Cụ thể",
+                    "better": "Tóm tắt văn bản này thành 5 gạch đầu dòng cho người mới tìm hiểu chủ đề. Giữ lại các số liệu quan trọng, và kết thúc bằng 2 ý đáng nhớ nhất.",
+                    "note": "Phiên bản thứ hai nêu rõ nhiệm vụ, người đọc và hình thức. Nó chẳng có gì khéo léo – nó chỉ đầy đủ."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 4,
+                  "content": {
+                    "question": "Yêu cầu “Viết lại email này cho ngắn hơn” còn thiếu phần nào?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Nhiệm vụ"
+                      },
+                      {
+                        "id": "b",
+                        "label": "Người đọc"
+                      },
+                      {
+                        "id": "c",
+                        "label": "Không thiếu gì cả"
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "Nhiệm vụ và hình thức đều có. Ai đọc nó – một khách hàng, quản lý của bạn, một đồng nghiệp – quyết định giọng điệu, và mô hình phải đoán điều đó."
+                  }
+                },
+                {
+                  "id": "try-it",
+                  "type": "prompt_exercise",
+                  "order": 5,
+                  "content": {
+                    "instruction": "Viết lại yêu cầu này sao cho nó nêu rõ nhiệm vụ, người đọc và hình thức.",
+                    "starting_text": "Giải thích học máy.",
+                    "hint": "Ai sẽ đọc? Nên dài bao nhiêu? Câu trả lời phải có những gì?",
+                    "sample_answer": "Giải thích học máy cho một đồng nghiệp không có nền tảng kỹ thuật, dưới 150 từ, dùng một ví dụ đời thường và không dùng thuật ngữ chuyên môn."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "Nhiệm vụ, người đọc, hình thức. Khi câu trả lời gây thất vọng, một trong ba phần đó đã bị thiếu."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "give-useful-context",
+              "title": "Cung cấp ngữ cảnh hữu ích",
+              "description": "Mô hình cần biết điều gì, và điều gì chỉ gây nhiễu.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 2,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Mô hình không biết gì về dự án, nhóm của bạn hay quyết định bạn đưa ra tuần trước. Nó trả lời dựa trên những gì có trước mặt – và với mọi thứ bạn bỏ sót, nó sẽ bịa ra một thứ thay thế nghe có vẻ hợp lý."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Ngữ cảnh là thứ làm thay đổi câu trả lời",
+                    "body": "Ngữ cảnh hữu ích là bất cứ điều gì có thể làm thay đổi câu trả lời của một người có chuyên môn: các ràng buộc, đối tượng, những gì bạn đã thử, định dạng bạn phải tuân theo. Mọi thứ khác đều là nhiễu. Dán cả một tài liệu khi chỉ ba câu là quan trọng không làm câu trả lời tốt hơn – nó chỉ làm loãng điều bạn thực sự muốn."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "Cùng một câu hỏi, ngữ cảnh khác",
+                    "body": "“Thiết kế này có tốt không?” nhận về một danh sách kiểm tra chung chung.\n\n“Thiết kế này có tốt cho một nhóm ba người phát hành hằng tuần và không có kỹ sư vận hành riêng không?” nhận về câu trả lời về chi phí vận hành – vì ràng buộc đã được nêu ra."
+                  }
+                },
+                {
+                  "id": "warning",
+                  "type": "warning",
+                  "order": 4,
+                  "content": {
+                    "body": "Ngữ cảnh không phải nơi để dán bí mật. Thông tin đăng nhập, dữ liệu cá nhân của người khác và tài liệu mật không trở nên an toàn chỉ vì chúng hữu ích."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 5,
+                  "content": {
+                    "question": "Bạn muốn góp ý cho một hồ sơ xin việc. Chi tiết nào đáng để thêm vào?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Vị trí ứng tuyển và yêu cầu trong tin tuyển dụng"
+                      },
+                      {
+                        "id": "b",
+                        "label": "Địa chỉ đầy đủ và ngày sinh của bạn"
+                      },
+                      {
+                        "id": "c",
+                        "label": "Ngày bạn bắt đầu viết hồ sơ"
+                      }
+                    ],
+                    "correct_option_id": "a",
+                    "explanation": "Vị trí ứng tuyển làm thay đổi câu trả lời. Địa chỉ của bạn thì không – và đó là dữ liệu cá nhân chẳng có lý do gì để xuất hiện ở đó."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "Thêm những gì có thể thay đổi câu trả lời của một người có chuyên môn. Bỏ qua phần còn lại, và đừng bao giờ dán những gì bạn không muốn bị lưu lại."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "iterate-instead-of-restarting",
+              "title": "Chỉnh sửa thay vì làm lại từ đầu",
+              "description": "Giá trị nằm ở tin nhắn thứ hai.",
+              "estimated_minutes": 3,
+              "difficulty": "beginner",
+              "order": 3,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Câu trả lời gần như đúng rồi. Phần lớn mọi người xóa nó đi và viết lại toàn bộ yêu cầu. Làm vậy là vứt bỏ luôn phần đã ổn."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Sửa, đừng làm lại",
+                    "body": "Hãy coi câu trả lời đầu tiên là một bản nháp bạn có thể chỉnh sửa bằng cách trò chuyện. Nói rõ điều gì cần giữ, rồi điều gì cần thay đổi. “Giữ nguyên cấu trúc, làm cho ý thứ hai cụ thể hơn, bỏ đoạn cuối” sẽ đưa bạn đến đích chỉ trong một bước. Làm lại từ đầu là gieo xúc xắc thêm lần nữa."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "comparison",
+                  "order": 3,
+                  "content": {
+                    "worse_label": "Làm lại từ đầu",
+                    "worse": "Đó không phải điều tôi muốn. Viết cho tôi một bản tóm tắt tốt hơn.",
+                    "better_label": "Chỉnh sửa",
+                    "better": "Cấu trúc tốt. Ý 2 quá trừu tượng – thay bằng con số chính xác trong văn bản. Bỏ đoạn kết.",
+                    "note": "Cách thứ hai giữ lại những gì đã ổn. Cách thứ nhất bắt mô hình đoán lại, mà không có thêm thông tin nào so với trước."
+                  }
+                },
+                {
+                  "id": "tip",
+                  "type": "tip",
+                  "order": 4,
+                  "content": {
+                    "body": "Nếu hai lượt chỉnh sửa vẫn không ra kết quả, vấn đề thường nằm ở yêu cầu ban đầu chứ không phải ở câu trả lời. Hãy quay lại và bổ sung phần còn thiếu."
+                  }
+                },
+                {
+                  "id": "practice",
+                  "type": "prompt_exercise",
+                  "order": 5,
+                  "content": {
+                    "instruction": "Câu trả lời bạn nhận được quá trang trọng và quá dài. Hãy viết lời chỉnh sửa – đừng viết lại yêu cầu.",
+                    "starting_text": "",
+                    "hint": "Nêu một điều cần giữ và hai điều cần thay đổi.",
+                    "sample_answer": "Giữ ba phần. Rút gọn còn khoảng một nửa, và dùng giọng điệu như khi nói với đồng nghiệp thay vì với khách hàng."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "Nói điều cần giữ trước khi nói điều cần thay đổi. Làm lại từ đầu sẽ vứt bỏ phần vốn đã ổn."
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "verify-and-protect",
+      "pillar": "learn_ai",
+      "title": "Kiểm tra và bảo vệ",
+      "description": "Kiểm tra điều quan trọng và bảo vệ thông tin nhạy cảm.",
+      "icon": "shield-check",
+      "order": 3,
+      "tags": [
+        "general"
+      ],
+      "modules": [
+        {
+          "id": "verify-and-protect-foundations",
+          "title": "Tin, nhưng phải kiểm tra",
+          "description": "Câu trả lời sai ở đâu, và điều gì không bao giờ được chia sẻ.",
+          "order": 1,
+          "lessons": [
+            {
+              "id": "why-ai-hallucinates",
+              "title": "Vì sao AI có thể “ảo giác”",
+              "description": "Và cách nhận biết câu trả lời nào cần kiểm tra.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 1,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Ảo giác không phải là lỗi hỏng hóc. Đó là hệ thống làm đúng việc của nó – tạo ra phần viết tiếp hợp lý – ở một chỗ mà điều hợp lý và điều đúng đã tách rời nhau."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Rủi ro tập trung ở đâu",
+                    "body": "Việc bịa đặt dễ xảy ra nhất ở những chỗ văn bản cụ thể và kiểm chứng được nhưng hiếm gặp: trích dẫn chính xác, số trang, số liệu thống kê, dẫn chiếu pháp lý, phương thức API, tiểu sử cá nhân. Mô hình đã thấy hình dạng của những thứ này hàng nghìn lần, nên nó có thể tạo ra một phiên bản thuyết phục khi được yêu cầu.\n\nNó ít xảy ra nhất khi câu trả lời là kiến thức phổ thông, hoặc khi chính bạn đã cung cấp văn bản nguồn."
+                  }
+                },
+                {
+                  "id": "tip",
+                  "type": "tip",
+                  "order": 3,
+                  "content": {
+                    "body": "Hỏi “nguồn của bạn là gì?” tự nó không giúp được gì – nguồn cũng có thể bị bịa ra. Kiểm tra nguồn mới giúp được."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 4,
+                  "content": {
+                    "question": "Câu trả lời nào đáng được kiểm tra nhất?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Bản viết lại một đoạn văn bạn đã dán vào"
+                      },
+                      {
+                        "id": "b",
+                        "label": "Một số liệu thống kê cụ thể kèm năm và tỷ lệ phần trăm"
+                      },
+                      {
+                        "id": "c",
+                        "label": "Một danh sách ý tưởng đặt tên cho nhóm"
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "Cụ thể, kiểm chứng được và không do bạn cung cấp – đó chính là nơi một điều bịa đặt nghe hợp lý khó phát hiện nhất."
+                  }
+                },
+                {
+                  "id": "reflection",
+                  "type": "reflection",
+                  "order": 5,
+                  "content": {
+                    "prompt": "Hãy nghĩ về một việc bạn dùng AI để làm. Phần nào trong câu trả lời sẽ gây ra rắc rối thật sự nếu nó sai mà không ai nhận ra?",
+                    "hint": "Đó là phần cần kiểm tra, mỗi lần."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "Hãy kiểm tra những gì cụ thể, kiểm chứng được và không đến từ bạn. Đừng tin điều gì chỉ vì nó nghe có vẻ chắc chắn."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "verify-output",
+              "title": "Kiểm chứng kết quả",
+              "description": "Kiểm tra phép tính, nguồn, nhận định và giả định.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 2,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "idea",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "heading": "Kiểm chứng",
+                    "body": "Kiểm chứng là một bước kỹ thuật riêng. Hỏi lại chính mô hình đó xem nó có chắc không thì không phải là kiểm tra độc lập."
+                  }
+                },
+                {
+                  "id": "scenario",
+                  "type": "example",
+                  "order": 2,
+                  "content": {
+                    "label": "Tình huống",
+                    "body": "Một AI đưa cho bạn phép tính tải trọng cho một phân tích kết cấu."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 3,
+                  "content": {
+                    "question": "Bạn nên làm gì trước khi dùng nó?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Dùng ngay vì đã có đơn vị."
+                      },
+                      {
+                        "id": "b",
+                        "label": "Kiểm chứng độc lập các giả định, đơn vị và phép tính."
+                      },
+                      {
+                        "id": "c",
+                        "label": "Hỏi AI xem nó có chắc không."
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "Hãy kiểm tra trường hợp tải, đơn vị, phương trình và điều kiện biên bằng phương pháp hoặc nguồn đáng tin cậy trước khi dựa vào kết quả."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 4,
+                  "content": {
+                    "body": "Kiểm tra những gì bạn dựa vào bằng một phương pháp hoặc nguồn mà mô hình không kiểm soát. Hỏi lại mô hình không phải là kiểm tra."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "confidential-information",
+              "title": "Thông tin bảo mật",
+              "description": "Biết những gì không được gửi đến hệ thống chưa được phép.",
+              "estimated_minutes": 3,
+              "difficulty": "beginner",
+              "order": 3,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "idea",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "heading": "Quyền riêng tư",
+                    "body": "Chỉ chia sẻ dữ liệu mà công cụ và cơ sở đào tạo của bạn được phép xử lý."
+                  }
+                },
+                {
+                  "id": "scenario",
+                  "type": "example",
+                  "order": 2,
+                  "content": {
+                    "label": "Tình huống",
+                    "body": "Một tài liệu dự án chứa mã số sinh viên, dữ liệu nhà cung cấp và một token truy cập nội bộ."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 3,
+                  "content": {
+                    "question": "Bước tiếp theo có trách nhiệm là gì?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Dán toàn bộ vì đây là bài tập học thuật."
+                      },
+                      {
+                        "id": "b",
+                        "label": "Chỉ xóa tên sinh viên."
+                      },
+                      {
+                        "id": "c",
+                        "label": "Dùng hệ thống đã được phê duyệt và xóa thông tin bí mật cùng dữ liệu cá nhân hoặc bảo mật không cần thiết."
+                      }
+                    ],
+                    "correct_option_id": "c",
+                    "explanation": "Cả việc được cấp phép lẫn giảm thiểu dữ liệu đều quan trọng. Tuyệt đối không đưa thông tin đăng nhập vào, và cần loại bỏ bối cảnh nhạy cảm không cần thiết."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 4,
+                  "content": {
+                    "body": "Chỉ chia sẻ những gì công cụ được phép xử lý, loại bỏ bí mật và dữ liệu cá nhân không cần thiết, và không bao giờ dán thông tin đăng nhập."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "responsible-use",
+              "title": "Sử dụng có trách nhiệm",
+              "description": "Nhận biết khi nào việc dùng AI là phù hợp, bị hạn chế hoặc bị cấm.",
+              "estimated_minutes": 3,
+              "difficulty": "beginner",
+              "order": 4,
+              "version": 1,
+              "tags": [
+                "general",
+                "student"
+              ],
+              "blocks": [
+                {
+                  "id": "idea",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "heading": "Thực hành có trách nhiệm",
+                    "body": "Cách dùng đúng phụ thuộc vào nhiệm vụ, quy định của môn học, việc công cụ có được phép hay không và mức độ trách nhiệm của con người cần có."
+                  }
+                },
+                {
+                  "id": "scenario",
+                  "type": "example",
+                  "order": 2,
+                  "content": {
+                    "label": "Tình huống",
+                    "body": "Quy định của một bài tập được chấm điểm không nói rõ về việc dùng AI tạo sinh hỗ trợ."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 3,
+                  "content": {
+                    "question": "Bạn nên làm gì?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Lặng lẽ dùng AI vì có lẽ ai cũng làm vậy."
+                      },
+                      {
+                        "id": "b",
+                        "label": "Để AI làm bài nộp cuối cùng rồi sửa vài chữ."
+                      },
+                      {
+                        "id": "c",
+                        "label": "Xem lại quy định của môn học, hỏi khi chưa rõ và khai báo sự hỗ trợ được phép."
+                      }
+                    ],
+                    "correct_option_id": "c",
+                    "explanation": "Sử dụng có trách nhiệm là tôn trọng mục tiêu học tập và các quy định đã nêu. Khi quy định chưa rõ, hãy làm rõ trước khi dựa vào AI."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 4,
+                  "content": {
+                    "body": "Nắm rõ quy định của nhiệm vụ trước khi dùng AI, hỏi lại khi chưa rõ, và nói rõ bạn đã dùng sự hỗ trợ nào."
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "adapt-to-your-field",
+      "pillar": "adapt_ai",
+      "title": "Phù hợp với lĩnh vực của bạn",
+      "description": "Để AI thích nghi với công việc của bạn, chứ không phải ngược lại.",
+      "icon": "settings-2",
+      "order": 4,
+      "tags": [
+        "general",
+        "student",
+        "engineering",
+        "marketing",
+        "developer",
+        "creator",
+        "management"
+      ],
+      "modules": [
+        {
+          "id": "adapt-ai-foundations",
+          "title": "Điều chỉnh theo công việc",
+          "description": "Từ những câu trả lời đơn lẻ đến thứ có thể dùng lại.",
+          "order": 1,
+          "lessons": [
+            {
+              "id": "an-assistant-for-your-work",
+              "title": "Biến AI thành trợ lý cho công việc hoặc học tập",
+              "description": "Mô tả hoàn cảnh của bạn một lần, và thôi lặp lại nó.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 1,
+              "version": 1,
+              "tags": [
+                "general",
+                "student",
+                "management"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Phần lớn mọi người giải thích lại mình là ai và đang làm gì trong mỗi yêu cầu. Trợ lý thực sự tiết kiệm thời gian là trợ lý bạn đã mô tả một lần."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Một chỉ dẫn cố định",
+                    "body": "Một chỉ dẫn cố định là ba hoặc bốn câu luôn đúng qua nhiều yêu cầu: vai trò của bạn, đối tượng bạn thường viết cho, giọng điệu bạn muốn, và những điều bạn không bao giờ muốn. Viết một lần, nó biến mọi yêu cầu sau đó thành yêu cầu ngắn.\n\nTrong Nova, đó chính là công dụng của một phong cách viết: chỉ dẫn nằm ở một chỗ và được áp dụng mỗi khi bạn chọn nó."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "Một chỉ dẫn cố định",
+                    "body": "“Tôi là sinh viên năm hai ngành kỹ thuật. Tôi viết báo cáo thí nghiệm cho một giảng viên coi trọng sự chính xác hơn độ dài. Dùng tiếng Việt rõ ràng, mang tính kỹ thuật. Không bao giờ thêm phần mở đầu hay kết luận lặp lại nội dung chính.”\n\nGiờ đây mỗi yêu cầu sau đó chỉ cần hai dòng thay vì mười."
+                  }
+                },
+                {
+                  "id": "practice",
+                  "type": "prompt_exercise",
+                  "order": 4,
+                  "content": {
+                    "instruction": "Viết chỉ dẫn cố định của riêng bạn trong ba hoặc bốn câu.",
+                    "starting_text": "",
+                    "hint": "Vai trò, đối tượng thường gặp, giọng điệu, và một điều bạn không bao giờ muốn.",
+                    "sample_answer": "Tôi là quản lý sản phẩm, viết cho kỹ sư và nhà thiết kế. Hãy cụ thể và ngắn gọn; ưu tiên ví dụ hơn tính từ. Không bao giờ mở đầu bằng việc tóm tắt lại điều tôi vừa hỏi."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 5,
+                  "content": {
+                    "body": "Mô tả hoàn cảnh của bạn một lần, ở một nơi được lưu lại. Sau đó mọi yêu cầu đều ngắn hơn."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "build-a-reusable-workflow",
+              "title": "Xây dựng một quy trình dùng lại được",
+              "description": "Biến một việc bạn lặp đi lặp lại thành thứ chỉ cần chạy.",
+              "estimated_minutes": 4,
+              "difficulty": "intermediate",
+              "order": 2,
+              "version": 1,
+              "tags": [
+                "general",
+                "engineering",
+                "marketing",
+                "developer"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Nếu bạn đã viết gần như cùng một yêu cầu ba lần, bạn không còn có một yêu cầu nữa. Bạn có một quy trình mà bạn chưa ghi lại."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Chỉ dẫn cố định, dữ liệu đầu vào thay đổi",
+                    "body": "Một quy trình tách phần không bao giờ thay đổi khỏi phần thay đổi. Chỉ dẫn – làm gì, cho ai, dưới hình thức nào, cần kiểm tra gì – là cố định. Văn bản bạn đưa vào thì thay đổi mỗi lần.\n\nKhi đã tách ra, phần cố định có thể được lưu và dùng lại, và nó thôi bị sai lệch mỗi lần bạn gõ lại theo trí nhớ."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "comparison",
+                  "order": 3,
+                  "content": {
+                    "worse_label": "Gõ lại mỗi lần",
+                    "worse": "Bạn xem giúp mấy ghi chú cuộc họp này rồi lọc ra việc tôi cần làm được không?",
+                    "better_label": "Một quy trình",
+                    "better": "Từ các ghi chú dưới đây, chỉ trích ra những việc được giao cho tôi. Mỗi việc một dòng, bắt đầu bằng một động từ, kèm hạn chót nếu có nêu. Nếu không có việc nào giao cho tôi, hãy nói vậy và dừng lại.",
+                    "note": "Cách thứ hai đáng được lưu lại. Nó còn nói rõ phải làm gì khi không có gì để tìm – đó chính là chỗ phiên bản gõ lại âm thầm bịa ra việc."
+                  }
+                },
+                {
+                  "id": "tip",
+                  "type": "tip",
+                  "order": 4,
+                  "content": {
+                    "body": "Luôn cho quy trình biết phải làm gì khi dữ liệu đầu vào không phù hợp. Chỉ một câu đó thôi đã ngăn được phần lớn kết quả bịa đặt."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 5,
+                  "content": {
+                    "question": "Phần cố định của một quy trình gồm những gì?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Văn bản cần xử lý lần này"
+                      },
+                      {
+                        "id": "b",
+                        "label": "Các quy tắc về một kết quả tốt"
+                      },
+                      {
+                        "id": "c",
+                        "label": "Ngày hôm nay"
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "Các quy tắc là thứ bạn muốn thôi phải gõ lại. Dữ liệu đầu vào là thứ thay đổi."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "Tách chỉ dẫn cố định khỏi dữ liệu đầu vào thay đổi, và nói rõ phải làm gì khi không có gì để tìm."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "adapt-ai-to-your-domain",
+              "title": "Điều chỉnh AI cho lĩnh vực của bạn",
+              "description": "Thuật ngữ, quy ước và những bước kiểm tra mà lĩnh vực của bạn đòi hỏi.",
+              "estimated_minutes": 5,
+              "difficulty": "intermediate",
+              "order": 3,
+              "version": 1,
+              "tags": [
+                "engineering",
+                "marketing",
+                "developer",
+                "creator",
+                "student",
+                "management"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Một câu trả lời chung chung là chung chung vì yêu cầu không hề nói bạn làm trong lĩnh vực nào. Lĩnh vực của bạn có thuật ngữ, quy ước và tiêu chuẩn chứng minh riêng – và không điều nào trong số đó hiển nhiên với người ngoài."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Ba điều lĩnh vực của bạn đòi hỏi",
+                    "body": "Nêu rõ thuật ngữ bạn dùng, để câu trả lời không bị chuyển sang cách gọi của người khác. Nêu rõ quy ước bạn tuân theo – cấu trúc báo cáo, cách viết commit, giọng văn của tổ chức. Và nêu rõ bước kiểm tra: điều gì khiến một câu trả lời được chấp nhận trong lĩnh vực của bạn, chứ không chỉ nghe có vẻ hợp lý.\n\nĐiều thứ ba là thứ phần lớn mọi người bỏ qua, và cũng là thứ có tác dụng nhiều nhất."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "Cùng một yêu cầu ở ba lĩnh vực",
+                    "body": "Kỹ thuật: “Nêu giả định đằng sau mỗi con số. Nếu một giá trị là ước tính chứ không phải đo được, hãy đánh dấu.”\n\nMarketing: “Theo đúng giọng văn của chúng tôi: thẳng thắn, không dùng từ ngữ phóng đại. Đưa ra hai phương án để chúng tôi so sánh.”\n\nPhát triển phần mềm: “Tuân theo các quy ước đã có trong tệp. Nếu một cách làm cần một thư viện phụ thuộc mà chúng ta chưa có, hãy nói ra thay vì tự thêm vào.”"
+                  }
+                },
+                {
+                  "id": "ai-practice",
+                  "type": "ai_exercise",
+                  "order": 4,
+                  "content": {
+                    "exercise_id": "adapt-domain-request",
+                    "instruction": "Viết một yêu cầu cho một việc trong lĩnh vực của bạn. Nêu rõ thuật ngữ, quy ước và bước kiểm tra khiến câu trả lời được chấp nhận.",
+                    "starting_text": "",
+                    "hint": "Bước kiểm tra là phần hầu hết mọi người quên: điều gì sẽ khiến bạn bác bỏ một câu trả lời mà ngoài ra vẫn hợp lý?"
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 5,
+                  "content": {
+                    "body": "Thuật ngữ, quy ước và bước kiểm tra mà lĩnh vực của bạn áp dụng. Chính bước kiểm tra biến một câu trả lời hợp lý thành một câu trả lời dùng được."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "ai-in-engineering",
+              "title": "AI trong kỹ thuật",
+              "description": "Dùng AI như một công cụ, không thay thế cho tư duy.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 4,
+              "version": 1,
+              "tags": [
+                "engineering",
+                "student"
+              ],
+              "blocks": [
+                {
+                  "id": "idea",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "heading": "AI cho kỹ thuật",
+                    "body": "AI phát huy tốt nhất khi là cộng sự để khám phá, soạn nháp và phản biện, trong khi kỹ sư vẫn giữ trách nhiệm."
+                  }
+                },
+                {
+                  "id": "scenario",
+                  "type": "example",
+                  "order": 2,
+                  "content": {
+                    "label": "Tình huống",
+                    "body": "Bạn đang so sánh hai phương án cho một hệ thống con của vệ tinh cỡ nhỏ."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 3,
+                  "content": {
+                    "question": "Quy trình nào tận dụng AI tốt nhất?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Để AI chọn phương án rồi chép lại lập luận của nó."
+                      },
+                      {
+                        "id": "b",
+                        "label": "Dùng AI để làm rõ các đánh đổi, sau đó kiểm chứng các ràng buộc và ghi lại quyết định."
+                      },
+                      {
+                        "id": "c",
+                        "label": "Không ghi lại giả định để báo cáo ngắn gọn."
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "AI khuếch đại phán đoán kỹ thuật. Nó không thay thế việc thẩm định, khả năng truy vết hay trách nhiệm giải trình."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 4,
+                  "content": {
+                    "body": "Để AI nêu ra các phương án và sự đánh đổi, sau đó kiểm chứng chúng, ghi lại các giả định và chịu trách nhiệm về quyết định."
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "exercises": [
+    {
+      "id": "adapt-domain-request",
+      "task": "learning_feedback",
+      "instruction": "You are helping someone learn to write better requests to an AI assistant. They were asked to write a request for a task in their own professional or academic field, naming three things: the vocabulary of their field, the convention they follow, and the check that makes an answer acceptable rather than merely reasonable.\n\nRead their attempt and reply in at most four short sentences. Say plainly which of the three are present and which are missing. Then give one concrete improvement, rewriting a fragment of their own request rather than replacing it with yours. Do not score them, do not use percentages, and do not praise without a reason. If their request is already complete, say so and name the strongest part.\n\nReply in the language they wrote in."
+    }
+  ]
+}
