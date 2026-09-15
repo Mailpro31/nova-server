@@ -8390,9 +8390,17 @@ def learning_version(organization_id: str) -> str:
             "WHERE organization_id=? ORDER BY lesson_id",
             (organization_id,),
         ).fetchall()
-    settings = hashlib.sha256(
-        "|".join(f"{row['lesson_id']}:{row['revision']}" for row in rows).encode("utf-8")
-    ).hexdigest()[:16]
+        customs = conn.execute(
+            "SELECT lesson_id, revision FROM organization_learning_custom_lessons "
+            "WHERE organization_id=? ORDER BY lesson_id",
+            (organization_id,),
+        ).fetchall()
+    marker = "|".join(f"{row['lesson_id']}:{row['revision']}" for row in rows)
+    if customs:
+        # Les lecons ecrites par l'organisation comptent aussi. Une organisation
+        # qui n'en a cree aucune garde l'empreinte qu'elle avait.
+        marker += "#" + "|".join(f"{row['lesson_id']}:{row['revision']}" for row in customs)
+    settings = hashlib.sha256(marker.encode("utf-8")).hexdigest()[:16]
     return f"{learning.load_catalog()['catalog_version']}:{settings}"
 
 
@@ -10136,13 +10144,140 @@ def member_group_ids(conn, organization_id: str, account) -> set[str]:
     return {row["group_id"] for row in rows}
 
 
+def learning_module_placements(catalog: dict | None = None) -> dict[str, dict]:
+    """Chaque module du catalogue livre, avec le parcours qui le porte.
+
+    Une lecon creee en console s'accroche a l'un d'eux : elle prend place dans
+    un parcours que les membres connaissent deja.
+    """
+    source = catalog if catalog is not None else learning.load_catalog()
+    return {
+        module["id"]: {"id": module["id"], "title": module["title"],
+                       "path_id": path["id"], "path_title": path["title"],
+                       "pillar": path["pillar"]}
+        for path in source["paths"]
+        for module in path["modules"]
+    }
+
+
+CUSTOM_LESSON_PREFIX = "org-"
+# Garde-fou contre une boucle qui cree, pas une limite d'offre.
+MAX_CUSTOM_LESSONS = 500
+_CUSTOM_LESSON_FIELDS = ("module_id", "source_locale", "estimated_minutes",
+                         "difficulty", "translations")
+
+
+def custom_lesson_view(row) -> dict | None:
+    """Une lecon de l'organisation telle que la console l'edite.
+
+    `None` pour une ligne absente ou illisible : une lecon abimee disparait
+    plutot que de faire echouer tout le catalogue d'un membre.
+    """
+    if row is None:
+        return None
+    try:
+        translations = json.loads(row["translations"])
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(translations, dict) or row["source_locale"] not in translations:
+        return None
+    return {
+        "id": row["lesson_id"],
+        "module_id": row["module_id"],
+        "source_locale": row["source_locale"],
+        "estimated_minutes": row["estimated_minutes"],
+        "difficulty": row["difficulty"],
+        "translations": translations,
+        "version": row["version"],
+        "revision": row["revision"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+        "updated_by_user_id": row["updated_by_user_id"],
+    }
+
+
+def custom_lesson_row(conn, organization_id: str, lesson_id: str):
+    return conn.execute(
+        "SELECT * FROM organization_learning_custom_lessons "
+        "WHERE organization_id=? AND lesson_id=?",
+        (organization_id, lesson_id),
+    ).fetchone()
+
+
+def organization_custom_lessons(conn, organization_id: str) -> list[dict]:
+    rows = conn.execute(
+        "SELECT * FROM organization_learning_custom_lessons WHERE organization_id=? "
+        "ORDER BY created_at, lesson_id",
+        (organization_id,),
+    ).fetchall()
+    return [view for view in (custom_lesson_view(row) for row in rows) if view is not None]
+
+
+def custom_catalog_lesson(custom: dict, locale: str | None, order: int) -> dict:
+    """La lecon dans la langue du membre, sinon dans sa langue source.
+
+    Meme forme qu'une lecon du catalogue livre : le poste n'a pas a savoir qui
+    l'a ecrite pour l'afficher. `content_locale` dit la langue du texte recu.
+    """
+    translations = custom["translations"]
+    content_locale = next(
+        (candidate for candidate in learning.catalog_candidates(locale)
+         if candidate in translations),
+        custom["source_locale"],
+    )
+    entry = translations[content_locale]
+    return {
+        "id": custom["id"],
+        "title": entry["title"],
+        "description": entry["description"],
+        "estimated_minutes": custom["estimated_minutes"],
+        "difficulty": custom["difficulty"],
+        "order": order,
+        "version": custom["version"],
+        "tags": [],
+        "blocks": entry["blocks"],
+        "custom": True,
+        "content_locale": content_locale,
+    }
+
+
+def custom_lesson_index_entry(custom: dict, placements: dict[str, dict],
+                              locale: str | None) -> dict | None:
+    placement = placements.get(custom["module_id"])
+    if placement is None:
+        return None
+    return {
+        "lesson": custom_catalog_lesson(custom, locale, 0),
+        "module_id": custom["module_id"],
+        "path_id": placement["path_id"],
+        "pillar": placement["pillar"],
+        "custom": True,
+    }
+
+
+def organization_lessons_index(organization_id: str) -> dict[str, dict]:
+    """Les lecons que cette organisation connait : le catalogue livre, et les
+    siennes. Une lecon d'une autre organisation n'y figure jamais."""
+    index = dict(learning.lessons_index())
+    placements = learning_module_placements()
+    with db() as conn:
+        customs = organization_custom_lessons(conn, organization_id)
+    for custom in customs:
+        entry = custom_lesson_index_entry(custom, placements, custom["source_locale"])
+        if entry is not None:
+            index[custom["id"]] = entry
+    return index
+
+
 def organization_learning_catalog(organization_id: str, account,
                                   locale: str | None) -> dict:
     """Le catalogue tel qu'un membre de cette organisation doit le voir.
 
-    Les lecons archivees et celles qui visent d'autres groupes sont retirees ;
-    un module ou un parcours vide disparait avec elles plutot que de s'afficher
-    sans rien. Les lecons gardees portent `required` et `due_at`.
+    Les lecons de l'organisation prennent place dans leur module, apres les
+    lecons livrees. Les lecons archivees et celles qui visent d'autres groupes
+    sont retirees ; un module ou un parcours vide disparait avec elles plutot
+    que de s'afficher sans rien. Les lecons gardees portent `required` et
+    `due_at`.
 
     Le catalogue en cache n'est jamais modifie : chaque niveau est recopie.
     """
@@ -10150,13 +10285,22 @@ def organization_learning_catalog(organization_id: str, account,
     with db() as conn:
         settings = learning_lesson_settings(conn, organization_id)
         groups = member_group_ids(conn, organization_id, account)
+        customs = organization_custom_lessons(conn, organization_id)
+    by_module: dict[str, list[dict]] = {}
+    for custom in customs:
+        by_module.setdefault(custom["module_id"], []).append(custom)
     neutral = learning_settings_view(None)
     paths = []
     for path in catalog["paths"]:
         modules = []
         for module in path["modules"]:
+            last = max((lesson["order"] for lesson in module["lessons"]), default=0)
+            candidates = module["lessons"] + [
+                custom_catalog_lesson(custom, locale, last + position)
+                for position, custom in enumerate(by_module.get(module["id"], []), start=1)
+            ]
             lessons = []
-            for lesson in module["lessons"]:
+            for lesson in candidates:
                 chosen = settings.get(lesson["id"], neutral)
                 if chosen["status"] == LEARNING_LESSON_ARCHIVED:
                     continue
@@ -10178,6 +10322,7 @@ def learning_admin_lesson_view(lesson_id: str, entry: dict, settings: dict) -> d
         "path_id": entry["path_id"],
         "module_id": entry["module_id"],
         "pillar": entry["pillar"],
+        "custom": entry.get("custom", False),
         **settings,
     }
 
@@ -10187,13 +10332,21 @@ def control_read_learning(
     locale: str | None = None,
     principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_ORGANIZATION_READ)),
 ):
-    """Chaque lecon du catalogue avec les reglages de l'organisation, et les
-    groupes qu'une lecon peut viser."""
+    """Chaque lecon — livree ou ecrite par l'organisation — avec ses reglages,
+    les groupes qu'une lecon peut viser, et les modules ou une lecon creee peut
+    prendre place."""
     organization_id = principal.organization_id
-    index = learning.lessons_index(learning.load_catalog(locale=locale))
+    catalog = learning.load_catalog(locale=locale)
+    index = learning.lessons_index(catalog)
+    placements = learning_module_placements(catalog)
     with db() as conn:
         settings = learning_lesson_settings(conn, organization_id)
         groups = organization_group_options(conn, organization_id)
+        customs = organization_custom_lessons(conn, organization_id)
+    for custom in customs:
+        entry = custom_lesson_index_entry(custom, placements, locale)
+        if entry is not None:
+            index[custom["id"]] = entry
     neutral = learning_settings_view(None)
     return {
         "lessons": [
@@ -10201,6 +10354,10 @@ def control_read_learning(
             for lesson_id, entry in index.items()
         ],
         "groups": groups,
+        "modules": list(placements.values()),
+        # Les langues d'une lecon creee : celles du catalogue livre. La console
+        # ne les ecrit pas en dur, elle suit ce que le serveur sait servir.
+        "locales": sorted(learning.custom_lesson_locales()),
     }
 
 
@@ -10254,7 +10411,7 @@ def write_learning_lesson_settings(principal: AdminPrincipal, lesson_id: str,
     `decide(conn, current)` renvoie `(revision attendue, reglages apres)`.
     Un enregistrement qui ne change rien ne produit ni revision ni audit.
     """
-    index = learning.lessons_index()
+    index = organization_lessons_index(principal.organization_id)
     entry = index.get(lesson_id)
     if entry is None:
         raise auth_error(404, "LESSON_NOT_FOUND")
@@ -10346,6 +10503,193 @@ def control_restore_learning_lesson(
         principal, lesson_id, body, LEARNING_LESSON_ACTIVE, "learning_lesson.restore")
 
 
+# ── Lecons ecrites par l'organisation ─────────────────────────────────────────
+#
+# Le contenu vit dans `organization_learning_custom_lessons`. Archiver, rendre
+# obligatoire et viser des groupes passent par les routes ci-dessus, comme pour
+# une lecon livree. Supprimer est reserve aux lecons de l'organisation : une
+# lecon livree s'archive, elle ne disparait pas.
+
+
+def validate_custom_lesson_body(body) -> dict:
+    """Refuse plutot qu'ignorer, avec un code seul — voir `auth_error`."""
+    try:
+        return learning.validate_custom_lesson(body, set(learning_module_placements()))
+    except learning.CatalogError:
+        raise auth_error(400, "LEARNING_CUSTOM_LESSON_INVALID") from None
+
+
+def custom_lesson_audit_view(custom: dict | None) -> dict | None:
+    """Ce que le journal retient d'une lecon, avant ou apres.
+
+    Les reglages et les titres en clair ; les blocs par empreinte, langue par
+    langue. Le journal dit ce qui a change sans recopier la lecon entiere a
+    chaque virgule corrigee.
+    """
+    if custom is None:
+        return None
+    translations = sorted(custom["translations"].items())
+    return {
+        "module_id": custom["module_id"],
+        "source_locale": custom["source_locale"],
+        "estimated_minutes": custom["estimated_minutes"],
+        "difficulty": custom["difficulty"],
+        "version": custom["version"],
+        "titles": {locale: entry["title"] for locale, entry in translations},
+        "blocks_digest": {
+            locale: hashlib.sha256(
+                json.dumps(entry["blocks"], sort_keys=True, ensure_ascii=False)
+                .encode("utf-8")).hexdigest()[:16]
+            for locale, entry in translations
+        },
+    }
+
+
+def _custom_lesson_or_404(conn, organization_id: str, lesson_id: str) -> dict:
+    custom = custom_lesson_view(custom_lesson_row(conn, organization_id, lesson_id))
+    if custom is None:
+        raise auth_error(404, "LESSON_NOT_FOUND")
+    return custom
+
+
+@app.post("/api/control/organization/learning/custom-lessons", status_code=201)
+def control_create_custom_lesson(
+    body: dict,
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_CONTENT_MANAGE)),
+):
+    """Cree une lecon de l'organisation. Elle arrive aux membres a la prochaine
+    verification des postes, dans le module choisi, apres les lecons livrees."""
+    lesson = validate_custom_lesson_body(body)
+    organization_id = principal.organization_id
+    lesson_id = f"{CUSTOM_LESSON_PREFIX}{uuid.uuid4().hex[:16]}"
+    now = time.time()
+    with db() as conn:
+        count = conn.execute(
+            "SELECT COUNT(*) AS total FROM organization_learning_custom_lessons "
+            "WHERE organization_id=?",
+            (organization_id,),
+        ).fetchone()["total"]
+        if count >= MAX_CUSTOM_LESSONS:
+            raise auth_error(409, "LEARNING_CUSTOM_LESSON_LIMIT")
+        conn.execute(
+            "INSERT INTO organization_learning_custom_lessons(organization_id, lesson_id, "
+            "module_id, source_locale, estimated_minutes, difficulty, translations, "
+            "version, revision, created_at, created_by_user_id, updated_at, "
+            "updated_by_user_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (organization_id, lesson_id, lesson["module_id"], lesson["source_locale"],
+             lesson["estimated_minutes"], lesson["difficulty"],
+             json.dumps(lesson["translations"], ensure_ascii=False), 1, 1, now,
+             principal.user_id, now, principal.user_id),
+        )
+        saved = _custom_lesson_or_404(conn, organization_id, lesson_id)
+        record_admin_action(
+            principal, "learning_custom_lesson.create", target_type="learning_lesson",
+            target_id=lesson_id,
+            metadata={"old_revision": None, "new_revision": 1, "before": None,
+                      "after": custom_lesson_audit_view(saved)},
+            conn=conn,
+        )
+    return saved
+
+
+@app.get("/api/control/organization/learning/custom-lessons/{lesson_id}")
+def control_read_custom_lesson(
+    lesson_id: str,
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_ORGANIZATION_READ)),
+):
+    """La lecon avec toutes ses langues, pour l'editeur."""
+    with db() as conn:
+        return _custom_lesson_or_404(conn, principal.organization_id, lesson_id)
+
+
+@app.put("/api/control/organization/learning/custom-lessons/{lesson_id}")
+def control_update_custom_lesson(
+    lesson_id: str,
+    body: dict,
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_CONTENT_MANAGE)),
+):
+    """Modifie une lecon de l'organisation. Les champs absents ne changent pas ;
+    `translations`, quand il est envoye, remplace toutes les langues.
+
+    `version` n'avance que si les blocs changent : corriger une phrase ne remet
+    la progression de personne a zero.
+    """
+    expected = body.get("expected_revision")
+    if not isinstance(expected, int) or isinstance(expected, bool):
+        raise auth_error(400, "LEARNING_CUSTOM_LESSON_INVALID")
+    organization_id = principal.organization_id
+    with db() as conn:
+        current = _custom_lesson_or_404(conn, organization_id, lesson_id)
+        if expected != current["revision"]:
+            raise auth_error(409, "LEARNING_REVISION_CONFLICT")
+        before = {field: current[field] for field in _CUSTOM_LESSON_FIELDS}
+        requested = {**before, **{key: value for key, value in body.items()
+                                  if key != "expected_revision"}}
+        lesson = validate_custom_lesson_body(requested)
+        if lesson == before:
+            return current
+        blocks_changed = (
+            learning.block_skeleton(lesson["translations"][lesson["source_locale"]]["blocks"])
+            != learning.block_skeleton(before["translations"][before["source_locale"]]["blocks"])
+        )
+        version = current["version"] + (1 if blocks_changed else 0)
+        revision = current["revision"] + 1
+        conn.execute(
+            "UPDATE organization_learning_custom_lessons SET module_id=?, source_locale=?, "
+            "estimated_minutes=?, difficulty=?, translations=?, version=?, revision=?, "
+            "updated_at=?, updated_by_user_id=? "
+            "WHERE organization_id=? AND lesson_id=? AND revision=?",
+            (lesson["module_id"], lesson["source_locale"], lesson["estimated_minutes"],
+             lesson["difficulty"], json.dumps(lesson["translations"], ensure_ascii=False),
+             version, revision, time.time(), principal.user_id,
+             organization_id, lesson_id, current["revision"]),
+        )
+        saved = _custom_lesson_or_404(conn, organization_id, lesson_id)
+        if saved["revision"] != revision:
+            raise auth_error(409, "LEARNING_REVISION_CONFLICT")
+        record_admin_action(
+            principal, "learning_custom_lesson.update", target_type="learning_lesson",
+            target_id=lesson_id,
+            metadata={"old_revision": current["revision"], "new_revision": revision,
+                      "before": custom_lesson_audit_view(current),
+                      "after": custom_lesson_audit_view(saved)},
+            conn=conn,
+        )
+    return saved
+
+
+@app.delete("/api/control/organization/learning/custom-lessons/{lesson_id}",
+            status_code=204)
+def control_delete_custom_lesson(
+    lesson_id: str,
+    expected_revision: int,
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_CONTENT_MANAGE)),
+):
+    """Supprime definitivement une lecon de l'organisation.
+
+    Ses reglages et la progression des membres partent avec elle : une
+    progression sur une lecon qui n'existe plus ne mesure plus rien. Pour la
+    retirer sans rien perdre, l'archiver.
+    """
+    organization_id = principal.organization_id
+    with db() as conn:
+        current = _custom_lesson_or_404(conn, organization_id, lesson_id)
+        if expected_revision != current["revision"]:
+            raise auth_error(409, "LEARNING_REVISION_CONFLICT")
+        for table in ("organization_learning_custom_lessons",
+                      "organization_learning_lesson_settings", "learning_progress"):
+            conn.execute(f"DELETE FROM {table} WHERE organization_id=? AND lesson_id=?",
+                         (organization_id, lesson_id))
+        record_admin_action(
+            principal, "learning_custom_lesson.delete", target_type="learning_lesson",
+            target_id=lesson_id,
+            metadata={"old_revision": current["revision"], "new_revision": None,
+                      "before": custom_lesson_audit_view(current), "after": None},
+            conn=conn,
+        )
+    return Response(status_code=204)
+
+
 @app.get("/api/learning/catalog",
          dependencies=[Depends(product_capability("learning", "learning"))])
 def learning_catalog(locale: str | None = None, user: str = Depends(current_user),
@@ -10406,7 +10750,9 @@ def update_learning_progress(lesson_id: str, body: LearningProgressUpdate,
     en apparence et faux en pratique. Rien n'est perdu de ce qui a du sens —
     une lecon terminee sur une version anterieure le reste, avec sa date.
     """
-    index = learning.lessons_index()
+    # Les lecons de l'organisation du compte, et d'aucune autre : une lecon
+    # creee ailleurs repond 404, comme une lecon qui n'existe pas.
+    index = organization_lessons_index(account_organization(account))
     entry = index.get(lesson_id)
     if entry is None:
         raise auth_error(404, "LESSON_NOT_FOUND")
