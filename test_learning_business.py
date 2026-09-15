@@ -136,7 +136,7 @@ class LearnInABusinessTests(LearnMixin, AdminTestCase):
     def test_the_business_member_reaches_the_catalogue(self):
         response = self.client.get("/api/learning/catalog", headers=self.headers)
         self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(len(response.json()["paths"]), 3)
+        self.assertEqual(len(response.json()["paths"]), 4)
 
     def test_the_catalogue_does_not_change_with_the_nature(self):
         """Il n'existe pas de catalogue d'entreprise.

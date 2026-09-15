@@ -46,7 +46,7 @@ class CatalogValidatorTests(unittest.TestCase):
         contenu et casse une reference — plutot que de le decouvrir sur un
         poste.
         """
-        self.assertEqual(learning.validate_catalog(self.valid())["catalog_version"], 1)
+        self.assertEqual(learning.validate_catalog(self.valid())["catalog_version"], 2)
 
     def test_it_carries_nine_real_lessons_across_three_pillars(self):
         index = learning.lessons_index()
@@ -286,7 +286,7 @@ class LearningApiTests(AdminTestCase):
         self.assertEqual(response.status_code, 200, response.text)
         body = response.json()
         self.assertNotIn("exercises", body)
-        self.assertEqual(len(body["paths"]), 3)
+        self.assertEqual(len(body["paths"]), 4)
         serialized = json.dumps(body)
         instruction = learning.exercise("adapt-domain-request")["instruction"]
         self.assertNotIn(instruction[:60], serialized)

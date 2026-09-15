@@ -1,19 +1,250 @@
 {
-  "catalog_version": 1,
+  "catalog_version": 2,
   "locale": "en",
   "paths": [
     {
-      "id": "use-ai",
+      "id": "getting-started",
+      "pillar": "learn_ai",
+      "title": "Getting started",
+      "description": "What AI does well, where it fails, and how to work with it.",
+      "icon": "brain",
+      "order": 1,
+      "tags": [
+        "general"
+      ],
+      "modules": [
+        {
+          "id": "getting-started-foundations",
+          "title": "First principles",
+          "description": "Enough to use AI with judgment from day one.",
+          "order": 1,
+          "lessons": [
+            {
+              "id": "working-with-ai",
+              "title": "Working with AI",
+              "description": "Understand what AI can and cannot do.",
+              "estimated_minutes": 3,
+              "difficulty": "beginner",
+              "order": 1,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "idea",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "heading": "AI fundamentals",
+                    "body": "AI can generate useful options quickly, but fluent output is not evidence that an answer is correct."
+                  }
+                },
+                {
+                  "id": "scenario",
+                  "type": "example",
+                  "order": 2,
+                  "content": {
+                    "label": "A situation",
+                    "body": "An AI assistant proposes a design choice for an aerospace project and presents it with confidence."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 3,
+                  "content": {
+                    "question": "What is the most useful role for the AI here?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Replace the engineering decision."
+                      },
+                      {
+                        "id": "b",
+                        "label": "Provide a candidate solution for an engineer to evaluate."
+                      },
+                      {
+                        "id": "c",
+                        "label": "Approve the choice because the explanation sounds technical."
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "Use AI to expand the options you can examine. Engineering judgment still owns assumptions, evidence and the final decision."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 4,
+                  "content": {
+                    "body": "Use AI to widen the options you examine. The decision, and the reasons behind it, stay yours."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "what-an-llm-does",
+              "title": "What an LLM actually does",
+              "description": "It predicts text. That single fact explains most of its behaviour.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 2,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "A language model does not look things up, and it does not reason the way a person does. It predicts what text plausibly comes next. Almost everything surprising about these systems follows from that one sentence."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Prediction, trained at scale",
+                    "body": "During training, the model saw enormous amounts of text and got very good at continuing it. Nothing is stored as facts in a database. What it learned is which words tend to follow which — across grammar, argument structure, code, and conventions.\n\nThat is why it writes fluently about things it has no way of knowing, and why fluency is not evidence of accuracy."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "Why it helps to know this",
+                    "body": "Ask for a well-known formula and you will usually get it right — it appeared consistently in the training text.\n\nAsk for the page number of a quote in a specific edition and you may get a confident, invented number. It is a plausible continuation. It was never a lookup."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 4,
+                  "content": {
+                    "question": "Why can a model write a fluent answer that is wrong?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Fluency and accuracy come from the same process — plausible continuation"
+                      },
+                      {
+                        "id": "b",
+                        "label": "It ran out of memory"
+                      },
+                      {
+                        "id": "c",
+                        "label": "It was trained on bad grammar"
+                      }
+                    ],
+                    "correct_option_id": "a",
+                    "explanation": "Sounding right and being right come from the same mechanism. That is why the style of an answer tells you nothing about its truth."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 5,
+                  "content": {
+                    "body": "It predicts text. Confidence is a property of the writing, not of the facts."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "context-and-tokens",
+              "title": "Context and tokens",
+              "description": "Why long conversations drift, and what the model can actually see.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 3,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Halfway through a long conversation, the model forgets a constraint you set at the start. It is not being careless. There is a limit to what it can see at once, and you crossed it."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Tokens and the window",
+                    "body": "Text is cut into tokens — roughly word fragments. A token is often about three quarters of a word. Everything the model considers at once, your messages and its own replies together, must fit inside a fixed context window.\n\nWhen the conversation grows past it, the earliest parts stop being visible. The model is not remembering a conversation; it is re-reading whatever still fits."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "What this changes in practice",
+                    "body": "If a rule matters — \"always answer in French\", \"never exceed 200 words\" — restate it in the message where it matters, rather than trusting that it survived twenty exchanges.\n\nAnd if you have drifted a long way, starting a fresh conversation with a clean summary usually beats continuing a crowded one."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 4,
+                  "content": {
+                    "question": "A long conversation stops following an instruction from the beginning. What is the most likely cause?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "The instruction has scrolled out of the context window"
+                      },
+                      {
+                        "id": "b",
+                        "label": "The model has decided to ignore you"
+                      },
+                      {
+                        "id": "c",
+                        "label": "The instruction was grammatically wrong"
+                      }
+                    ],
+                    "correct_option_id": "a",
+                    "explanation": "What is no longer in the window may as well never have been said. Restate the constraint where it matters."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 5,
+                  "content": {
+                    "body": "The model sees a window, not a memory. Restate what matters, and start fresh when the conversation is crowded."
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "asking-well",
       "pillar": "use_ai",
-      "title": "Use AI",
+      "title": "Asking well",
       "description": "Get better answers by asking better.",
       "icon": "message-square",
-      "order": 1,
-      "tags": ["general"],
+      "order": 2,
+      "tags": [
+        "general"
+      ],
       "modules": [
         {
           "id": "use-ai-foundations",
-          "title": "Asking well",
+          "title": "The habits that change the answer",
           "description": "The three habits that change the answer you get.",
           "order": 1,
           "lessons": [
@@ -25,7 +256,9 @@
               "difficulty": "beginner",
               "order": 1,
               "version": 1,
-              "tags": ["general"],
+              "tags": [
+                "general"
+              ],
               "blocks": [
                 {
                   "id": "hook",
@@ -63,9 +296,18 @@
                   "content": {
                     "question": "Which part is missing from: \"Rewrite this email so it is shorter\"?",
                     "options": [
-                      { "id": "a", "label": "The task" },
-                      { "id": "b", "label": "The reader" },
-                      { "id": "c", "label": "Nothing is missing" }
+                      {
+                        "id": "a",
+                        "label": "The task"
+                      },
+                      {
+                        "id": "b",
+                        "label": "The reader"
+                      },
+                      {
+                        "id": "c",
+                        "label": "Nothing is missing"
+                      }
                     ],
                     "correct_option_id": "b",
                     "explanation": "The task and the shape are there. Who reads it — a client, your manager, a colleague — decides the tone, and the model has to guess it."
@@ -100,7 +342,9 @@
               "difficulty": "beginner",
               "order": 2,
               "version": 1,
-              "tags": ["general"],
+              "tags": [
+                "general"
+              ],
               "blocks": [
                 {
                   "id": "hook",
@@ -143,9 +387,18 @@
                   "content": {
                     "question": "You want feedback on a job application. Which detail is worth adding?",
                     "options": [
-                      { "id": "a", "label": "The role and what the posting asks for" },
-                      { "id": "b", "label": "Your full address and date of birth" },
-                      { "id": "c", "label": "The date you started writing it" }
+                      {
+                        "id": "a",
+                        "label": "The role and what the posting asks for"
+                      },
+                      {
+                        "id": "b",
+                        "label": "Your full address and date of birth"
+                      },
+                      {
+                        "id": "c",
+                        "label": "The date you started writing it"
+                      }
                     ],
                     "correct_option_id": "a",
                     "explanation": "The role changes the answer. Your address does not — and it is personal data with no reason to be there."
@@ -169,7 +422,9 @@
               "difficulty": "beginner",
               "order": 3,
               "version": 1,
-              "tags": ["general"],
+              "tags": [
+                "general"
+              ],
               "blocks": [
                 {
                   "id": "hook",
@@ -234,93 +489,33 @@
       ]
     },
     {
-      "id": "learn-ai",
+      "id": "verify-and-protect",
       "pillar": "learn_ai",
-      "title": "Learn AI",
-      "description": "How these systems actually work — without the maths.",
-      "icon": "brain",
-      "order": 2,
-      "tags": ["general"],
+      "title": "Verify and protect",
+      "description": "Check what matters and keep sensitive information safe.",
+      "icon": "shield-check",
+      "order": 3,
+      "tags": [
+        "general"
+      ],
       "modules": [
         {
-          "id": "learn-ai-foundations",
-          "title": "What is really happening",
-          "description": "Enough understanding to predict where it will fail.",
+          "id": "verify-and-protect-foundations",
+          "title": "Trust, but verify",
+          "description": "Where answers go wrong, and what must never be shared.",
           "order": 1,
           "lessons": [
-            {
-              "id": "what-an-llm-does",
-              "title": "What an LLM actually does",
-              "description": "It predicts text. That single fact explains most of its behaviour.",
-              "estimated_minutes": 4,
-              "difficulty": "beginner",
-              "order": 1,
-              "version": 1,
-              "tags": ["general"],
-              "blocks": [
-                {
-                  "id": "hook",
-                  "type": "text",
-                  "order": 1,
-                  "content": {
-                    "body": "A language model does not look things up, and it does not reason the way a person does. It predicts what text plausibly comes next. Almost everything surprising about these systems follows from that one sentence."
-                  }
-                },
-                {
-                  "id": "concept",
-                  "type": "text",
-                  "order": 2,
-                  "content": {
-                    "heading": "Prediction, trained at scale",
-                    "body": "During training, the model saw enormous amounts of text and got very good at continuing it. Nothing is stored as facts in a database. What it learned is which words tend to follow which — across grammar, argument structure, code, and conventions.\n\nThat is why it writes fluently about things it has no way of knowing, and why fluency is not evidence of accuracy."
-                  }
-                },
-                {
-                  "id": "example",
-                  "type": "example",
-                  "order": 3,
-                  "content": {
-                    "label": "Why it helps to know this",
-                    "body": "Ask for a well-known formula and you will usually get it right — it appeared consistently in the training text.\n\nAsk for the page number of a quote in a specific edition and you may get a confident, invented number. It is a plausible continuation. It was never a lookup."
-                  }
-                },
-                {
-                  "id": "check",
-                  "type": "multiple_choice",
-                  "order": 4,
-                  "content": {
-                    "question": "Why can a model write a fluent answer that is wrong?",
-                    "options": [
-                      {
-                        "id": "a",
-                        "label": "Fluency and accuracy come from the same process — plausible continuation"
-                      },
-                      { "id": "b", "label": "It ran out of memory" },
-                      { "id": "c", "label": "It was trained on bad grammar" }
-                    ],
-                    "correct_option_id": "a",
-                    "explanation": "Sounding right and being right come from the same mechanism. That is why the style of an answer tells you nothing about its truth."
-                  }
-                },
-                {
-                  "id": "takeaway",
-                  "type": "takeaway",
-                  "order": 5,
-                  "content": {
-                    "body": "It predicts text. Confidence is a property of the writing, not of the facts."
-                  }
-                }
-              ]
-            },
             {
               "id": "why-ai-hallucinates",
               "title": "Why AI can hallucinate",
               "description": "And how to tell which answers deserve checking.",
               "estimated_minutes": 4,
               "difficulty": "beginner",
-              "order": 2,
+              "order": 1,
               "version": 1,
-              "tags": ["general"],
+              "tags": [
+                "general"
+              ],
               "blocks": [
                 {
                   "id": "hook",
@@ -354,9 +549,18 @@
                   "content": {
                     "question": "Which answer most deserves verification?",
                     "options": [
-                      { "id": "a", "label": "A rewrite of a paragraph you pasted in" },
-                      { "id": "b", "label": "A specific statistic with a year and a percentage" },
-                      { "id": "c", "label": "A list of ideas for a team name" }
+                      {
+                        "id": "a",
+                        "label": "A rewrite of a paragraph you pasted in"
+                      },
+                      {
+                        "id": "b",
+                        "label": "A specific statistic with a year and a percentage"
+                      },
+                      {
+                        "id": "c",
+                        "label": "A list of ideas for a team name"
+                      }
                     ],
                     "correct_option_id": "b",
                     "explanation": "Specific, verifiable, and not supplied by you — that is exactly where a plausible invention is hardest to spot."
@@ -382,62 +586,194 @@
               ]
             },
             {
-              "id": "context-and-tokens",
-              "title": "Context and tokens",
-              "description": "Why long conversations drift, and what the model can actually see.",
+              "id": "verify-output",
+              "title": "Verify the output",
+              "description": "Check calculations, sources, claims and assumptions.",
               "estimated_minutes": 4,
               "difficulty": "beginner",
-              "order": 3,
+              "order": 2,
               "version": 1,
-              "tags": ["general"],
+              "tags": [
+                "general"
+              ],
               "blocks": [
                 {
-                  "id": "hook",
+                  "id": "idea",
                   "type": "text",
                   "order": 1,
                   "content": {
-                    "body": "Halfway through a long conversation, the model forgets a constraint you set at the start. It is not being careless. There is a limit to what it can see at once, and you crossed it."
+                    "heading": "Verification",
+                    "body": "Verification is a separate engineering step. Asking the same model if it is sure is not independent checking."
                   }
                 },
                 {
-                  "id": "concept",
-                  "type": "text",
+                  "id": "scenario",
+                  "type": "example",
                   "order": 2,
                   "content": {
-                    "heading": "Tokens and the window",
-                    "body": "Text is cut into tokens — roughly word fragments. A token is often about three quarters of a word. Everything the model considers at once, your messages and its own replies together, must fit inside a fixed context window.\n\nWhen the conversation grows past it, the earliest parts stop being visible. The model is not remembering a conversation; it is re-reading whatever still fits."
-                  }
-                },
-                {
-                  "id": "example",
-                  "type": "example",
-                  "order": 3,
-                  "content": {
-                    "label": "What this changes in practice",
-                    "body": "If a rule matters — \"always answer in French\", \"never exceed 200 words\" — restate it in the message where it matters, rather than trusting that it survived twenty exchanges.\n\nAnd if you have drifted a long way, starting a fresh conversation with a clean summary usually beats continuing a crowded one."
+                    "label": "A situation",
+                    "body": "An AI gives you a load calculation for a structural analysis."
                   }
                 },
                 {
                   "id": "check",
                   "type": "multiple_choice",
-                  "order": 4,
+                  "order": 3,
                   "content": {
-                    "question": "A long conversation stops following an instruction from the beginning. What is the most likely cause?",
+                    "question": "What should you do before using it?",
                     "options": [
-                      { "id": "a", "label": "The instruction has scrolled out of the context window" },
-                      { "id": "b", "label": "The model has decided to ignore you" },
-                      { "id": "c", "label": "The instruction was grammatically wrong" }
+                      {
+                        "id": "a",
+                        "label": "Use it directly because the units are shown."
+                      },
+                      {
+                        "id": "b",
+                        "label": "Verify assumptions, units and calculations independently."
+                      },
+                      {
+                        "id": "c",
+                        "label": "Ask the AI whether it is sure."
+                      }
                     ],
-                    "correct_option_id": "a",
-                    "explanation": "What is no longer in the window may as well never have been said. Restate the constraint where it matters."
+                    "correct_option_id": "b",
+                    "explanation": "Check the load case, units, equations and boundary conditions with trusted methods or sources before relying on the result."
                   }
                 },
                 {
                   "id": "takeaway",
                   "type": "takeaway",
-                  "order": 5,
+                  "order": 4,
                   "content": {
-                    "body": "The model sees a window, not a memory. Restate what matters, and start fresh when the conversation is crowded."
+                    "body": "Check what you rely on with a method or a source the model does not control. Asking it again is not a check."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "confidential-information",
+              "title": "Confidential information",
+              "description": "Know what must not be sent to an unauthorized system.",
+              "estimated_minutes": 3,
+              "difficulty": "beginner",
+              "order": 3,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "idea",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "heading": "Privacy",
+                    "body": "Only share data that the tool and your institution are authorized to process."
+                  }
+                },
+                {
+                  "id": "scenario",
+                  "type": "example",
+                  "order": 2,
+                  "content": {
+                    "label": "A situation",
+                    "body": "A project document contains student identifiers, supplier data and an internal access token."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 3,
+                  "content": {
+                    "question": "What is the responsible next step?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Paste everything because the task is academic."
+                      },
+                      {
+                        "id": "b",
+                        "label": "Remove only the student names."
+                      },
+                      {
+                        "id": "c",
+                        "label": "Use an approved system and remove secrets and unnecessary personal or confidential data."
+                      }
+                    ],
+                    "correct_option_id": "c",
+                    "explanation": "Authorization and data minimization both matter. Credentials must never be included, and unnecessary sensitive context should be removed."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 4,
+                  "content": {
+                    "body": "Share only what the tool is authorized to process, remove secrets and unnecessary personal data, and never paste credentials."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "responsible-use",
+              "title": "Responsible use",
+              "description": "Recognize when AI use is appropriate, limited or prohibited.",
+              "estimated_minutes": 3,
+              "difficulty": "beginner",
+              "order": 4,
+              "version": 1,
+              "tags": [
+                "general",
+                "student"
+              ],
+              "blocks": [
+                {
+                  "id": "idea",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "heading": "Responsible practice",
+                    "body": "The right use depends on the task, course rules, tool authorization and the level of human accountability required."
+                  }
+                },
+                {
+                  "id": "scenario",
+                  "type": "example",
+                  "order": 2,
+                  "content": {
+                    "label": "A situation",
+                    "body": "An assessed assignment has unclear rules about generative AI assistance."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 3,
+                  "content": {
+                    "question": "What should you do?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Use AI silently because everyone probably does."
+                      },
+                      {
+                        "id": "b",
+                        "label": "Let AI produce the final submission, then change a few words."
+                      },
+                      {
+                        "id": "c",
+                        "label": "Check the course policy, ask when unclear and disclose permitted assistance."
+                      }
+                    ],
+                    "correct_option_id": "c",
+                    "explanation": "Responsible use respects the learning objective and the stated rules. When policy is unclear, clarify it before relying on AI."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 4,
+                  "content": {
+                    "body": "Know the rules of the task before using AI, ask when they are unclear, and say what help you used."
                   }
                 }
               ]
@@ -447,12 +783,12 @@
       ]
     },
     {
-      "id": "adapt-ai",
+      "id": "adapt-to-your-field",
       "pillar": "adapt_ai",
-      "title": "Adapt AI",
+      "title": "Adapt to your field",
       "description": "Make it fit your work rather than the other way round.",
       "icon": "settings-2",
-      "order": 3,
+      "order": 4,
       "tags": [
         "general",
         "student",
@@ -477,7 +813,11 @@
               "difficulty": "beginner",
               "order": 1,
               "version": 1,
-              "tags": ["general", "student", "management"],
+              "tags": [
+                "general",
+                "student",
+                "management"
+              ],
               "blocks": [
                 {
                   "id": "hook",
@@ -534,7 +874,12 @@
               "difficulty": "intermediate",
               "order": 2,
               "version": 1,
-              "tags": ["general", "engineering", "marketing", "developer"],
+              "tags": [
+                "general",
+                "engineering",
+                "marketing",
+                "developer"
+              ],
               "blocks": [
                 {
                   "id": "hook",
@@ -580,9 +925,18 @@
                   "content": {
                     "question": "What belongs in the fixed part of a workflow?",
                     "options": [
-                      { "id": "a", "label": "The text to process this time" },
-                      { "id": "b", "label": "The rules for what a good result looks like" },
-                      { "id": "c", "label": "Today's date" }
+                      {
+                        "id": "a",
+                        "label": "The text to process this time"
+                      },
+                      {
+                        "id": "b",
+                        "label": "The rules for what a good result looks like"
+                      },
+                      {
+                        "id": "c",
+                        "label": "Today's date"
+                      }
                     ],
                     "correct_option_id": "b",
                     "explanation": "The rules are what you want to stop retyping. The input is what changes."
@@ -606,7 +960,14 @@
               "difficulty": "intermediate",
               "order": 3,
               "version": 1,
-              "tags": ["engineering", "marketing", "developer", "creator", "student", "management"],
+              "tags": [
+                "engineering",
+                "marketing",
+                "developer",
+                "creator",
+                "student",
+                "management"
+              ],
               "blocks": [
                 {
                   "id": "hook",
@@ -651,6 +1012,71 @@
                   "order": 5,
                   "content": {
                     "body": "Vocabulary, convention, and the check your field applies. The check is what turns a reasonable answer into a usable one."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "ai-in-engineering",
+              "title": "AI in engineering",
+              "description": "Use AI as a tool, not a replacement for reasoning.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 4,
+              "version": 1,
+              "tags": [
+                "engineering",
+                "student"
+              ],
+              "blocks": [
+                {
+                  "id": "idea",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "heading": "Engineering AI",
+                    "body": "AI is strongest as a collaborator for exploration, drafting and critique when an engineer remains accountable."
+                  }
+                },
+                {
+                  "id": "scenario",
+                  "type": "example",
+                  "order": 2,
+                  "content": {
+                    "label": "A situation",
+                    "body": "You are comparing two concepts for a small satellite subsystem."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 3,
+                  "content": {
+                    "question": "Which workflow best uses AI?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Let the AI select the concept and copy its justification."
+                      },
+                      {
+                        "id": "b",
+                        "label": "Use it to surface trade-offs, then validate constraints and document your decision."
+                      },
+                      {
+                        "id": "c",
+                        "label": "Avoid documenting assumptions to keep the report short."
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "AI amplifies engineering judgment. It does not replace validation, traceability or accountability."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 4,
+                  "content": {
+                    "body": "Let AI surface options and trade-offs, then validate them, document your assumptions and keep the decision accountable."
                   }
                 }
               ]
