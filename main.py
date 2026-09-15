@@ -9900,17 +9900,303 @@ def learning_progress_view(row) -> dict:
     }
 
 
+# ────────────────── Apprendre : reglages de l'organisation ──────────────────
+#
+# Le contenu des lecons est celui du catalogue livre. L'organisation decide,
+# lecon par lecon, de ce que ses membres en voient : archivee ou non,
+# obligatoire, echeance, groupes vises. Une lecon sans reglage garde les
+# valeurs neutres, et une organisation qui n'a rien configure voit exactement
+# le catalogue par defaut.
+
+LEARNING_LESSON_ACTIVE = "active"
+LEARNING_LESSON_ARCHIVED = "archived"
+# Au-dela, une echeance n'est plus une date mais une erreur de saisie.
+_LEARNING_DUE_AT_MAX = 32503680000.0
+_LEARNING_SETTING_KEYS = ("status", "required", "due_at", "group_ids")
+
+
+def learning_settings_view(row) -> dict:
+    """Les reglages d'une lecon, valeurs neutres comprises."""
+    if row is None:
+        return {"status": LEARNING_LESSON_ACTIVE, "required": False, "due_at": None,
+                "group_ids": [], "revision": 0, "updated_at": None,
+                "updated_by_user_id": None}
+    try:
+        group_ids = json.loads(row["group_ids"])
+    except (TypeError, ValueError):
+        group_ids = []
+    return {
+        "status": (row["status"] if row["status"] in
+                   (LEARNING_LESSON_ACTIVE, LEARNING_LESSON_ARCHIVED)
+                   else LEARNING_LESSON_ACTIVE),
+        "required": bool(row["required"]),
+        "due_at": row["due_at"],
+        "group_ids": [g for g in group_ids if isinstance(g, str)]
+        if isinstance(group_ids, list) else [],
+        "revision": row["revision"],
+        "updated_at": row["updated_at"],
+        "updated_by_user_id": row["updated_by_user_id"],
+    }
+
+
+def learning_lesson_settings_row(conn, organization_id: str, lesson_id: str):
+    return conn.execute(
+        "SELECT * FROM organization_learning_lesson_settings "
+        "WHERE organization_id=? AND lesson_id=?",
+        (organization_id, lesson_id),
+    ).fetchone()
+
+
+def learning_lesson_settings(conn, organization_id: str) -> dict[str, dict]:
+    rows = conn.execute(
+        "SELECT * FROM organization_learning_lesson_settings WHERE organization_id=?",
+        (organization_id,),
+    ).fetchall()
+    return {row["lesson_id"]: learning_settings_view(row) for row in rows}
+
+
+def organization_group_options(conn, organization_id: str) -> list[dict]:
+    rows = conn.execute(
+        "SELECT group_id, display_name FROM organization_groups "
+        "WHERE organization_id=? AND deleted_at IS NULL ORDER BY display_name",
+        (organization_id,),
+    ).fetchall()
+    return [{"id": row["group_id"], "label": row["display_name"]} for row in rows]
+
+
+def member_group_ids(conn, organization_id: str, account) -> set[str]:
+    if account is None:
+        return set()
+    rows = conn.execute(
+        "SELECT group_id FROM organization_group_memberships "
+        "WHERE organization_id=? AND user_id=?",
+        (organization_id, account["user_id"]),
+    ).fetchall()
+    return {row["group_id"] for row in rows}
+
+
+def organization_learning_catalog(organization_id: str, account,
+                                  locale: str | None) -> dict:
+    """Le catalogue tel qu'un membre de cette organisation doit le voir.
+
+    Les lecons archivees et celles qui visent d'autres groupes sont retirees ;
+    un module ou un parcours vide disparait avec elles plutot que de s'afficher
+    sans rien. Les lecons gardees portent `required` et `due_at`.
+
+    Le catalogue en cache n'est jamais modifie : chaque niveau est recopie.
+    """
+    catalog = learning.public_catalog(locale=locale)
+    with db() as conn:
+        settings = learning_lesson_settings(conn, organization_id)
+        groups = member_group_ids(conn, organization_id, account)
+    neutral = learning_settings_view(None)
+    paths = []
+    for path in catalog["paths"]:
+        modules = []
+        for module in path["modules"]:
+            lessons = []
+            for lesson in module["lessons"]:
+                chosen = settings.get(lesson["id"], neutral)
+                if chosen["status"] == LEARNING_LESSON_ARCHIVED:
+                    continue
+                if chosen["group_ids"] and not groups.intersection(chosen["group_ids"]):
+                    continue
+                lessons.append({**lesson, "required": chosen["required"],
+                                "due_at": chosen["due_at"]})
+            if lessons:
+                modules.append({**module, "lessons": lessons})
+        if modules:
+            paths.append({**path, "modules": modules})
+    return {**catalog, "paths": paths}
+
+
+def learning_admin_lesson_view(lesson_id: str, entry: dict, settings: dict) -> dict:
+    return {
+        "id": lesson_id,
+        "title": entry["lesson"]["title"],
+        "path_id": entry["path_id"],
+        "module_id": entry["module_id"],
+        "pillar": entry["pillar"],
+        **settings,
+    }
+
+
+@app.get("/api/control/organization/learning")
+def control_read_learning(
+    locale: str | None = None,
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_ORGANIZATION_READ)),
+):
+    """Chaque lecon du catalogue avec les reglages de l'organisation, et les
+    groupes qu'une lecon peut viser."""
+    organization_id = principal.organization_id
+    index = learning.lessons_index(learning.load_catalog(locale=locale))
+    with db() as conn:
+        settings = learning_lesson_settings(conn, organization_id)
+        groups = organization_group_options(conn, organization_id)
+    neutral = learning_settings_view(None)
+    return {
+        "lessons": [
+            learning_admin_lesson_view(lesson_id, entry, settings.get(lesson_id, neutral))
+            for lesson_id, entry in index.items()
+        ],
+        "groups": groups,
+    }
+
+
+def _learning_settings_error(field: str):
+    return auth_error(400, f"LEARNING_SETTINGS_INVALID:{field}")
+
+
+def validate_learning_lesson_update(conn, organization_id: str, body: dict,
+                                    current: dict) -> tuple[int, dict]:
+    """Renvoie la revision attendue et les reglages apres modification.
+
+    Refuse plutot qu'ignorer : une echeance mal formee qui disparaitrait en
+    silence laisserait croire a l'administrateur qu'elle s'appliquera.
+    """
+    if not isinstance(body, dict):
+        raise _learning_settings_error("body")
+    unknown = set(body) - {"expected_revision", "required", "due_at", "group_ids"}
+    if unknown:
+        raise _learning_settings_error(sorted(unknown)[0])
+    expected = body.get("expected_revision")
+    if not isinstance(expected, int) or isinstance(expected, bool):
+        raise _learning_settings_error("expected_revision")
+    after = {key: current[key] for key in _LEARNING_SETTING_KEYS}
+    if "required" in body:
+        if not isinstance(body["required"], bool):
+            raise _learning_settings_error("required")
+        after["required"] = body["required"]
+    if "due_at" in body:
+        due_at = body["due_at"]
+        if due_at is not None and (
+            isinstance(due_at, bool) or not isinstance(due_at, (int, float))
+            or not 0 < due_at < _LEARNING_DUE_AT_MAX
+        ):
+            raise _learning_settings_error("due_at")
+        after["due_at"] = float(due_at) if due_at is not None else None
+    if "group_ids" in body:
+        group_ids = body["group_ids"]
+        if not isinstance(group_ids, list) or not all(isinstance(g, str) for g in group_ids):
+            raise _learning_settings_error("group_ids")
+        known = {group["id"] for group in organization_group_options(conn, organization_id)}
+        if any(group_id not in known for group_id in group_ids):
+            raise auth_error(400, "LEARNING_GROUP_UNKNOWN")
+        after["group_ids"] = sorted(set(group_ids))
+    return expected, after
+
+
+def write_learning_lesson_settings(principal: AdminPrincipal, lesson_id: str,
+                                   action: str, decide) -> dict:
+    """Ecrit les reglages d'une lecon : revision, puis audit avant/apres.
+
+    `decide(conn, current)` renvoie `(revision attendue, reglages apres)`.
+    Un enregistrement qui ne change rien ne produit ni revision ni audit.
+    """
+    index = learning.lessons_index()
+    entry = index.get(lesson_id)
+    if entry is None:
+        raise auth_error(404, "LESSON_NOT_FOUND")
+    organization_id = principal.organization_id
+    with db() as conn:
+        row = learning_lesson_settings_row(conn, organization_id, lesson_id)
+        current = learning_settings_view(row)
+        expected, after = decide(conn, current)
+        if expected != current["revision"]:
+            raise auth_error(409, "LEARNING_REVISION_CONFLICT")
+        before = {key: current[key] for key in _LEARNING_SETTING_KEYS}
+        if after == before:
+            return learning_admin_lesson_view(lesson_id, entry, current)
+        revision = current["revision"] + 1
+        now = time.time()
+        conn.execute(
+            "INSERT INTO organization_learning_lesson_settings(organization_id, lesson_id, "
+            "status, required, due_at, group_ids, revision, updated_at, updated_by_user_id) "
+            "VALUES (?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(organization_id, lesson_id) DO UPDATE SET status=excluded.status, "
+            "required=excluded.required, due_at=excluded.due_at, "
+            "group_ids=excluded.group_ids, revision=excluded.revision, "
+            "updated_at=excluded.updated_at, updated_by_user_id=excluded.updated_by_user_id",
+            (organization_id, lesson_id, after["status"], int(after["required"]),
+             after["due_at"], json.dumps(after["group_ids"]), revision, now,
+             principal.user_id),
+        )
+        # Meme transaction que la mutation. Les reglages sont des decisions de
+        # configuration, pas du contenu : les recopier avant et apres dit
+        # exactement ce qui a change, sans rien exposer.
+        record_admin_action(
+            principal, action, target_type="learning_lesson", target_id=lesson_id,
+            metadata={"old_revision": current["revision"], "new_revision": revision,
+                      "before": before, "after": after},
+            conn=conn,
+        )
+        saved = learning_settings_view(
+            learning_lesson_settings_row(conn, organization_id, lesson_id))
+    return learning_admin_lesson_view(lesson_id, entry, saved)
+
+
+@app.put("/api/control/organization/learning/lessons/{lesson_id}")
+def control_update_learning_lesson(
+    lesson_id: str,
+    body: dict,
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_CONTENT_MANAGE)),
+):
+    """Obligatoire, echeance, groupes vises. Les champs absents ne changent pas."""
+    return write_learning_lesson_settings(
+        principal, lesson_id, "learning_lesson.update",
+        lambda conn, current: validate_learning_lesson_update(
+            conn, principal.organization_id, body, current),
+    )
+
+
+class LearningLessonStatusRequest(BaseModel):
+    expected_revision: int
+
+
+def _set_learning_lesson_status(principal: AdminPrincipal, lesson_id: str,
+                                body: LearningLessonStatusRequest, status: str,
+                                action: str) -> dict:
+    def decide(conn, current):
+        after = {key: current[key] for key in _LEARNING_SETTING_KEYS}
+        after["status"] = status
+        return body.expected_revision, after
+    return write_learning_lesson_settings(principal, lesson_id, action, decide)
+
+
+@app.post("/api/control/organization/learning/lessons/{lesson_id}/archive")
+def control_archive_learning_lesson(
+    lesson_id: str,
+    body: LearningLessonStatusRequest,
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_CONTENT_MANAGE)),
+):
+    """Retire la lecon des membres. La progression deja faite est gardee."""
+    return _set_learning_lesson_status(
+        principal, lesson_id, body, LEARNING_LESSON_ARCHIVED, "learning_lesson.archive")
+
+
+@app.post("/api/control/organization/learning/lessons/{lesson_id}/restore")
+def control_restore_learning_lesson(
+    lesson_id: str,
+    body: LearningLessonStatusRequest,
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_CONTENT_MANAGE)),
+):
+    """Rend la lecon aux membres, avec la progression qu'ils y avaient."""
+    return _set_learning_lesson_status(
+        principal, lesson_id, body, LEARNING_LESSON_ACTIVE, "learning_lesson.restore")
+
+
 @app.get("/api/learning/catalog",
          dependencies=[Depends(product_capability("learning", "learning"))])
-def learning_catalog(locale: str | None = None, user: str = Depends(current_user)):
+def learning_catalog(locale: str | None = None, user: str = Depends(current_user),
+                     account=Depends(current_account)):
     """Le catalogue, sans les instructions destinees au modele.
 
-    Statique et identique pour tout le monde : aucun appel d'inference n'a lieu
-    ici. Ouvrir Learn ne doit rien couter au moteur. `locale` est la langue de
-    l'interface du poste ; sans traduction pour elle, le catalogue anglais —
-    comme pour un poste qui n'envoie rien.
+    Aucun appel d'inference n'a lieu ici : ouvrir Learn ne doit rien couter au
+    moteur. `locale` est la langue de l'interface du poste ; sans traduction
+    pour elle, le catalogue anglais. Les reglages de l'organisation du membre
+    s'appliquent : lecons archivees et lecons d'autres groupes retirees.
     """
-    return learning.public_catalog(locale=locale)
+    return organization_learning_catalog(account_organization(account), account, locale)
 
 
 @app.get("/api/learning/progress",

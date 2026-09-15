@@ -184,11 +184,13 @@ class ArchiveTests(OrganizationLearningTestCase):
         self.assertEqual(saved.status_code, 200, saved.text)
 
         self.action("archive", 0)
+        progress = self.client.get("/api/learning/progress", headers=self.auth(token))
+        self.assertEqual(progress.status_code, 200, progress.text)
+        self.assertIn(LESSON, [item["lesson_id"] for item in progress.json()["lessons"]])
         self.assertEqual(self.action("restore", 1).status_code, 200)
 
-        self.assertIn(LESSON, member_lessons(self.catalog_for("etudiant@example.com")))
-        progress = self.client.get("/api/learning/progress", headers=self.auth(token)).json()
-        self.assertIn(LESSON, [item["lesson_id"] for item in progress["lessons"]])
+        catalog = self.client.get("/api/learning/catalog", headers=self.auth(token))
+        self.assertIn(LESSON, member_lessons(catalog.json()))
 
     def test_a_module_left_empty_by_archiving_disappears_for_members(self):
         index = learning.lessons_index()
