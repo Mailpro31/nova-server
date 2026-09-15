@@ -2401,6 +2401,73 @@ def organization_policy(organization_id: str, conn=None) -> dict:
     }
 
 
+def validate_group_policy_settings(candidate: dict) -> dict:
+    """Les surcharges proposees pour un groupe, verifiees contre le schema.
+
+    Meme refus que pour l'organisation — cle inconnue, type ou borne invalide —
+    mais chaque valeur est gardee, meme egale au defaut : pour un groupe,
+    `True` peut rouvrir ce que l'organisation a ferme.
+    """
+    if not isinstance(candidate, dict):
+        raise ValueError("POLICY_SETTINGS_INVALID")
+    unknown = set(candidate) - set(POLICY_SETTINGS)
+    if unknown:
+        raise ValueError(f"POLICY_KEY_UNKNOWN:{sorted(unknown)[0]}")
+    for key, value in candidate.items():
+        if not POLICY_SETTINGS[key].accepts(value):
+            raise ValueError(f"POLICY_VALUE_INVALID:{key}")
+    return {key: candidate[key] for key in sorted(candidate)}
+
+
+def resolve_group_policy_settings(settings: dict, group_overrides: list[dict]) -> dict:
+    """Reglages de l'organisation, puis surcharges des groupes du membre.
+
+    Une surcharge de groupe l'emporte sur l'organisation, dans les deux sens.
+    Quand deux groupes du membre ne sont pas d'accord, la valeur la plus
+    restrictive gagne : fermee plutot qu'ouverte, la duree la plus courte. Un
+    membre ajoute a un groupe en examen ne doit pas garder un acces du seul
+    fait d'appartenir aussi a un autre groupe.
+    """
+    resolved = dict(settings)
+    for key, setting in POLICY_SETTINGS.items():
+        values = [overrides[key] for overrides in group_overrides if key in overrides]
+        if not values:
+            continue
+        resolved[key] = min(values) if setting.kind is int else all(values)
+    return resolved
+
+
+def member_policy(account) -> dict:
+    """La policy d'un membre : celle de son organisation, surchargee par ses
+    groupes. Toujours une reponse, et jamais cadree par une donnee du client.
+
+    `revision` y devient un repere propre au membre : la revision de
+    l'organisation plus celles des surcharges de ses groupes. Chaque ecriture
+    sur l'un d'eux la fait bouger, et le poste recharge sa policy en moins
+    d'une minute. Seuls les groupes non supprimes comptent.
+    """
+    organization_id = (
+        account["organization_id"] if account is not None else None
+    ) or nova_organization_id()
+    with db() as conn:
+        policy = organization_policy(organization_id, conn=conn)
+        rows = [] if account is None else conn.execute(
+            "SELECT p.group_id, p.revision, p.settings FROM organization_group_policies p "
+            "JOIN organization_group_memberships m ON m.organization_id=p.organization_id "
+            "AND m.group_id=p.group_id "
+            "JOIN organization_groups g ON g.organization_id=p.organization_id "
+            "AND g.group_id=p.group_id AND g.deleted_at IS NULL "
+            "WHERE p.organization_id=? AND m.user_id=? ORDER BY p.group_id",
+            (organization_id, account["user_id"]),
+        ).fetchall()
+    group_overrides = [read_policy_settings(row["settings"]) for row in rows]
+    return {
+        **policy,
+        "revision": policy["revision"] + sum(row["revision"] for row in rows),
+        "settings": resolve_group_policy_settings(policy["settings"], group_overrides),
+    }
+
+
 def resolve_effective_product_capabilities(
     base_capabilities: dict, policy_settings: dict
 ) -> dict:
@@ -2822,7 +2889,10 @@ def require_product_capability(account, capability: str, feature: str):
     un message juste — et rien d'autre : ni etat interne, ni configuration.
     """
     organization_id, _ = organization_policy_for_account(account)
-    if not public_campus_config(organization_id)["capabilities"].get(capability):
+    # La policy du membre, groupes compris : fermer une fonction a un groupe
+    # doit la refuser ici aussi, pas seulement la masquer sur le poste.
+    capabilities = public_campus_config(organization_id, member_policy(account))["capabilities"]
+    if not capabilities.get(capability):
         raise HTTPException(
             403, {"code": "ORGANIZATION_POLICY_DISABLED", "feature": feature}
         )
@@ -3899,7 +3969,8 @@ def organization_type_of(organization_id: str | None) -> str:
         return organization_type_in(conn, organization_id)
 
 
-def public_campus_config(organization_id: str | None = None) -> dict:
+def public_campus_config(organization_id: str | None = None,
+                         policy: dict | None = None) -> dict:
     """Ce que le poste apprend de l'organisation qu'il sert.
 
     ## Base, puis policy
@@ -3927,7 +3998,10 @@ def public_campus_config(organization_id: str | None = None) -> dict:
         for config in provider_configs_for_organization(resolved_organization_id)
     ):
         auth_methods.append("oidc")
-    policy = organization_policy(resolved_organization_id)
+    # `policy` : celle d'un membre, groupes compris, quand l'appelant la connait.
+    # Sans elle, la policy de l'organisation.
+    if policy is None:
+        policy = organization_policy(resolved_organization_id)
     config = {
         # Identifiant Nova immuable de l'organisation. Distinct du slug lisible
         # (`organization.id`) et du nom d'affichage : c'est celui qui servira de
@@ -6027,6 +6101,107 @@ def control_update_policy(
             conn=conn,
         )
     return policy_view(organization_id)
+
+
+# ───────────────────── Reglages par groupe ───────────────────────────────
+#
+# Un groupe surcharge des reglages pour ses membres. Lecture pour tout
+# administrateur ; ecriture reservee a `policy_manage`, comme la policy de
+# l'organisation : decider de ce qu'un groupe peut utiliser est la meme
+# decision, sur une partie des membres.
+
+
+class GroupPolicyUpdateRequest(BaseModel):
+    expected_revision: int
+    settings: dict
+
+
+@app.get("/api/control/organization/policy/groups")
+def control_read_group_policies(
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_ORGANIZATION_READ)),
+):
+    """Chaque groupe de l'organisation, avec les reglages qu'il surcharge."""
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT g.group_id, g.display_name, p.revision, p.settings, p.updated_at "
+            "FROM organization_groups g LEFT JOIN organization_group_policies p "
+            "ON p.organization_id=g.organization_id AND p.group_id=g.group_id "
+            "WHERE g.organization_id=? AND g.deleted_at IS NULL ORDER BY g.display_name",
+            (principal.organization_id,),
+        ).fetchall()
+    return {
+        "groups": [
+            {
+                "id": row["group_id"],
+                "label": row["display_name"],
+                "overrides": read_policy_settings(row["settings"]),
+                "revision": row["revision"] or 0,
+                "updated_at": row["updated_at"],
+            }
+            for row in rows
+        ],
+        "defaults": dict(DEFAULT_ORGANIZATION_POLICY),
+    }
+
+
+@app.put("/api/control/organization/policy/groups/{group_id}")
+def control_update_group_policy(
+    group_id: str,
+    body: GroupPolicyUpdateRequest,
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_POLICY_MANAGE)),
+):
+    """Remplace les surcharges d'un groupe. Un document vide le rend aux
+    reglages de l'organisation."""
+    try:
+        overrides = validate_group_policy_settings(body.settings)
+    except ValueError as error:
+        raise auth_error(400, str(error))
+
+    organization_id = principal.organization_id
+    with db() as conn:
+        group = conn.execute(
+            "SELECT display_name FROM organization_groups "
+            "WHERE organization_id=? AND group_id=? AND deleted_at IS NULL",
+            (organization_id, group_id),
+        ).fetchone()
+        if group is None:
+            raise auth_error(404, "GROUP_NOT_FOUND")
+        current = conn.execute(
+            "SELECT revision, settings, updated_at FROM organization_group_policies "
+            "WHERE organization_id=? AND group_id=?",
+            (organization_id, group_id),
+        ).fetchone()
+        current_revision = current["revision"] if current else 0
+        if body.expected_revision != current_revision:
+            raise auth_error(409, "GROUP_POLICY_REVISION_CONFLICT")
+        before = read_policy_settings(current["settings"]) if current else {}
+        if before == overrides:
+            # Rien ne change : ni revision, ni audit.
+            return {"id": group_id, "label": group["display_name"], "overrides": before,
+                    "revision": current_revision,
+                    "updated_at": current["updated_at"] if current else None}
+
+        revision = current_revision + 1
+        now = time.time()
+        conn.execute(
+            "INSERT INTO organization_group_policies(organization_id, group_id, revision, "
+            "settings, updated_at, updated_by_user_id) VALUES (?,?,?,?,?,?) "
+            "ON CONFLICT(organization_id, group_id) DO UPDATE SET revision=excluded.revision, "
+            "settings=excluded.settings, updated_at=excluded.updated_at, "
+            "updated_by_user_id=excluded.updated_by_user_id",
+            (organization_id, group_id, revision, json.dumps(overrides), now,
+             principal.user_id),
+        )
+        # Des reglages, pas du contenu : les valeurs avant et apres disent
+        # exactement ce qui a change pour les membres du groupe.
+        record_admin_action(
+            principal, "group_policy.update", target_type="group", target_id=group_id,
+            metadata={"old_revision": current_revision, "new_revision": revision,
+                      "before": before, "after": overrides},
+            conn=conn,
+        )
+    return {"id": group_id, "label": group["display_name"], "overrides": overrides,
+            "revision": revision, "updated_at": now}
 
 
 # ───────────────────── Private AI runtime ────────────────────────────────
@@ -8253,14 +8428,16 @@ POLICY_BY_PACKAGE_TYPE = {
 }
 
 
-def effective_packages(organization_id: str) -> dict:
+def effective_packages(organization_id: str, policy: dict | None = None) -> dict:
     """Ce qu'un membre recoit : les versions actives, filtrees par les policies.
 
     Jamais un brouillon, jamais une version publiee mais inactive, jamais un
     package archive. Ce que l'organisation n'a pas decide de distribuer ne
     quitte pas la console.
     """
-    capabilities = public_campus_config(organization_id)["capabilities"]
+    # `policy` : celle du membre quand elle est connue, pour qu'un groupe dont
+    # les Styles sont fermes ne les recoive pas.
+    capabilities = public_campus_config(organization_id, policy)["capabilities"]
     with db() as conn:
         rows = conn.execute(
             "SELECT p.package_id, p.package_type, p.name, p.description, "
@@ -8326,7 +8503,7 @@ def member_read_packages(response: Response, account=Depends(current_account),
     organization_id = (
         account["organization_id"] if account is not None else None
     ) or nova_organization_id()
-    catalog = effective_packages(organization_id)
+    catalog = effective_packages(organization_id, member_policy(account))
     etag = f'W/"{catalog["catalog_version"]}"'
     response.headers["ETag"] = etag
     if if_none_match.strip() == etag:
@@ -8365,7 +8542,8 @@ def member_read_policy(account=Depends(current_account)):
     organization_id = (
         account["organization_id"] if account is not None else None
     ) or nova_organization_id()
-    policy = organization_policy(organization_id)
+    # Celle du membre, groupes compris : c'est ce qui s'applique a lui.
+    policy = member_policy(account)
     return {
         "schema_version": policy["schema_version"],
         "revision": policy["revision"],
@@ -8373,7 +8551,7 @@ def member_read_policy(account=Depends(current_account)):
         # Ce que le poste doit reellement appliquer, deja calcule : le poste
         # porte le meme resolveur pour son interface, mais il n'a pas a
         # reconstruire la base a partir de bribes.
-        "effective_capabilities": public_campus_config(organization_id)["capabilities"],
+        "effective_capabilities": public_campus_config(organization_id, policy)["capabilities"],
     }
 
 
@@ -8416,11 +8594,13 @@ def member_read_changes(user: str = Depends(current_user),
     L'organisation vient du compte, jamais d'un parametre.
     """
     organization_id = account_organization(account)
+    # Le repere du membre : il bouge aussi quand l'un de ses groupes change.
+    policy = member_policy(account)
     return {
-        "policy_revision": organization_policy(organization_id)["revision"],
+        "policy_revision": policy["revision"],
         # La meme empreinte que `/api/organization/packages` : le poste la
         # compare a celle qu'il detient deja.
-        "packages_version": effective_packages(organization_id)["catalog_version"],
+        "packages_version": effective_packages(organization_id, policy)["catalog_version"],
         "learning_version": learning_version(organization_id),
     }
 
@@ -9078,7 +9258,8 @@ def me(user: str = Depends(current_user), u=Depends(current_account)):
 
     # La policy du membre, pas celle de l'organisation active : en multi-tenant
     # ce ne serait pas la meme, et `/api/me` repondrait pour le voisin.
-    member_config = public_campus_config(organization_id)
+    member_policy_document = member_policy(u)
+    member_config = public_campus_config(organization_id, member_policy_document)
     capabilities = member_config["capabilities"]
     # Les categories du Nova Core que l'organisation a fermees, nommees
     # explicitement. Le poste ne peut pas les deduire de `capabilities` : un
@@ -9086,13 +9267,13 @@ def me(user: str = Depends(current_user), u=Depends(current_account)):
     # sans l'avoir ferme, et une fonction ne s'eteint jamais sur un silence.
     # Seules les decisions de policy comptent ici, pas le mode pedagogique.
     closable_core = {"learning", "styles", "prompts", "history"}
-    member_policy = organization_policy(organization_id)["settings"]
+    member_settings = member_policy_document["settings"]
     closed_capabilities = sorted(
         setting.capability
         for setting in POLICY_SETTINGS.values()
         if setting.capability in closable_core
         and setting.kind is bool
-        and not member_policy.get(setting.key, setting.default)
+        and not member_settings.get(setting.key, setting.default)
     )
     return {
         # — contrat historique, inchangé —
@@ -9751,14 +9932,16 @@ def wav_duration_seconds(header: bytes) -> float | None:
     return None
 
 
-async def reject_overlong_dictation(file: UploadFile, organization_id: str) -> None:
+async def reject_overlong_dictation(file: UploadFile, organization_id: str,
+                                    account=None) -> None:
     """Refuse une dictee plus longue que ce que l'organisation autorise.
 
     Ce qui ne se mesure pas passe : couper la dictee d'un client qui envoie un
     autre format serait pire que le risque, et la borne en octets s'applique
-    toujours.
+    toujours. La limite est celle du membre, groupes compris.
     """
-    limit = organization_policy(organization_id)["settings"]["max_dictation_seconds"]
+    policy = member_policy(account) if account is not None else organization_policy(organization_id)
+    limit = policy["settings"]["max_dictation_seconds"]
     header = await file.read(_WAV_HEADER_PROBE_BYTES)
     await file.seek(0)
     duration = wav_duration_seconds(header)
@@ -9832,7 +10015,7 @@ async def transcribe(
     reject_oversized_declaration(content_length, MAX_TRANSCRIBE_AUDIO_BYTES)
     enforce_inference_quota("transcribe", user, account_organization(account))
     await reject_overlong_dictation(
-        file, account_organization(account) or nova_organization_id())
+        file, account_organization(account) or nova_organization_id(), account)
     return await transcribe_audio(
         file, user, TaskType.TRANSCRIPTION_REALTIME, MAX_TRANSCRIBE_AUDIO_BYTES
     )
