@@ -243,6 +243,26 @@ const POLICY_GROUPS: {
       },
     ],
   },
+  {
+    title: t.policies.groupCategories,
+    items: [
+      {
+        key: "styles_enabled",
+        title: t.policies.stylesTitle,
+        body: t.policies.stylesBody,
+      },
+      {
+        key: "generated_instructions_enabled",
+        title: t.policies.generatedInstructionsTitle,
+        body: `${t.policies.generatedInstructionsBody} ${t.policies.deviceCategoryNote}`,
+      },
+      {
+        key: "past_dictations_enabled",
+        title: t.policies.pastDictationsTitle,
+        body: `${t.policies.pastDictationsBody} ${t.policies.deviceCategoryNote}`,
+      },
+    ],
+  },
 ];
 
 /**
