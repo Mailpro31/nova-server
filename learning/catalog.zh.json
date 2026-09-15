@@ -1,0 +1,1096 @@
+{
+  "catalog_version": 2,
+  "locale": "zh",
+  "paths": [
+    {
+      "id": "getting-started",
+      "pillar": "learn_ai",
+      "title": "入门",
+      "description": "AI 擅长什么、会在哪里出错，以及如何与它合作。",
+      "icon": "brain",
+      "order": 1,
+      "tags": [
+        "general"
+      ],
+      "modules": [
+        {
+          "id": "getting-started-foundations",
+          "title": "基础知识",
+          "description": "足以让你从第一天起就审慎地使用 AI。",
+          "order": 1,
+          "lessons": [
+            {
+              "id": "working-with-ai",
+              "title": "与 AI 协作",
+              "description": "了解 AI 能做什么、不能做什么。",
+              "estimated_minutes": 3,
+              "difficulty": "beginner",
+              "order": 1,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "idea",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "heading": "AI 基本原理",
+                    "body": "AI 可以快速给出有用的选项，但表述流畅并不能证明答案正确。"
+                  }
+                },
+                {
+                  "id": "scenario",
+                  "type": "example",
+                  "order": 2,
+                  "content": {
+                    "label": "情境",
+                    "body": "一个 AI 助手为航空航天项目提出了一项设计方案，并且说得信心十足。"
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 3,
+                  "content": {
+                    "question": "在这里，AI 最有用的角色是什么？",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "取代工程决策。"
+                      },
+                      {
+                        "id": "b",
+                        "label": "提供一个候选方案，由工程师来评估。"
+                      },
+                      {
+                        "id": "c",
+                        "label": "因为解释听起来很专业，就批准这个方案。"
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "用 AI 来拓展你可以考察的选项。对假设、证据和最终决策负责的，仍然是工程判断。"
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 4,
+                  "content": {
+                    "body": "用 AI 拓宽你要考虑的选项。决定以及决定的理由，仍然由你负责。"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "what-an-llm-does",
+              "title": "LLM 实际上在做什么",
+              "description": "它在预测文本。仅这一点就能解释它的大部分行为。",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 2,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "语言模型不会去查资料，也不像人那样推理。它预测接下来最可能出现的文本。这类系统中几乎所有令人意外的表现，都源于这一句话。"
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "在海量数据上训练出的预测",
+                    "body": "训练时，模型读过海量文本，并变得非常擅长续写。它并没有把事实存进数据库。它学到的是哪些词通常跟在哪些词后面——无论是语法、论证结构、代码还是各种惯例。\n\n正因如此，它能流畅地写出自己根本无从知道的内容，也正因如此，流畅并不代表准确。"
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "为什么了解这一点很有用",
+                    "body": "问一个广为人知的公式，你通常会得到正确答案——它在训练文本中反复出现过。\n\n问某个版本中一句引文在第几页，你可能会得到一个信心十足却凭空编造的页码。那只是一个看似合理的续写，从来不是查询结果。"
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 4,
+                  "content": {
+                    "question": "为什么模型可能写出流畅但错误的答案？",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "流畅和准确来自同一个过程——看似合理的续写"
+                      },
+                      {
+                        "id": "b",
+                        "label": "它的内存用完了"
+                      },
+                      {
+                        "id": "c",
+                        "label": "它是用语法错误的文本训练的"
+                      }
+                    ],
+                    "correct_option_id": "a",
+                    "explanation": "听起来正确和真正正确来自同一个机制。所以答案的文风完全不能说明它是否属实。"
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 5,
+                  "content": {
+                    "body": "它在预测文本。自信是文字的特征，而不是事实的特征。"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "context-and-tokens",
+              "title": "上下文与 token",
+              "description": "为什么长对话会跑偏，以及模型实际上能看到什么。",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 3,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "长对话进行到一半，模型忘了你一开始设定的条件。这不是粗心。它一次能看到的内容有上限，而你已经超过了。"
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "token 与窗口",
+                    "body": "文本会被切分成 token——大致相当于词的片段。在英语中，一个 token 通常约为四分之三个单词。模型一次考虑的全部内容，包括你的消息和它自己的回复，都必须装进一个固定大小的上下文窗口。\n\n当对话超出窗口时，最早的部分就看不见了。模型并不是在记住对话，而是在重新读取仍然装得下的内容。"
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "这在实际中意味着什么",
+                    "body": "如果某条规则很重要——“始终用中文回答”“不超过 200 字”——就在需要它的那条消息里再说一遍，而不是指望它在二十轮对话之后依然有效。\n\n如果对话已经偏离很远，带着清晰的摘要开启新对话，通常比继续一段拥挤的对话效果更好。"
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 4,
+                  "content": {
+                    "question": "一段长对话不再遵守开头给出的指令。最可能的原因是什么？",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "这条指令已经移出了上下文窗口"
+                      },
+                      {
+                        "id": "b",
+                        "label": "模型决定无视你"
+                      },
+                      {
+                        "id": "c",
+                        "label": "这条指令有语法错误"
+                      }
+                    ],
+                    "correct_option_id": "a",
+                    "explanation": "不在窗口里的内容，就相当于从来没说过。在需要的地方重新说明这个条件。"
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 5,
+                  "content": {
+                    "body": "模型看到的是窗口，不是记忆。重要的事再说一遍，对话太拥挤时就重新开始。"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "asking-well",
+      "pillar": "use_ai",
+      "title": "学会提问",
+      "description": "问得更好，答案就更好。",
+      "icon": "message-square",
+      "order": 2,
+      "tags": [
+        "general"
+      ],
+      "modules": [
+        {
+          "id": "use-ai-foundations",
+          "title": "改变答案的习惯",
+          "description": "改变你所得答案的三个习惯。",
+          "order": 1,
+          "lessons": [
+            {
+              "id": "ask-better-questions",
+              "title": "提出更好的问题",
+              "description": "说清楚你要什么、给谁看、以什么形式呈现。",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 1,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "你要一份摘要，结果收到三段平淡无奇、还得自己重写的文字。模型并没有失败——只是从来没人告诉它好的答案应该是什么样子。"
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "一个请求有三个部分",
+                    "body": "有用的请求会说明任务、读者和答案的形式。缺少其中任何一个，模型都会用一个平均化的猜测来填补。任务说明要做什么。读者决定用词和详细程度。形式——长度、格式、需要保留什么——能让你免于重写结果。"
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "comparison",
+                  "order": 3,
+                  "content": {
+                    "worse_label": "模糊",
+                    "worse": "总结一下。",
+                    "better_label": "具体",
+                    "better": "把这篇文字总结成 5 个要点，给不熟悉这个主题的人看。保留重要数据，最后用 2 个值得记住的观点收尾。",
+                    "note": "第二个版本说明了任务、读者和形式。它并不巧妙——只是完整。"
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 4,
+                  "content": {
+                    "question": "“把这封邮件改短一点”缺少哪一部分？",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "任务"
+                      },
+                      {
+                        "id": "b",
+                        "label": "读者"
+                      },
+                      {
+                        "id": "c",
+                        "label": "什么都不缺"
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "任务和形式都有。但谁来读——客户、你的上司还是同事——决定了语气，而模型只能靠猜。"
+                  }
+                },
+                {
+                  "id": "try-it",
+                  "type": "prompt_exercise",
+                  "order": 5,
+                  "content": {
+                    "instruction": "改写这个请求，让它说明任务、读者和形式。",
+                    "starting_text": "解释一下机器学习。",
+                    "hint": "谁来读？要多长？答案必须包含什么？",
+                    "sample_answer": "向一位没有技术背景的同事解释机器学习，控制在 150 字以内，用一个日常生活中的例子，不要用术语。"
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "任务、读者、形式。答案令人失望时，往往是缺了其中一项。"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "give-useful-context",
+              "title": "提供有用的上下文",
+              "description": "模型需要知道什么，什么只会带来干扰。",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 2,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "模型对你的项目、团队或上周做出的决定一无所知。它只根据眼前的信息作答——凡是你没提到的，它都会编造一个看似合理的替代品。"
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "上下文就是会改变答案的信息",
+                    "body": "有用的上下文，是任何会改变一位内行人答案的信息：约束条件、受众、你已经尝试过的方法、必须遵守的格式。其他的都是干扰。只有三句话重要时却粘贴整份文档，并不会让答案更好——反而会稀释你真正想要的东西。"
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "同一个问题，不同的上下文",
+                    "body": "“这个设计好吗？”得到的是一份通用的检查清单。\n\n“对于一个每周发布、没有专职运维工程师的三人团队来说，这个设计好吗？”得到的是关于运维成本的回答——因为约束条件被说明了。"
+                  }
+                },
+                {
+                  "id": "warning",
+                  "type": "warning",
+                  "order": 4,
+                  "content": {
+                    "body": "上下文不是粘贴机密的地方。登录凭据、他人的个人信息和机密文件，并不会因为有用就变得安全。"
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 5,
+                  "content": {
+                    "question": "你想请人看看一份求职申请。哪个细节值得补充？",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "应聘的岗位以及招聘启事的要求"
+                      },
+                      {
+                        "id": "b",
+                        "label": "你的完整住址和出生日期"
+                      },
+                      {
+                        "id": "c",
+                        "label": "你开始写申请的日期"
+                      }
+                    ],
+                    "correct_option_id": "a",
+                    "explanation": "岗位会改变答案，你的住址不会——而且那是没有理由出现在那里的个人信息。"
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "补充会改变内行人答案的信息，其余的都省掉，也永远不要粘贴你不希望被保存的内容。"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "iterate-instead-of-restarting",
+              "title": "迭代，而不是推倒重来",
+              "description": "价值在第二条消息里。",
+              "estimated_minutes": 3,
+              "difficulty": "beginner",
+              "order": 3,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "答案已经差不多对了。大多数人却把它删掉，重写整个请求。这样就把原本有用的部分也丢掉了。"
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "修改，而不是重来",
+                    "body": "把第一个答案当作可以通过对话修改的草稿。先说要保留什么，再说要改什么。“保留结构，把第二点写具体，删掉最后一段”一步就能到位。重新开始等于再掷一次骰子。"
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "comparison",
+                  "order": 3,
+                  "content": {
+                    "worse_label": "推倒重来",
+                    "worse": "这不是我想要的。给我写一份更好的摘要。",
+                    "better_label": "修改",
+                    "better": "结构很好。第 2 点太抽象了——换成文中的具体数字。删掉结尾段落。",
+                    "note": "第二种保留了有用的部分。第一种则让模型在没有任何新信息的情况下重新猜一遍。"
+                  }
+                },
+                {
+                  "id": "tip",
+                  "type": "tip",
+                  "order": 4,
+                  "content": {
+                    "body": "如果改了两轮仍然不对，问题通常出在最初的请求，而不是答案。回过头去，把缺少的信息补上。"
+                  }
+                },
+                {
+                  "id": "practice",
+                  "type": "prompt_exercise",
+                  "order": 5,
+                  "content": {
+                    "instruction": "你收到的答案太正式，也太长。请写出修改意见——不要重写请求。",
+                    "starting_text": "",
+                    "hint": "说出一处要保留的，和两处要修改的。",
+                    "sample_answer": "保留三个部分。篇幅缩短到大约一半，语气改成跟同事说话，而不是跟客户说话。"
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "先说保留什么，再说修改什么。推倒重来会丢掉已经有用的部分。"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "verify-and-protect",
+      "pillar": "learn_ai",
+      "title": "核实与保护",
+      "description": "核实重要的内容，保护敏感信息。",
+      "icon": "shield-check",
+      "order": 3,
+      "tags": [
+        "general"
+      ],
+      "modules": [
+        {
+          "id": "verify-and-protect-foundations",
+          "title": "信任，但要核实",
+          "description": "答案容易出错的地方，以及绝不能分享的内容。",
+          "order": 1,
+          "lessons": [
+            {
+              "id": "why-ai-hallucinates",
+              "title": "为什么 AI 会产生“幻觉”",
+              "description": "以及如何判断哪些答案值得核实。",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 1,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "幻觉不是故障。它是系统在做它一贯做的事——生成看似合理的续写——只不过是在“看似合理”与“真实”已经分道扬镳的地方。"
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "风险集中在哪里",
+                    "body": "最容易编造的，是那些具体、可核实但不常见的内容：精确引文、页码、统计数据、法律条文、API 方法、人物生平。模型见过这类内容的样子成千上万次，所以只要被问到，就能生成一个很有说服力的版本。\n\n当答案属于常识，或者源文本是你自己提供的时候，编造的可能性最小。"
+                  }
+                },
+                {
+                  "id": "tip",
+                  "type": "tip",
+                  "order": 3,
+                  "content": {
+                    "body": "问一句“你的来源是什么？”本身并没有用——来源也可能是编的。真正有用的是去核实来源。"
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 4,
+                  "content": {
+                    "question": "哪个答案最值得核实？",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "改写你自己粘贴的一段文字"
+                      },
+                      {
+                        "id": "b",
+                        "label": "一个带有年份和百分比的具体统计数据"
+                      },
+                      {
+                        "id": "c",
+                        "label": "一份团队名称的创意清单"
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "具体、可核实、又不是你提供的——恰恰是在这里，看似合理的编造最难被发现。"
+                  }
+                },
+                {
+                  "id": "reflection",
+                  "type": "reflection",
+                  "order": 5,
+                  "content": {
+                    "prompt": "想一个你会用 AI 来完成的任务。它的答案中，哪一部分如果悄悄出错，会造成真正的问题？",
+                    "hint": "每一次都要核实的，正是这一部分。"
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "核实那些具体、可核实、又不是出自你的内容。不要因为听起来很确定就相信任何东西。"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "verify-output",
+              "title": "核实输出",
+              "description": "检查计算、来源、论断和假设。",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 2,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "idea",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "heading": "核实",
+                    "body": "核实是一个独立的工程步骤。问同一个模型它是否确定，并不是独立的检查。"
+                  }
+                },
+                {
+                  "id": "scenario",
+                  "type": "example",
+                  "order": 2,
+                  "content": {
+                    "label": "情境",
+                    "body": "AI 为一项结构分析给出了载荷计算。"
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 3,
+                  "content": {
+                    "question": "使用之前你应该怎么做？",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "因为标明了单位，直接使用。"
+                      },
+                      {
+                        "id": "b",
+                        "label": "独立核实假设、单位和计算。"
+                      },
+                      {
+                        "id": "c",
+                        "label": "问 AI 它是否确定。"
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "在依赖结果之前，用可靠的方法或来源检查载荷工况、单位、方程和边界条件。"
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 4,
+                  "content": {
+                    "body": "用模型无法左右的方法或来源，核实你所依赖的内容。再问一遍模型并不是核实。"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "confidential-information",
+              "title": "机密信息",
+              "description": "了解哪些内容不能发送到未经授权的系统。",
+              "estimated_minutes": 3,
+              "difficulty": "beginner",
+              "order": 3,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "idea",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "heading": "隐私",
+                    "body": "只分享该工具和你所在院校获准处理的数据。"
+                  }
+                },
+                {
+                  "id": "scenario",
+                  "type": "example",
+                  "order": 2,
+                  "content": {
+                    "label": "情境",
+                    "body": "一份项目文档包含学生编号、供应商数据和一个内部访问令牌。"
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 3,
+                  "content": {
+                    "question": "负责任的下一步是什么？",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "因为是学业任务，全部粘贴进去。"
+                      },
+                      {
+                        "id": "b",
+                        "label": "只删除学生姓名。"
+                      },
+                      {
+                        "id": "c",
+                        "label": "使用经批准的系统，并删除密钥以及不必要的个人或机密数据。"
+                      }
+                    ],
+                    "correct_option_id": "c",
+                    "explanation": "授权和数据最小化同样重要。绝不能包含登录凭据，不必要的敏感背景也应删除。"
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 4,
+                  "content": {
+                    "body": "只分享工具获准处理的内容，删除机密信息和不必要的个人信息，永远不要粘贴登录凭据。"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "responsible-use",
+              "title": "负责任地使用",
+              "description": "识别何时使用 AI 是合适的、受限的或被禁止的。",
+              "estimated_minutes": 3,
+              "difficulty": "beginner",
+              "order": 4,
+              "version": 1,
+              "tags": [
+                "general",
+                "student"
+              ],
+              "blocks": [
+                {
+                  "id": "idea",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "heading": "负责任的实践",
+                    "body": "正确的使用方式取决于任务、课程规定、工具是否获准，以及所需的人类问责程度。"
+                  }
+                },
+                {
+                  "id": "scenario",
+                  "type": "example",
+                  "order": 2,
+                  "content": {
+                    "label": "情境",
+                    "body": "一项计分作业的规定没有说清楚能否借助生成式 AI。"
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 3,
+                  "content": {
+                    "question": "你应该怎么做？",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "悄悄使用 AI，因为大家可能都在用。"
+                      },
+                      {
+                        "id": "b",
+                        "label": "让 AI 完成最终提交内容，再改几个词。"
+                      },
+                      {
+                        "id": "c",
+                        "label": "查看课程规定，不清楚时提问，并说明获准使用的帮助。"
+                      }
+                    ],
+                    "correct_option_id": "c",
+                    "explanation": "负责任的使用尊重学习目标和既定规则。规定不明确时，先弄清楚再依赖 AI。"
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 4,
+                  "content": {
+                    "body": "使用 AI 之前先了解任务的规则，规则不清楚时就去问，并说明你使用了哪些帮助。"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "adapt-to-your-field",
+      "pillar": "adapt_ai",
+      "title": "适应你的领域",
+      "description": "让 AI 适应你的工作，而不是反过来。",
+      "icon": "settings-2",
+      "order": 4,
+      "tags": [
+        "general",
+        "student",
+        "engineering",
+        "marketing",
+        "developer",
+        "creator",
+        "management"
+      ],
+      "modules": [
+        {
+          "id": "adapt-ai-foundations",
+          "title": "贴合你的工作",
+          "description": "从一次性的答案，到可以反复使用的成果。",
+          "order": 1,
+          "lessons": [
+            {
+              "id": "an-assistant-for-your-work",
+              "title": "把 AI 变成工作或学习助手",
+              "description": "把你的情况说明一次，从此不再重复。",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 1,
+              "version": 1,
+              "tags": [
+                "general",
+                "student",
+                "management"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "大多数人在每次提问时都要重新解释自己是谁、在做什么。真正节省时间的助手，是你只描述过一次的那个。"
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "长期指令",
+                    "body": "长期指令是三四句在很多请求中都成立的话：你的角色、你通常面向的读者、你想要的语气，以及你绝对不想要的东西。写一次，之后的每个请求都能变得很短。\n\n在 Nova 中，写作风格正是为此而设：指令放在一个地方，每次选择这个风格时都会生效。"
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "长期指令",
+                    "body": "“我是工科专业二年级学生。我为一位重视准确性胜过篇幅的指导老师写实验报告。请使用清晰、专业的中文。不要用重复正文内容的开头或结尾来凑字数。”\n\n现在，之后的每个请求只需两行，而不是十行。"
+                  }
+                },
+                {
+                  "id": "practice",
+                  "type": "prompt_exercise",
+                  "order": 4,
+                  "content": {
+                    "instruction": "用三四句话写出你自己的长期指令。",
+                    "starting_text": "",
+                    "hint": "角色、常见读者、语气，以及一件你绝对不想要的事。",
+                    "sample_answer": "我是产品经理，面向工程师和设计师写作。请具体、简洁；多用例子，少用形容词。永远不要以复述我刚才的问题开头。"
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 5,
+                  "content": {
+                    "body": "把你的情况在一个能保存的地方说明一次。之后每个请求都会更短。"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "build-a-reusable-workflow",
+              "title": "建立可重复使用的流程",
+              "description": "把你反复在做的任务，变成一键就能运行的东西。",
+              "estimated_minutes": 4,
+              "difficulty": "intermediate",
+              "order": 2,
+              "version": 1,
+              "tags": [
+                "general",
+                "engineering",
+                "marketing",
+                "developer"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "如果你已经把几乎一样的请求写了三遍，那它就不再是一个请求，而是一个你还没写下来的流程。"
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "固定的指令，可变的输入",
+                    "body": "流程把永远不变的部分和会变的部分分开。指令——做什么、给谁、以什么形式、检查什么——是固定的。你输入的文本每次都不一样。\n\n一旦分开，固定的部分就可以保存并重复使用，也不会再因为每次凭记忆重打而走样。"
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "comparison",
+                  "order": 3,
+                  "content": {
+                    "worse_label": "每次重打",
+                    "worse": "你能看看这些会议记录，把我要做的事挑出来吗？",
+                    "better_label": "一个流程",
+                    "better": "从下面的记录中，只提取分配给我的任务。每项任务一行，以动词开头，如有注明截止日期请一并写上。如果没有分配给我的任务，就直接说明并停止。",
+                    "note": "第二种值得保存。它还说明了找不到内容时该怎么办——而重打的版本恰恰会在这时悄悄编出任务。"
+                  }
+                },
+                {
+                  "id": "tip",
+                  "type": "tip",
+                  "order": 4,
+                  "content": {
+                    "body": "一定要告诉流程，当输入不符合时该怎么做。这一句话就能避免大多数编造的结果。"
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 5,
+                  "content": {
+                    "question": "流程的固定部分应该包含什么？",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "这次要处理的文本"
+                      },
+                      {
+                        "id": "b",
+                        "label": "好结果应符合的规则"
+                      },
+                      {
+                        "id": "c",
+                        "label": "今天的日期"
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "规则是你不想再重打的部分，输入则是会变化的部分。"
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "把固定的指令和变化的输入分开，并说明找不到内容时该怎么办。"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "adapt-ai-to-your-domain",
+              "title": "让 AI 适应你的领域",
+              "description": "你的领域所要求的术语、惯例和检验标准。",
+              "estimated_minutes": 5,
+              "difficulty": "intermediate",
+              "order": 3,
+              "version": 1,
+              "tags": [
+                "engineering",
+                "marketing",
+                "developer",
+                "creator",
+                "student",
+                "management"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "泛泛的答案之所以泛泛，是因为请求里没有说明你身处哪个领域。你的领域有自己的术语、惯例和论证标准——而这些从外部都看不出来。"
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "你的领域期待的三件事",
+                    "body": "说明你使用的术语，避免答案被翻译成别人的说法。说明你遵循的惯例——报告结构、提交信息的写法、机构的行文风格。再说明检验标准：在你的领域里，什么样的答案才算合格，而不只是合理。\n\n第三点是大多数人会漏掉的，也恰恰是最起作用的。"
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "同一个请求在三个领域",
+                    "body": "工程：“说明每个数字背后的假设。如果某个数值是估算而非实测，请标注出来。”\n\n市场营销：“符合我们的行文风格：直接，不用夸张的形容词。给出两个版本，方便我们比较。”\n\n开发：“遵循文件中已有的规范。如果某种做法需要我们没有的依赖，请直接说明，不要自行添加。”"
+                  }
+                },
+                {
+                  "id": "ai-practice",
+                  "type": "ai_exercise",
+                  "order": 4,
+                  "content": {
+                    "exercise_id": "adapt-domain-request",
+                    "instruction": "为你所在领域的一项任务写一个请求。说明术语、惯例，以及让答案可以被接受的检验标准。",
+                    "starting_text": "",
+                    "hint": "检验标准是大多数人会忘记的部分：什么会让你否决一个其他方面都合理的答案？"
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 5,
+                  "content": {
+                    "body": "术语、惯例，以及你所在领域采用的检验标准。正是检验标准，让合理的答案变得可用。"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "ai-in-engineering",
+              "title": "工程中的 AI",
+              "description": "把 AI 当作工具，而不是思考的替代品。",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 4,
+              "version": 1,
+              "tags": [
+                "engineering",
+                "student"
+              ],
+              "blocks": [
+                {
+                  "id": "idea",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "heading": "工程 AI",
+                    "body": "当工程师仍然负责时，AI 作为探索、起草和批判的协作者最能发挥作用。"
+                  }
+                },
+                {
+                  "id": "scenario",
+                  "type": "example",
+                  "order": 2,
+                  "content": {
+                    "label": "情境",
+                    "body": "你正在比较一颗小卫星某个子系统的两种方案。"
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 3,
+                  "content": {
+                    "question": "哪种工作流程最能发挥 AI 的作用？",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "让 AI 选择方案，并照抄它的理由。"
+                      },
+                      {
+                        "id": "b",
+                        "label": "用它梳理权衡取舍，再核实约束条件并记录你的决策。"
+                      },
+                      {
+                        "id": "c",
+                        "label": "为了让报告简短，不记录假设。"
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "AI 会放大工程判断，但不能取代验证、可追溯性和问责。"
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 4,
+                  "content": {
+                    "body": "让 AI 提出选项和权衡，然后加以验证，记录你的假设，并对决定负责。"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "exercises": [
+    {
+      "id": "adapt-domain-request",
+      "task": "learning_feedback",
+      "instruction": "You are helping someone learn to write better requests to an AI assistant. They were asked to write a request for a task in their own professional or academic field, naming three things: the vocabulary of their field, the convention they follow, and the check that makes an answer acceptable rather than merely reasonable.\n\nRead their attempt and reply in at most four short sentences. Say plainly which of the three are present and which are missing. Then give one concrete improvement, rewriting a fragment of their own request rather than replacing it with yours. Do not score them, do not use percentages, and do not praise without a reason. If their request is already complete, say so and name the strongest part.\n\nReply in the language they wrote in."
+    }
+  ]
+}
