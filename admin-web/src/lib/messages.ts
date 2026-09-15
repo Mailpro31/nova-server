@@ -31,7 +31,21 @@ export const t = {
     deployment: "Deployment",
     configuration: "Configuration",
     security: "Security",
+    audit: "Audit log",
     diagnostics: "Diagnostics",
+  },
+
+  // Les domaines de la barre latérale. Un domaine d'une seule page prête son
+  // nom au lien : « App features » mène à Configuration.
+  navGroups: {
+    overview: "Overview",
+    people: "People",
+    features: "App features",
+    learn: "Learn",
+    content: "Content",
+    signIn: "Sign-in and security",
+    audit: "Audit log",
+    infrastructure: "Deployment",
   },
 
   bootstrap: {
