@@ -233,7 +233,8 @@ class CatalogTranslationTests(unittest.TestCase):
         self.assertEqual(learning.load_catalog(locale="FR_ca")["locale"], "fr")
 
     def test_a_language_without_translation_falls_back_to_english(self):
-        for locale in ("de", "xx", "", None, "../catalog", "fr/../../main"):
+        # `fi` : une langue que Nova ne propose pas, donc sans traduction.
+        for locale in ("fi", "xx", "", None, "../catalog", "fr/../../main"):
             with self.subTest(locale=locale):
                 self.assertEqual(learning.load_catalog(locale=locale)["locale"], "en")
 
