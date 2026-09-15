@@ -28,6 +28,7 @@ import {
   MAX_TITLE,
   MIN_MINUTES,
   alignTranslation,
+  canCustomize,
   customLessonPayload,
   dueDateToInput,
   emptyBlock,
@@ -36,12 +37,14 @@ import {
   lessonProblems,
   lessonsByModule,
   moveBlock,
+  proposalTranslation,
   removeBlock,
   type CustomLessonDraft,
   type CustomLessonView,
   type LearningAdminView,
   type LearningLessonView,
   type LessonBlock,
+  type LessonOrigin,
   type LessonProblem,
   type LessonTranslation,
 } from "../lib/learning";
@@ -208,6 +211,7 @@ function LessonRow({
   const [due, setDue] = useState(dueDateToInput(lesson.due_at));
   const [groupIds, setGroupIds] = useState<string[]>(lesson.group_ids);
   const [confirmArchive, setConfirmArchive] = useState(false);
+  const [confirmCustomize, setConfirmCustomize] = useState(false);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const [conflict, setConflict] = useState(false);
@@ -227,6 +231,37 @@ function LessonRow({
     } finally {
       setBusy(false);
     }
+  }
+
+  /** La copie s'ouvre dans l'éditeur : on personnalise pour la modifier. */
+  async function customize() {
+    setBusy(true);
+    setFailure(null);
+    try {
+      const copy = await control!.customizeLearningLesson(lesson.id);
+      onChanged();
+      onEdit(copy.id);
+    } catch (raised) {
+      setFailure(failureText(raised));
+      setBusy(false);
+    }
+  }
+
+  if (confirmCustomize) {
+    return (
+      <ConfirmDialog
+        title={t.learn.customizeTitle}
+        body={t.learn.customizeBody}
+        confirmLabel={t.learn.customize}
+        busy={busy}
+        error={failure}
+        onConfirm={() => void customize()}
+        onCancel={() => {
+          setConfirmCustomize(false);
+          setFailure(null);
+        }}
+      />
+    );
   }
 
   if (confirmArchive) {
@@ -249,7 +284,10 @@ function LessonRow({
         <div className="stack lesson-summary">
           <strong>{lesson.title}</strong>
           <div className="row">
-            {lesson.custom && <Tag>{t.learn.custom}</Tag>}
+            {lesson.custom && (
+              <Tag>{lesson.based_on_lesson_id ? t.learn.customized : t.learn.custom}</Tag>
+            )}
+            {lesson.update_available && <Tag tone="warn">{t.learn.updateAvailable}</Tag>}
             {archived && <Tag tone="warn">{t.learn.archived}</Tag>}
             {lesson.required && <Tag tone="ok">{t.learn.required}</Tag>}
             {lesson.due_at !== null && <Tag>{t.learn.dueOn(formatDay(lesson.due_at))}</Tag>}
@@ -265,6 +303,11 @@ function LessonRow({
             {lesson.custom && (
               <button disabled={busy} onClick={() => onEdit(lesson.id)}>
                 {t.learn.edit}
+              </button>
+            )}
+            {canCustomize(lesson) && (
+              <button disabled={busy} onClick={() => setConfirmCustomize(true)}>
+                {t.learn.customize}
               </button>
             )}
             <button disabled={busy} aria-expanded={open} onClick={() => setOpen(!open)}>
@@ -410,16 +453,140 @@ function ExistingLessonEditor({
       </div>
       <AsyncSection state={state} onRetry={retry}>
         {(lesson) => (
-          <EditorForm
-            view={view}
-            initial={lesson}
-            mayManage={mayManage}
-            onClose={onClose}
-            onReload={retry}
-          />
+          <>
+            {lesson.based_on?.update_available && (
+              <NovaUpdate
+                lesson={lesson}
+                origin={lesson.based_on}
+                mayManage={mayManage}
+                onDecided={() => onClose(true)}
+                onReload={retry}
+              />
+            )}
+            <EditorForm
+              view={view}
+              initial={lesson}
+              mayManage={mayManage}
+              onClose={onClose}
+              onReload={retry}
+            />
+          </>
         )}
       </AsyncSection>
     </div>
+  );
+}
+
+/**
+ * Nova a livré une version plus récente de la leçon copiée.
+ *
+ * Rien ne s'applique d'office. L'administrateur lit la version de Nova, puis
+ * l'applique — après une confirmation, parce que le contenu de la copie est
+ * remplacé — ou garde la sienne.
+ */
+function NovaUpdate({
+  lesson,
+  origin,
+  mayManage,
+  onDecided,
+  onReload,
+}: {
+  lesson: CustomLessonView;
+  origin: LessonOrigin;
+  mayManage: boolean;
+  onDecided: () => void;
+  onReload: () => void;
+}) {
+  const { control } = useSession();
+  const [showing, setShowing] = useState(false);
+  const [proposal, retryProposal] = useResource(
+    control && showing ? () => control.novaUpdate(lesson.id) : null,
+    [control, showing, lesson.id],
+  );
+  const [confirmApply, setConfirmApply] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
+  const [conflict, setConflict] = useState(false);
+
+  async function decide(action: () => Promise<unknown>) {
+    setBusy(true);
+    setFailure(null);
+    setConflict(false);
+    try {
+      await action();
+      onDecided();
+    } catch (raised) {
+      if (isConflict(raised) && raised instanceof ApiError && raised.code === "LEARNING_REVISION_CONFLICT") {
+        setConflict(true);
+      } else {
+        setFailure(failureText(raised));
+      }
+      setBusy(false);
+    }
+  }
+
+  if (confirmApply) {
+    return (
+      <ConfirmDialog
+        title={t.learn.applyTitle}
+        body={t.learn.applyBody}
+        confirmLabel={t.learn.applyUpdate}
+        tone="danger"
+        busy={busy}
+        error={conflict ? t.learn.conflict : failure}
+        onConfirm={() =>
+          void decide(() => control!.decideNovaUpdate(lesson.id, lesson.revision, "apply"))
+        }
+        onCancel={() => {
+          setConfirmApply(false);
+          setFailure(null);
+          setConflict(false);
+        }}
+      />
+    );
+  }
+
+  return (
+    <Panel title={t.learn.updateTitle}>
+      <Notice>{t.learn.updateBody(origin.version, origin.latest_version)}</Notice>
+      <div className="row">
+        <button aria-expanded={showing} onClick={() => setShowing(!showing)}>
+          {showing ? t.learn.hideUpdate : t.learn.showUpdate}
+        </button>
+        {mayManage && (
+          <>
+            <button disabled={busy} onClick={() => setConfirmApply(true)}>
+              {t.learn.applyUpdate}
+            </button>
+            <button
+              disabled={busy}
+              onClick={() =>
+                void decide(() => control!.decideNovaUpdate(lesson.id, lesson.revision, "dismiss"))
+              }
+            >
+              {t.learn.keepVersion}
+            </button>
+          </>
+        )}
+      </div>
+      {mayManage && <p className="policy-hint">{t.learn.keepHint}</p>}
+      {conflict && (
+        <Notice tone="danger">
+          {t.learn.conflict} <button onClick={onReload}>{t.learn.reload}</button>
+        </Notice>
+      )}
+      {failure && <Notice tone="danger">{failure}</Notice>}
+      {showing && (
+        <AsyncSection state={proposal} onRetry={retryProposal}>
+          {(view) => (
+            <LessonPreview
+              translation={proposalTranslation(view)}
+              minutes={lesson.estimated_minutes}
+            />
+          )}
+        </AsyncSection>
+      )}
+    </Panel>
   );
 }
 
