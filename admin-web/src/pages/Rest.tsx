@@ -20,6 +20,7 @@ import { AsyncSection, Facts, Notice, Panel, Tag } from "../components/primitive
 import { AIRuntime } from "./AIRuntime";
 import { PrivateConnector } from "./Connector";
 import { DesktopDeployment } from "./DesktopDeployment";
+import { GroupPolicies } from "./GroupPolicies";
 
 function formatDuration(seconds: number): string {
   if (seconds <= 0) return "—";
@@ -183,6 +184,9 @@ export function Configuration() {
         )}
       </AsyncSection>
       <Policies />
+      {/* Les groupes surchargent la meme table de reglages, sous ceux de
+          l'organisation qu'ils modifient. */}
+      <GroupPolicies catalog={POLICY_GROUPS} />
     </>
   );
 }
