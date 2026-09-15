@@ -39,7 +39,11 @@ describe("Dictation limit model", () => {
   test("changing the limit keeps every other setting of the document", () => {
     // Le PUT de la policy remplace tout le document : une clé oubliée
     // reprendrait son défaut et rouvrirait une fonction fermée.
-    const settings = { ai_skills_enabled: false, styles_enabled: true, max_dictation_seconds: 600 };
+    const settings = {
+      ai_skills_enabled: false,
+      styles_enabled: true,
+      max_dictation_seconds: 600,
+    };
     expect(withDictationLimit(settings, 25)).toEqual({
       ai_skills_enabled: false,
       styles_enabled: true,
@@ -65,7 +69,9 @@ describe("Limits page", () => {
     const { t } = await import("./messages");
     const ids = NAV_SECTIONS.map((section) => section.id);
     expect(ids.indexOf("limits")).toBe(ids.indexOf("content") + 1);
-    expect(NAV_SECTIONS.find((section) => section.id === "limits")?.pages).toEqual(["limits"]);
+    expect(
+      NAV_SECTIONS.find((section) => section.id === "limits")?.pages,
+    ).toEqual(["limits"]);
     expect(t.navGroups.limits).toBe("Limits");
     expect(code(APP)).toContain("<Limits />");
   });
@@ -73,7 +79,10 @@ describe("Limits page", () => {
   test("it reads the organization policy and writes it back whole, on the revision it showed", () => {
     const source = code(PAGE);
     expect(source).toContain("control.policy()");
-    expect(source).toContain("control!.updatePolicy(view.revision, withDictationLimit(view.settings, minutes))");
+    expect(source).toContain(
+      "const next = withDictationLimit(view.settings, minutes);",
+    );
+    expect(source).toContain("control!.updatePolicy(view.revision, next)");
     const save = source.slice(source.indexOf("async function save()"));
     expect(save).toContain("retry()");
   });

@@ -30,6 +30,7 @@ import { useSession } from "./lib/useAdminSession";
 import { Administrators } from "./pages/Administrators";
 import { Identity } from "./pages/Identity";
 import { Learn } from "./pages/Learn";
+import { Limits } from "./pages/Limits";
 import { Members } from "./pages/Members";
 import { Packages } from "./pages/Packages";
 import { Provisioning } from "./pages/Provisioning";
@@ -48,6 +49,7 @@ const PAGES = [
   { path: "members", label: t.nav.members, element: <Members /> },
   { path: "learn", label: t.nav.learn, element: <Learn /> },
   { path: "packages", label: t.nav.packages, element: <Packages /> },
+  { path: "limits", label: t.nav.limits, element: <Limits /> },
   { path: "deployment", label: t.nav.deployment, element: <Deployment /> },
   { path: "configuration", label: t.nav.configuration, element: <Configuration /> },
   { path: "security", label: t.nav.security, element: <Security /> },
