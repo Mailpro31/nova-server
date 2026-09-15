@@ -149,6 +149,12 @@ class CreateTests(CustomLessonTestCase):
         self.assertFalse(listed["ask-better-questions"]["custom"])
         self.assertIn(MODULE, [module["id"] for module in body["modules"]])
 
+    def test_the_console_lists_the_languages_a_lesson_can_use(self):
+        body = self.client.get(BASE, headers=self.auth(self.admin)).json()
+        self.assertEqual(body["locales"], sorted(learning.custom_lesson_locales()))
+        self.assertIn("en", body["locales"])
+        self.assertIn("zh-TW", body["locales"])
+
     def test_the_editor_reads_every_translation_back(self):
         created = self.created(lesson_body(translations={
             "en": {"title": "Our report rules", "description": "What every report needs.",
