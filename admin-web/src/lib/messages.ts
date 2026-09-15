@@ -584,6 +584,20 @@ export const t = {
     groupAi: "AI",
     groupWriting: "Writing",
     groupInput: "Input",
+    groupCategories: "App categories",
+    stylesTitle: "Styles",
+    // La question qu'un administrateur se pose en fermant Styles : les dictees
+    // perdent-elles leur mise en forme ? Non.
+    stylesBody:
+      "Show the Styles category and deliver this organization's Styles. When closed, dictations are still reformulated with the default Style.",
+    generatedInstructionsTitle: "Prompts",
+    generatedInstructionsBody: "Show the Prompts category, where members find the prompts their dictations produced.",
+    pastDictationsTitle: "History",
+    pastDictationsBody: "Show the History category, where members find their past dictations.",
+    // Prompts et Historique vivent sur le poste : le dire evite de croire que
+    // fermer la categorie efface ou collecte quoi que ce soit.
+    deviceCategoryNote:
+      "Closing it hides the category. Its content stays on each member's device and is never sent to the organization.",
     aiSkillsTitle: "AI Skills",
     aiSkillsBody: "Allow members to use AI Skills in Nova.",
     vocabularyTitle: "Organization vocabulary",
