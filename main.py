@@ -9187,6 +9187,9 @@ AUDIT_ACTION_LABELS = {
     "learning_custom_lesson.create": "Created a Learn lesson",
     "learning_custom_lesson.update": "Edited a Learn lesson",
     "learning_custom_lesson.delete": "Deleted a Learn lesson",
+    "learning_custom_lesson.customize": "Customized a Learn lesson",
+    "learning_custom_lesson.update_apply": "Applied Nova's update to a Learn lesson",
+    "learning_custom_lesson.update_dismiss": "Kept a Learn lesson without Nova's update",
 }
 
 
@@ -10425,7 +10428,23 @@ def custom_lesson_view(row) -> dict | None:
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
         "updated_by_user_id": row["updated_by_user_id"],
+        "based_on": custom_lesson_origin(row["based_on_lesson_id"], row["based_on_version"]),
     }
+
+
+def custom_lesson_origin(lesson_id: str | None, version: int | None) -> dict | None:
+    """La lecon livree dont une copie personnalisee est partie, et ou en est Nova.
+
+    `update_available` dit que Nova a livre une version plus recente que celle
+    copiee. Rien ne s'applique d'office : la console le propose. Une lecon
+    ecrite depuis zero n'a pas d'origine.
+    """
+    if not lesson_id or not isinstance(version, int):
+        return None
+    entry = learning.lessons_index().get(lesson_id)
+    latest = entry["lesson"]["version"] if entry else version
+    return {"lesson_id": lesson_id, "version": version, "latest_version": latest,
+            "update_available": latest > version}
 
 
 def custom_lesson_row(conn, organization_id: str, lesson_id: str):
@@ -10484,6 +10503,7 @@ def custom_lesson_index_entry(custom: dict, placements: dict[str, dict],
         "path_id": placement["path_id"],
         "pillar": placement["pillar"],
         "custom": True,
+        "based_on": custom["based_on"],
     }
 
 
@@ -10548,6 +10568,7 @@ def organization_learning_catalog(organization_id: str, account,
 
 
 def learning_admin_lesson_view(lesson_id: str, entry: dict, settings: dict) -> dict:
+    origin = entry.get("based_on")
     return {
         "id": lesson_id,
         "title": entry["lesson"]["title"],
@@ -10555,6 +10576,10 @@ def learning_admin_lesson_view(lesson_id: str, entry: dict, settings: dict) -> d
         "module_id": entry["module_id"],
         "pillar": entry["pillar"],
         "custom": entry.get("custom", False),
+        # Une copie personnalisee nomme la lecon livree d'origine, et la liste
+        # signale quand Nova en a livre une version plus recente.
+        "based_on_lesson_id": origin["lesson_id"] if origin else None,
+        "update_available": bool(origin and origin["update_available"]),
         **settings,
     }
 
@@ -10920,6 +10945,219 @@ def control_delete_custom_lesson(
             conn=conn,
         )
     return Response(status_code=204)
+
+
+# ── Lecons livrees personnalisees ────────────────────────────────────────────
+#
+# Personnaliser copie une lecon livree dans une lecon de l'organisation, avec
+# toutes ses langues. La copie remplace l'original pour les membres : elle en
+# reprend les reglages, et l'original est archive. Quand Nova livre ensuite une
+# version plus recente de l'original, la copie ne change pas d'elle-meme ;
+# l'administrateur applique la mise a jour ou garde sa version.
+
+
+def delivered_lesson_translations(lesson_id: str) -> dict[str, dict]:
+    """La lecon livree dans chaque langue ou elle existe.
+
+    Une traduction dont les blocs ne sont plus ceux de l'anglais — livree en
+    retard sur une nouvelle version — est laissee de cote plutot que de faire
+    echouer la copie : la lecon s'affiche alors en anglais dans cette langue.
+    """
+    reference = learning.lessons_index().get(lesson_id)
+    if reference is None:
+        return {}
+    skeleton = learning.block_skeleton(reference["lesson"]["blocks"])
+    translations: dict[str, dict] = {}
+    for locale in sorted(learning.custom_lesson_locales()):
+        catalog = learning.load_catalog(locale=locale)
+        if catalog["locale"] != locale:
+            continue
+        entry = learning.lessons_index(catalog).get(lesson_id)
+        if entry is None or learning.block_skeleton(entry["lesson"]["blocks"]) != skeleton:
+            continue
+        lesson = entry["lesson"]
+        translations[locale] = {"title": lesson["title"],
+                                "description": lesson["description"],
+                                "blocks": lesson["blocks"]}
+    return translations
+
+
+def delivered_lesson_as_custom(lesson_id: str, module_id: str) -> dict:
+    """La lecon livree, verifiee comme une lecon ecrite en console.
+
+    Une lecon qui porte un exercice IA ne passe pas : son instruction vit dans
+    le catalogue livre, et une lecon de l'organisation ne peut pas en porter.
+    """
+    reference = learning.lessons_index()[lesson_id]["lesson"]
+    if any(block["type"] == learning.BLOCK_AI_EXERCISE for block in reference["blocks"]):
+        raise auth_error(409, "LEARNING_LESSON_NOT_CUSTOMIZABLE")
+    try:
+        return learning.validate_custom_lesson({
+            "module_id": module_id,
+            "source_locale": learning.DEFAULT_LOCALE,
+            "estimated_minutes": reference["estimated_minutes"],
+            "difficulty": reference["difficulty"],
+            "translations": delivered_lesson_translations(lesson_id),
+        }, set(learning_module_placements()))
+    except learning.CatalogError:
+        raise auth_error(409, "LEARNING_LESSON_NOT_CUSTOMIZABLE") from None
+
+
+@app.post("/api/control/organization/learning/lessons/{lesson_id}/customize",
+          status_code=201)
+def control_customize_learning_lesson(
+    lesson_id: str,
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_CONTENT_MANAGE)),
+):
+    """Copie une lecon livree dans une lecon de l'organisation, qui la remplace."""
+    reference = learning.lessons_index().get(lesson_id)
+    if reference is None:
+        raise auth_error(404, "LESSON_NOT_FOUND")
+    lesson = delivered_lesson_as_custom(lesson_id, reference["module_id"])
+    version = reference["lesson"]["version"]
+    organization_id = principal.organization_id
+    copy_id = f"{CUSTOM_LESSON_PREFIX}{uuid.uuid4().hex[:16]}"
+    now = time.time()
+    with db() as conn:
+        count = conn.execute(
+            "SELECT COUNT(*) AS total FROM organization_learning_custom_lessons "
+            "WHERE organization_id=?",
+            (organization_id,),
+        ).fetchone()["total"]
+        if count >= MAX_CUSTOM_LESSONS:
+            raise auth_error(409, "LEARNING_CUSTOM_LESSON_LIMIT")
+        original = learning_settings_view(
+            learning_lesson_settings_row(conn, organization_id, lesson_id))
+        conn.execute(
+            "INSERT INTO organization_learning_custom_lessons(organization_id, lesson_id, "
+            "module_id, source_locale, estimated_minutes, difficulty, translations, "
+            "version, revision, created_at, created_by_user_id, updated_at, "
+            "updated_by_user_id, based_on_lesson_id, based_on_version) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (organization_id, copy_id, lesson["module_id"], lesson["source_locale"],
+             lesson["estimated_minutes"], lesson["difficulty"],
+             json.dumps(lesson["translations"], ensure_ascii=False), 1, 1, now,
+             principal.user_id, now, principal.user_id, lesson_id, version),
+        )
+        saved = _custom_lesson_or_404(conn, organization_id, copy_id)
+        record_admin_action(
+            principal, "learning_custom_lesson.customize", target_type="learning_lesson",
+            target_id=copy_id,
+            metadata={"based_on_lesson_id": lesson_id, "based_on_version": version,
+                      "old_revision": None, "new_revision": 1, "before": None,
+                      "after": custom_lesson_audit_view(saved)},
+            conn=conn,
+        )
+
+    # La copie reprend statut, obligation, echeance et groupes de l'original,
+    # puis l'original est archive : les membres ne voient jamais les deux.
+    inherited = {key: original[key] for key in _LEARNING_SETTING_KEYS}
+    if inherited != {key: learning_settings_view(None)[key] for key in _LEARNING_SETTING_KEYS}:
+        write_learning_lesson_settings(
+            principal, copy_id, "learning_lesson.update",
+            lambda conn, current: (current["revision"], dict(inherited)))
+    if original["status"] != LEARNING_LESSON_ARCHIVED:
+        _set_learning_lesson_status(
+            principal, lesson_id, LearningLessonStatusRequest(expected_revision=original["revision"]),
+            LEARNING_LESSON_ARCHIVED, "learning_lesson.archive")
+    return saved
+
+
+def _pending_nova_update(custom: dict) -> dict:
+    origin = custom["based_on"]
+    if origin is None or not origin["update_available"]:
+        raise auth_error(409, "LEARNING_UPDATE_NOT_AVAILABLE")
+    return origin
+
+
+@app.get("/api/control/organization/learning/custom-lessons/{lesson_id}/nova-update")
+def control_read_nova_update(
+    lesson_id: str,
+    locale: str | None = None,
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_ORGANIZATION_READ)),
+):
+    """La version plus recente que Nova a livree, pour la comparer avant de choisir."""
+    with db() as conn:
+        custom = _custom_lesson_or_404(conn, principal.organization_id, lesson_id)
+    origin = _pending_nova_update(custom)
+    catalog = learning.load_catalog(locale=locale or custom["source_locale"])
+    entry = learning.lessons_index(catalog).get(origin["lesson_id"])
+    if entry is None:
+        raise auth_error(409, "LEARNING_UPDATE_NOT_AVAILABLE")
+    lesson = entry["lesson"]
+    return {
+        "lesson_id": origin["lesson_id"],
+        "version": origin["latest_version"],
+        "current_version": origin["version"],
+        "locale": catalog["locale"],
+        "title": lesson["title"],
+        "description": lesson["description"],
+        "blocks": lesson["blocks"],
+    }
+
+
+@app.post("/api/control/organization/learning/custom-lessons/{lesson_id}/nova-update")
+def control_decide_nova_update(
+    lesson_id: str,
+    body: dict,
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_CONTENT_MANAGE)),
+):
+    """Applique la version de Nova, ou garde celle de l'organisation.
+
+    `apply` remplace le contenu de la copie par celui de Nova, dans toutes les
+    langues livrees. `dismiss` garde le contenu et retient la version vue : la
+    proposition ne revient qu'avec une version encore plus recente.
+    """
+    expected = body.get("expected_revision")
+    decision = body.get("decision")
+    if (set(body) - {"expected_revision", "decision"}
+            or not isinstance(expected, int) or isinstance(expected, bool)
+            or decision not in ("apply", "dismiss")):
+        raise auth_error(400, "LEARNING_CUSTOM_LESSON_INVALID")
+    organization_id = principal.organization_id
+    with db() as conn:
+        current = _custom_lesson_or_404(conn, organization_id, lesson_id)
+        if expected != current["revision"]:
+            raise auth_error(409, "LEARNING_REVISION_CONFLICT")
+        origin = _pending_nova_update(current)
+        if decision == "apply":
+            lesson = delivered_lesson_as_custom(origin["lesson_id"], current["module_id"])
+            blocks_changed = (
+                learning.block_skeleton(lesson["translations"][lesson["source_locale"]]["blocks"])
+                != learning.block_skeleton(
+                    current["translations"][current["source_locale"]]["blocks"])
+            )
+            version = current["version"] + (1 if blocks_changed else 0)
+            action = "learning_custom_lesson.update_apply"
+        else:
+            lesson = {field: current[field] for field in _CUSTOM_LESSON_FIELDS}
+            version = current["version"]
+            action = "learning_custom_lesson.update_dismiss"
+        revision = current["revision"] + 1
+        conn.execute(
+            "UPDATE organization_learning_custom_lessons SET module_id=?, source_locale=?, "
+            "estimated_minutes=?, difficulty=?, translations=?, version=?, revision=?, "
+            "based_on_version=?, updated_at=?, updated_by_user_id=? "
+            "WHERE organization_id=? AND lesson_id=? AND revision=?",
+            (lesson["module_id"], lesson["source_locale"], lesson["estimated_minutes"],
+             lesson["difficulty"], json.dumps(lesson["translations"], ensure_ascii=False),
+             version, revision, origin["latest_version"], time.time(), principal.user_id,
+             organization_id, lesson_id, current["revision"]),
+        )
+        saved = _custom_lesson_or_404(conn, organization_id, lesson_id)
+        if saved["revision"] != revision:
+            raise auth_error(409, "LEARNING_REVISION_CONFLICT")
+        record_admin_action(
+            principal, action, target_type="learning_lesson", target_id=lesson_id,
+            metadata={"old_revision": current["revision"], "new_revision": revision,
+                      "based_on_lesson_id": origin["lesson_id"],
+                      "from_version": origin["version"],
+                      "to_version": origin["latest_version"],
+                      "before": custom_lesson_audit_view(current),
+                      "after": custom_lesson_audit_view(saved)},
+            conn=conn,
+        )
+    return saved
 
 
 @app.get("/api/learning/catalog",
