@@ -517,6 +517,12 @@ input[aria-invalid="true"] {
 .lesson-meta .field {
   flex: 1 1 180px;
 }
+/* Dans les colonnes de l'editeur, un champ garde la hauteur de son contenu :
+   `.field` grandit sinon dans la colonne flex, et laisse un grand vide entre
+   deux libelles — le defaut deja corrige pour `.version-editor`. */
+.lesson-editor .field {
+  flex: 0 0 auto;
+}
 .language-add,
 .block-type {
   width: auto;
