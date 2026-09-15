@@ -38,6 +38,8 @@ CATALOG_PATH = CATALOG_DIR / "catalog.json"
 # progression est enregistree par identifiant, pas par langue.
 DEFAULT_LOCALE = "en"
 _LANGUAGE = re.compile(r"^[a-z]{2,3}$")
+# Variante regionale livree telle quelle : `zh-TW` n'est pas `zh`.
+_REGIONAL = re.compile(r"^[a-z]{2,3}-[A-Z]{2}$")
 
 # Les trois piliers. Leurs noms internes restent stables en anglais ; ce que
 # l'interface affiche vient du catalogue, et pourra venir d'une traduction.
@@ -373,12 +375,30 @@ def catalog_language(locale: str | None) -> str:
     return base if _LANGUAGE.match(base) else DEFAULT_LOCALE
 
 
+def catalog_candidates(locale: str | None) -> list[str]:
+    """Les catalogues a essayer, du plus precis au plus general.
+
+    `zh-TW` essaie `zh-TW` puis `zh` ; `fr-CA` essaie `fr-CA` puis `fr`. La
+    region ne compte que si elle a la forme d'un code a deux lettres : la
+    valeur vient du poste et finit dans un nom de fichier.
+    """
+    parts = str(locale or "").strip().replace("_", "-").split("-")
+    base = parts[0].lower()
+    if not _LANGUAGE.match(base):
+        return [DEFAULT_LOCALE]
+    candidates = []
+    if len(parts) >= 2 and re.fullmatch(r"[A-Za-z]{2}", parts[1]):
+        candidates.append(f"{base}-{parts[1].upper()}")
+    candidates.append(base)
+    return candidates
+
+
 def available_locales() -> list[str]:
     """Les traductions livrees a cote du catalogue anglais."""
     found = []
     for candidate in CATALOG_DIR.glob("catalog.*.json"):
-        language = candidate.name.split(".")[1]
-        if _LANGUAGE.match(language) and language != DEFAULT_LOCALE:
+        language = candidate.name[len("catalog."):-len(".json")]
+        if (_LANGUAGE.match(language) or _REGIONAL.match(language))                 and language != DEFAULT_LOCALE:
             found.append(language)
     return sorted(found)
 
@@ -395,10 +415,14 @@ def load_catalog(path: Path | None = None, locale: str | None = None) -> dict:
     if path is not None:
         with path.open(encoding="utf-8") as handle:
             return validate_catalog(json.load(handle))
-    language = catalog_language(locale)
-    source = CATALOG_DIR / f"catalog.{language}.json"
-    if language == DEFAULT_LOCALE or not source.is_file():
-        language, source = DEFAULT_LOCALE, CATALOG_PATH
+    language, source = DEFAULT_LOCALE, CATALOG_PATH
+    for candidate in catalog_candidates(locale):
+        if candidate == DEFAULT_LOCALE:
+            break
+        translated = CATALOG_DIR / f"catalog.{candidate}.json"
+        if translated.is_file():
+            language, source = candidate, translated
+            break
     with _CACHE_LOCK:
         if language not in _CACHE:
             with source.open(encoding="utf-8") as handle:
