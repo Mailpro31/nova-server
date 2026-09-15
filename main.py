@@ -9150,6 +9150,43 @@ AUDIT_ACTION_LABELS = {
     "user.delete": "Deleted a member",
     "user.revoke_machines": "Signed a member out of every device",
     "cohort.disable": "Suspended a cohort",
+    # Ce que la console ecrit depuis. Un nom d'action interne ne dit pas a
+    # qui lit le journal ce qui s'est passe ; un test verifie que chaque
+    # action enregistree a sa phrase.
+    "organization_policy.update": "Changed the organization settings",
+    "group_policy.update": "Changed a group's settings",
+    "ai_runtime.desired_config.update": "Changed the AI runtime configuration",
+    "connector.enrollment.create": "Created a Connector enrollment",
+    "connector.enrolled": "Enrolled a Connector",
+    "connector.revoke": "Revoked a Connector",
+    "connector.rotation.requested": "Requested a Connector credential rotation",
+    "connector.rotation.started": "Started a Connector credential rotation",
+    "connector.rotation.completed": "Completed a Connector credential rotation",
+    "connector.rotation.failed": "A Connector credential rotation failed",
+    "connector.release.publish": "Published a Connector release",
+    "connector.release.revoke": "Revoked a Connector release",
+    "connector.update.requested": "Requested a Connector update",
+    "package.create": "Created a package",
+    "package.draft_create": "Created a package draft",
+    "package.draft_update": "Updated a package draft",
+    "package.draft_discard": "Discarded a package draft",
+    "package.version_publish": "Published a package version",
+    "package.version_activate": "Activated a package version",
+    "package.version_rollback": "Rolled back to a package version",
+    "package.archive": "Archived a package",
+    "package.restore": "Restored a package",
+    "member.disable": "Disabled a member",
+    "member.enable": "Re-enabled a member",
+    "member.type_change": "Changed a member type",
+    "member.group_change": "Changed a member's groups",
+    "member.delete": "Deleted a member",
+    "member.sessions_revoke": "Signed a member out of every device",
+    "learning_lesson.update": "Changed a Learn lesson's settings",
+    "learning_lesson.archive": "Archived a Learn lesson",
+    "learning_lesson.restore": "Restored a Learn lesson",
+    "learning_custom_lesson.create": "Created a Learn lesson",
+    "learning_custom_lesson.update": "Edited a Learn lesson",
+    "learning_custom_lesson.delete": "Deleted a Learn lesson",
 }
 
 
@@ -9202,6 +9239,16 @@ def control_read_audit(
                 (organization_id,),
             )
         }
+        # Les lecons aussi sont nommees : leur identifiant ne dit rien a qui lit.
+        # Une lecon supprimee n'a plus de titre, et la ligne garde son
+        # identifiant seul.
+        lesson_titles = {
+            lesson_id: entry["lesson"]["title"]
+            for lesson_id, entry in learning.lessons_index().items()
+        }
+        for custom in organization_custom_lessons(conn, organization_id):
+            lesson_titles[custom["id"]] = (
+                custom["translations"][custom["source_locale"]]["title"])
 
     has_more = len(rows) > limit
     entries = []
@@ -9217,7 +9264,9 @@ def control_read_audit(
             "action_label": AUDIT_ACTION_LABELS.get(row["action"], row["action"]),
             "target_type": row["target_type"],
             "target_id": row["target_id"],
-            "target": actors.get(row["target_id"]),
+            "target": (lesson_titles.get(row["target_id"])
+                       if row["target_type"] == "learning_lesson"
+                       else actors.get(row["target_id"])),
             "request_id": row["request_id"],
             # Deja filtree a l'ecriture : ni secret, ni jeton, ni contenu dicte.
             "metadata": json.loads(row["metadata"]) if row["metadata"] else None,

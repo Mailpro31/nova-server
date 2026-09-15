@@ -861,6 +861,10 @@ export const t = {
     auditTarget: "Target",
     auditMore: "Load older activity",
     auditLegacyActor: "legacy admin token",
+    // Valeurs d'un changement, lues comme un administrateur les dirait.
+    auditEnabled: "Enabled",
+    auditDisabled: "Disabled",
+    auditNoValue: "—",
     // SQLite ne protege pas un fichier de celui qui le detient : le dire
     // vaut mieux que laisser croire a une immuabilite qui n'existe pas.
     auditIntegrity:
