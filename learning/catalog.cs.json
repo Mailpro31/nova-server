@@ -1,0 +1,1096 @@
+{
+  "catalog_version": 2,
+  "locale": "cs",
+  "paths": [
+    {
+      "id": "getting-started",
+      "pillar": "learn_ai",
+      "title": "Dobrý začátek",
+      "description": "Co AI umí dobře, kde selhává a jak s ní pracovat.",
+      "icon": "brain",
+      "order": 1,
+      "tags": [
+        "general"
+      ],
+      "modules": [
+        {
+          "id": "getting-started-foundations",
+          "title": "Základy",
+          "description": "Tolik, abyste AI od prvního dne používali s rozvahou.",
+          "order": 1,
+          "lessons": [
+            {
+              "id": "working-with-ai",
+              "title": "Práce s AI",
+              "description": "Pochopte, co AI dokáže a co ne.",
+              "estimated_minutes": 3,
+              "difficulty": "beginner",
+              "order": 1,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "idea",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "heading": "Principy AI",
+                    "body": "AI dokáže rychle navrhnout užitečné možnosti, ale plynulý text není důkazem, že je odpověď správná."
+                  }
+                },
+                {
+                  "id": "scenario",
+                  "type": "example",
+                  "order": 2,
+                  "content": {
+                    "label": "Situace",
+                    "body": "Asistent AI navrhne konstrukční řešení pro letecký projekt a sebevědomě ho představí."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 3,
+                  "content": {
+                    "question": "Jaká je zde nejužitečnější role AI?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Nahradit inženýrské rozhodnutí."
+                      },
+                      {
+                        "id": "b",
+                        "label": "Nabídnout kandidátní řešení, které inženýr posoudí."
+                      },
+                      {
+                        "id": "c",
+                        "label": "Schválit volbu, protože vysvětlení zní technicky."
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "Používejte AI k rozšíření možností, které můžete posoudit. Za předpoklady, důkazy i konečné rozhodnutí dál odpovídá inženýrský úsudek."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 4,
+                  "content": {
+                    "body": "Používejte AI k rozšíření možností, které zvažujete. Rozhodnutí i jeho důvody zůstávají na vás."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "what-an-llm-does",
+              "title": "Co LLM ve skutečnosti dělá",
+              "description": "Předpovídá text. Tento jediný fakt vysvětluje většinu jeho chování.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 2,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Jazykový model nic nevyhledává a neuvažuje jako člověk. Předpovídá, jaký text bude pravděpodobně následovat. Téměř všechno, co na těchto systémech překvapí, vychází z této jediné věty."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Předpověď natrénovaná ve velkém měřítku",
+                    "body": "Při tréninku model viděl obrovské množství textu a naučil se ho velmi dobře pokračovat. Nic se neukládá jako fakta v databázi. Naučil se, která slova obvykle následují po kterých – v gramatice, ve stavbě argumentu, v kódu i v konvencích.\n\nProto píše plynule o věcech, které nemá jak vědět, a proto plynulost není důkazem přesnosti."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "Proč se to vyplatí vědět",
+                    "body": "Zeptejte se na známý vzorec a obvykle ho dostanete správně – v trénovacích textech se objevoval znovu a znovu.\n\nZeptejte se na číslo stránky citátu v konkrétním vydání a můžete dostat sebevědomě vymyšlené číslo. Je to pravděpodobné pokračování. Nikdy nešlo o vyhledávání."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 4,
+                  "content": {
+                    "question": "Proč může model napsat plynulou odpověď, která je chybná?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Plynulost i přesnost vznikají stejným procesem – pravděpodobným pokračováním"
+                      },
+                      {
+                        "id": "b",
+                        "label": "Došla mu paměť"
+                      },
+                      {
+                        "id": "c",
+                        "label": "Byl natrénován na špatné gramatice"
+                      }
+                    ],
+                    "correct_option_id": "a",
+                    "explanation": "Znít správně a být správně vzniká stejným mechanismem. Proto styl odpovědi nic neříká o její pravdivosti."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 5,
+                  "content": {
+                    "body": "Předpovídá text. Jistota je vlastnost textu, ne faktů."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "context-and-tokens",
+              "title": "Kontext a tokeny",
+              "description": "Proč se dlouhé konverzace rozjíždějí a co model skutečně vidí.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 3,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Uprostřed dlouhé konverzace model zapomene podmínku, kterou jste zadali na začátku. Není to nedbalost. To, co dokáže vidět najednou, má hranici – a vy jste ji překročili."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Tokeny a okno",
+                    "body": "Text se dělí na tokeny – zhruba části slov. V angličtině je token často asi tři čtvrtiny slova. Všechno, co model zohledňuje najednou, vaše zprávy i jeho odpovědi, se musí vejít do kontextového okna pevné velikosti.\n\nKdyž konverzace přeroste jeho velikost, nejstarší části přestanou být vidět. Model si konverzaci nepamatuje; znovu čte to, co se ještě vejde."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "Co to mění v praxi",
+                    "body": "Pokud je nějaké pravidlo důležité – „odpovídej vždy česky“, „nikdy víc než 200 slov“ –, zopakujte ho ve zprávě, kde na něm záleží, místo abyste spoléhali, že přežilo dvacet výměn.\n\nA pokud se konverzace hodně rozjela, nová konverzace s jasným shrnutím obvykle funguje lépe než pokračování v přeplněné."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 4,
+                  "content": {
+                    "question": "Dlouhá konverzace přestane dodržovat pokyn ze začátku. Jaká je nejpravděpodobnější příčina?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Pokyn vypadl z kontextového okna"
+                      },
+                      {
+                        "id": "b",
+                        "label": "Model se rozhodl vás ignorovat"
+                      },
+                      {
+                        "id": "c",
+                        "label": "Pokyn byl gramaticky chybný"
+                      }
+                    ],
+                    "correct_option_id": "a",
+                    "explanation": "Co už v okně není, jako by nikdy nezaznělo. Zopakujte podmínku tam, kde na ní záleží."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 5,
+                  "content": {
+                    "body": "Model vidí okno, ne paměť. Opakujte, na čem záleží, a začněte znovu, když je konverzace přeplněná."
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "asking-well",
+      "pillar": "use_ai",
+      "title": "Dobře se ptát",
+      "description": "Lepší odpovědi díky lepším otázkám.",
+      "icon": "message-square",
+      "order": 2,
+      "tags": [
+        "general"
+      ],
+      "modules": [
+        {
+          "id": "use-ai-foundations",
+          "title": "Návyky, které mění odpověď",
+          "description": "Tři návyky, které mění odpověď, kterou dostanete.",
+          "order": 1,
+          "lessons": [
+            {
+              "id": "ask-better-questions",
+              "title": "Klást lepší otázky",
+              "description": "Řekněte, co chcete, pro koho a v jaké podobě.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 1,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Požádáte o shrnutí. Dostanete tři nevýrazné odstavce, které stejně musíte přepsat. Model neselhal – nikdo mu neřekl, jak by dobrá odpověď měla vypadat."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Požadavek má tři části",
+                    "body": "Užitečný požadavek pojmenuje úkol, čtenáře a podobu odpovědi. Chybí-li kterákoli z nich, model mezeru vyplní průměrným odhadem. Úkol říká, co udělat. Čtenář určuje slovník a míru podrobnosti. Podoba – délka, formát, co zachovat – vás ušetří přepisování výsledku."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "comparison",
+                  "order": 3,
+                  "content": {
+                    "worse_label": "Vágní",
+                    "worse": "Shrň to.",
+                    "better_label": "Konkrétní",
+                    "better": "Shrň tento text do 5 odrážek pro někoho, kdo téma nezná. Zachovej důležitá čísla a zakonči 2 myšlenkami, které stojí za zapamatování.",
+                    "note": "Druhá verze pojmenovává úkol, čtenáře i podobu. Není na ní nic chytrého – je jen úplná."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 4,
+                  "content": {
+                    "question": "Která část chybí v požadavku „Přepiš tento e-mail, aby byl kratší“?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Úkol"
+                      },
+                      {
+                        "id": "b",
+                        "label": "Čtenář"
+                      },
+                      {
+                        "id": "c",
+                        "label": "Nic nechybí"
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "Úkol i podoba tam jsou. Kdo e-mail čte – zákazník, vaše vedoucí, kolega –, určuje tón, a ten musí model hádat."
+                  }
+                },
+                {
+                  "id": "try-it",
+                  "type": "prompt_exercise",
+                  "order": 5,
+                  "content": {
+                    "instruction": "Přepište tento požadavek tak, aby pojmenoval úkol, čtenáře a podobu.",
+                    "starting_text": "Vysvětli strojové učení.",
+                    "hint": "Kdo to čte? Jak dlouhé to má být? Co musí odpověď obsahovat?",
+                    "sample_answer": "Vysvětli strojové učení kolegyni bez technického vzdělání, do 150 slov, na jednom příkladu z běžného života a bez odborného žargonu."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "Úkol, čtenář, podoba. Když odpověď zklame, jedna z těch tří věcí chyběla."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "give-useful-context",
+              "title": "Dávat užitečný kontext",
+              "description": "Co model potřebuje vědět a co jen přidává šum.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 2,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Model neví nic o vašem projektu, týmu ani o rozhodnutí z minulého týdne. Odpovídá z toho, co má před sebou – a za všechno, co vynecháte, si vymyslí věrohodnou náhradu."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Kontext je to, co mění odpověď",
+                    "body": "Užitečný kontext je všechno, co by změnilo odpověď kompetentního člověka: omezení, publikum, co už jste zkusili, formát, který musíte dodržet. Všechno ostatní je šum. Vložit celý dokument, když záleží na třech větách, odpověď nezlepší – rozmělní to, co jste doopravdy chtěli."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "Stejná otázka, jiný kontext",
+                    "body": "„Je to dobrý návrh?“ dostane obecný kontrolní seznam.\n\n„Je to dobrý návrh pro tříčlenný tým, který vydává každý týden a nemá vlastního provozního inženýra?“ dostane odpověď o provozních nákladech – protože omezení bylo řečeno."
+                  }
+                },
+                {
+                  "id": "warning",
+                  "type": "warning",
+                  "order": 4,
+                  "content": {
+                    "body": "Kontext není místo pro tajemství. Přihlašovací údaje, osobní údaje jiných lidí a důvěrné dokumenty se nestanou bezpečnými jen proto, že jsou užitečné."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 5,
+                  "content": {
+                    "question": "Chcete zpětnou vazbu k žádosti o práci. Který údaj se vyplatí přidat?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Pozici a co inzerát požaduje"
+                      },
+                      {
+                        "id": "b",
+                        "label": "Vaši celou adresu a datum narození"
+                      },
+                      {
+                        "id": "c",
+                        "label": "Datum, kdy jste ji začali psát"
+                      }
+                    ],
+                    "correct_option_id": "a",
+                    "explanation": "Pozice mění odpověď. Vaše adresa ne – a je to osobní údaj, který tam nemá co dělat."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "Přidejte to, co by změnilo odpověď kompetentního člověka. Zbytek vynechte a nikdy nevkládejte nic, co byste nechtěli mít uložené."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "iterate-instead-of-restarting",
+              "title": "Opravovat místo začínání znovu",
+              "description": "Hodnota je až v druhé zprávě.",
+              "estimated_minutes": 3,
+              "difficulty": "beginner",
+              "order": 3,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Odpověď je skoro správná. Většina lidí ji smaže a přepíše celý požadavek. Tím zahodí část, která fungovala."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Opravovat, nezačínat znovu",
+                    "body": "Berte první odpověď jako koncept, který upravujete v rozhovoru. Řekněte, co ponechat, a pak co změnit. „Ponech strukturu, zkonkretizuj druhý bod, vyhoď poslední odstavec“ vás dovede k cíli jedním krokem. Začít znovu znamená znovu hodit kostkou."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "comparison",
+                  "order": 3,
+                  "content": {
+                    "worse_label": "Začít znovu",
+                    "worse": "To jsem nechtěl. Napiš mi lepší shrnutí.",
+                    "better_label": "Opravit",
+                    "better": "Dobrá struktura. Bod 2 je příliš obecný – nahraď ho přesným číslem z textu. Vyhoď závěrečný odstavec.",
+                    "note": "Druhá ponechává to, co fungovalo. První nutí model hádat znovu, bez jakýchkoli nových informací."
+                  }
+                },
+                {
+                  "id": "tip",
+                  "type": "tip",
+                  "order": 4,
+                  "content": {
+                    "body": "Pokud dvě kola oprav nevedou k cíli, problém je obvykle v původním požadavku, ne v odpovědi. Vraťte se a doplňte, co chybělo."
+                  }
+                },
+                {
+                  "id": "practice",
+                  "type": "prompt_exercise",
+                  "order": 5,
+                  "content": {
+                    "instruction": "Odpověď, kterou jste dostali, je příliš formální a příliš dlouhá. Napište opravu – nepřepisujte požadavek.",
+                    "starting_text": "",
+                    "hint": "Uveďte jednu věc k ponechání a dvě ke změně.",
+                    "sample_answer": "Ponech tři části. Zkrať to zhruba na polovinu a použij tón, jakým bys mluvil s kolegou, ne se zákazníkem."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "Řekněte, co ponechat, dřív než co změnit. Začít znovu znamená zahodit část, která už fungovala."
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "verify-and-protect",
+      "pillar": "learn_ai",
+      "title": "Ověřovat a chránit",
+      "description": "Ověřovat, na čem záleží, a chránit citlivé informace.",
+      "icon": "shield-check",
+      "order": 3,
+      "tags": [
+        "general"
+      ],
+      "modules": [
+        {
+          "id": "verify-and-protect-foundations",
+          "title": "Důvěřuj, ale prověřuj",
+          "description": "Kde se odpovědi mýlí a co se nikdy nesmí sdílet.",
+          "order": 1,
+          "lessons": [
+            {
+              "id": "why-ai-hallucinates",
+              "title": "Proč AI může halucinovat",
+              "description": "A jak poznat, které odpovědi si zaslouží ověření.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 1,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Halucinace není porucha. Je to systém, který dělá přesně to, co dělá – vytváří pravděpodobné pokračování – v místě, kde se pravděpodobné a pravdivé rozešly."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Kde se riziko soustředí",
+                    "body": "Vymýšlení je nejpravděpodobnější tam, kde je text konkrétní a ověřitelný, ale vzácný: přesné citace, čísla stránek, statistiky, právní odkazy, metody API, životopisy lidí. Model viděl podobu takových věcí tisíckrát, takže umí na požádání vytvořit přesvědčivou.\n\nNejméně pravděpodobné je tam, kde jde o obecně známou věc, nebo když jste zdrojový text dodali sami."
+                  }
+                },
+                {
+                  "id": "tip",
+                  "type": "tip",
+                  "order": 3,
+                  "content": {
+                    "body": "Samotná otázka „jaký je tvůj zdroj?“ nepomůže – i zdroj může být vymyšlený. Pomůže zdroj ověřit."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 4,
+                  "content": {
+                    "question": "Která odpověď si nejvíc zaslouží ověření?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Přeformulování odstavce, který jste sami vložili"
+                      },
+                      {
+                        "id": "b",
+                        "label": "Konkrétní statistika s rokem a procentem"
+                      },
+                      {
+                        "id": "c",
+                        "label": "Seznam nápadů na název týmu"
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "Konkrétní, ověřitelná a nedodaná vámi – přesně tam se věrohodný výmysl odhaluje nejhůř."
+                  }
+                },
+                {
+                  "id": "reflection",
+                  "type": "reflection",
+                  "order": 5,
+                  "content": {
+                    "prompt": "Vzpomeňte si na úkol, na který používáte AI. Která část odpovědi by způsobila skutečný problém, kdyby byla nenápadně chybná?",
+                    "hint": "Právě tu část je potřeba ověřit – pokaždé."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "Ověřujte, co je konkrétní, ověřitelné a nepochází od vás. Nevěřte ničemu jen proto, že to zní jistě."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "verify-output",
+              "title": "Ověřte výstup",
+              "description": "Zkontrolujte výpočty, zdroje, tvrzení a předpoklady.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 2,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "idea",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "heading": "Ověřování",
+                    "body": "Ověření je samostatný inženýrský krok. Zeptat se stejného modelu, zda si je jistý, není nezávislá kontrola."
+                  }
+                },
+                {
+                  "id": "scenario",
+                  "type": "example",
+                  "order": 2,
+                  "content": {
+                    "label": "Situace",
+                    "body": "AI vám poskytne výpočet zatížení pro statickou analýzu."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 3,
+                  "content": {
+                    "question": "Co byste měli udělat, než ho použijete?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Použít ho přímo, protože jsou uvedeny jednotky."
+                      },
+                      {
+                        "id": "b",
+                        "label": "Nezávisle ověřit předpoklady, jednotky a výpočty."
+                      },
+                      {
+                        "id": "c",
+                        "label": "Zeptat se AI, zda si je jistá."
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "Než se na výsledek spolehnete, zkontrolujte zatěžovací stav, jednotky, rovnice a okrajové podmínky pomocí důvěryhodných metod nebo zdrojů."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 4,
+                  "content": {
+                    "body": "Ověřujte, na čem stavíte, metodou nebo zdrojem, které model nemá pod kontrolou. Zeptat se ho znovu není ověření."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "confidential-information",
+              "title": "Důvěrné informace",
+              "description": "Vězte, co se nesmí odeslat do neschváleného systému.",
+              "estimated_minutes": 3,
+              "difficulty": "beginner",
+              "order": 3,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "idea",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "heading": "Ochrana soukromí",
+                    "body": "Sdílejte jen data, která smí nástroj a vaše instituce zpracovávat."
+                  }
+                },
+                {
+                  "id": "scenario",
+                  "type": "example",
+                  "order": 2,
+                  "content": {
+                    "label": "Situace",
+                    "body": "Projektový dokument obsahuje identifikátory studentů, údaje o dodavatelích a interní přístupový token."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 3,
+                  "content": {
+                    "question": "Jaký je odpovědný další krok?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Vložit všechno, protože jde o akademický úkol."
+                      },
+                      {
+                        "id": "b",
+                        "label": "Odstranit jen jména studentů."
+                      },
+                      {
+                        "id": "c",
+                        "label": "Použít schválený systém a odstranit tajné údaje i zbytečná osobní nebo důvěrná data."
+                      }
+                    ],
+                    "correct_option_id": "c",
+                    "explanation": "Záleží na oprávnění i na minimalizaci dat. Přihlašovací údaje nesmí být nikdy zahrnuty a zbytečný citlivý kontext je třeba odstranit."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 4,
+                  "content": {
+                    "body": "Sdílejte jen to, co nástroj smí zpracovat, odstraňte tajemství a zbytečné osobní údaje a nikdy nevkládejte přihlašovací údaje."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "responsible-use",
+              "title": "Odpovědné používání",
+              "description": "Poznejte, kdy je použití AI vhodné, omezené nebo zakázané.",
+              "estimated_minutes": 3,
+              "difficulty": "beginner",
+              "order": 4,
+              "version": 1,
+              "tags": [
+                "general",
+                "student"
+              ],
+              "blocks": [
+                {
+                  "id": "idea",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "heading": "Odpovědná praxe",
+                    "body": "Správné použití závisí na úkolu, pravidlech předmětu, schválení nástroje a potřebné míře lidské odpovědnosti."
+                  }
+                },
+                {
+                  "id": "scenario",
+                  "type": "example",
+                  "order": 2,
+                  "content": {
+                    "label": "Situace",
+                    "body": "Pravidla hodnoceného úkolu nejsou jasná ohledně pomoci generativní AI."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 3,
+                  "content": {
+                    "question": "Co byste měli udělat?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Použít AI potichu, protože to nejspíš dělají všichni."
+                      },
+                      {
+                        "id": "b",
+                        "label": "Nechat AI vytvořit finální odevzdání a pak změnit pár slov."
+                      },
+                      {
+                        "id": "c",
+                        "label": "Zkontrolovat pravidla předmětu, zeptat se, když nejsou jasná, a přiznat povolenou pomoc."
+                      }
+                    ],
+                    "correct_option_id": "c",
+                    "explanation": "Odpovědné používání respektuje cíl učení a stanovená pravidla. Když pravidla nejsou jasná, ujasněte si je dřív, než se na AI spolehnete."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 4,
+                  "content": {
+                    "body": "Než použijete AI, poznejte pravidla úkolu, ptejte se, když nejsou jasná, a uveďte, jakou pomoc jste využili."
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "adapt-to-your-field",
+      "pillar": "adapt_ai",
+      "title": "Přizpůsobit svému oboru",
+      "description": "Ať se AI přizpůsobí vaší práci, ne naopak.",
+      "icon": "settings-2",
+      "order": 4,
+      "tags": [
+        "general",
+        "student",
+        "engineering",
+        "marketing",
+        "developer",
+        "creator",
+        "management"
+      ],
+      "modules": [
+        {
+          "id": "adapt-ai-foundations",
+          "title": "Na míru vaší práci",
+          "description": "Od jednorázových odpovědí k něčemu, co lze znovu použít.",
+          "order": 1,
+          "lessons": [
+            {
+              "id": "an-assistant-for-your-work",
+              "title": "Udělat z AI asistenta pro práci nebo studium",
+              "description": "Popište svou situaci jednou a přestaňte ji opakovat.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 1,
+              "version": 1,
+              "tags": [
+                "general",
+                "student",
+                "management"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Většina lidí v každém požadavku znovu vysvětluje, kdo jsou a na čem pracují. Asistent, který opravdu šetří čas, je ten, kterého jste popsali jednou."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Trvalé zadání",
+                    "body": "Trvalé zadání jsou tři nebo čtyři věty, které platí napříč mnoha požadavky: vaše role, publikum, pro které obvykle píšete, tón, který chcete, a to, co nechcete nikdy. Stačí ho napsat jednou a každý další požadavek je krátký.\n\nV Nova k tomu slouží styl: pokyn je na jednom místě a platí, kdykoli ho zvolíte."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "Trvalé zadání",
+                    "body": "„Jsem ve druhém ročníku inženýrského studia. Píšu laboratorní protokoly pro vyučující, která dává přednost přesnosti před délkou. Piš jasnou, odbornou češtinou. Nikdy nevyplňuj úvody ani závěry, které opakují jádro textu.“\n\nKaždý další požadavek teď může mít dva řádky místo deseti."
+                  }
+                },
+                {
+                  "id": "practice",
+                  "type": "prompt_exercise",
+                  "order": 4,
+                  "content": {
+                    "instruction": "Napište své vlastní trvalé zadání ve třech nebo čtyřech větách.",
+                    "starting_text": "",
+                    "hint": "Role, obvyklé publikum, tón a jedna věc, kterou nechcete nikdy.",
+                    "sample_answer": "Jsem produktový manažer a píšu pro vývojáře a designéry. Buď konkrétní a stručný; příklady mám raději než přídavná jména. Nikdy nezačínej shrnutím toho, na co jsem se právě ptal."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 5,
+                  "content": {
+                    "body": "Popište svou situaci jednou, na místě, které ji uchová. Potom je každý požadavek kratší."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "build-a-reusable-workflow",
+              "title": "Vytvořit opakovatelný postup",
+              "description": "Proměnit opakovaný úkol v něco, co se prostě spustí.",
+              "estimated_minutes": 4,
+              "difficulty": "intermediate",
+              "order": 2,
+              "version": 1,
+              "tags": [
+                "general",
+                "engineering",
+                "marketing",
+                "developer"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Pokud jste skoro stejný požadavek napsali třikrát, už nemáte požadavek. Máte postup, který jste ještě nesepsali."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Pevný pokyn, proměnlivý vstup",
+                    "body": "Postup odděluje část, která se nikdy nemění, od té, která se mění. Pokyn – co udělat, pro koho, v jaké podobě, co zkontrolovat – je pevný. Text, který do něj vložíte, je pokaždé jiný.\n\nPo oddělení lze pevnou část uložit a znovu použít a přestane se měnit pokaždé, když ji píšete zpaměti."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "comparison",
+                  "order": 3,
+                  "content": {
+                    "worse_label": "Psaný pokaždé znovu",
+                    "worse": "Můžeš se podívat na tyhle poznámky z porady a vytáhnout, co mám udělat?",
+                    "better_label": "Postup",
+                    "better": "Z poznámek níže vyber pouze úkoly přidělené mně. Jeden řádek na úkol, začínající slovesem, s termínem, pokud je uveden. Pokud mi žádný úkol přidělen není, řekni to a skonči.",
+                    "note": "Druhou verzi se vyplatí uložit. Říká také, co dělat, když není co najít – právě tam si znovu psaná verze potichu vymýšlí úkoly."
+                  }
+                },
+                {
+                  "id": "tip",
+                  "type": "tip",
+                  "order": 4,
+                  "content": {
+                    "body": "Vždy postupu řekněte, co dělat, když vstup neodpovídá. Tahle jediná věta zabrání většině vymyšlených výsledků."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 5,
+                  "content": {
+                    "question": "Co patří do pevné části postupu?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Text, který se má tentokrát zpracovat"
+                      },
+                      {
+                        "id": "b",
+                        "label": "Pravidla, jak vypadá dobrý výsledek"
+                      },
+                      {
+                        "id": "c",
+                        "label": "Dnešní datum"
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "Pravidla jsou to, co už nechcete psát znovu. Vstup je to, co se mění."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "Oddělte pevný pokyn od proměnlivého vstupu a řekněte, co dělat, když není co najít."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "adapt-ai-to-your-domain",
+              "title": "Přizpůsobit AI svému oboru",
+              "description": "Odborná slovní zásoba, konvence a kontroly, které váš obor očekává.",
+              "estimated_minutes": 5,
+              "difficulty": "intermediate",
+              "order": 3,
+              "version": 1,
+              "tags": [
+                "engineering",
+                "marketing",
+                "developer",
+                "creator",
+                "student",
+                "management"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Obecná odpověď je obecná, protože nic v požadavku neřeklo, v jakém oboru pracujete. Váš obor má svou slovní zásobu, konvence a měřítko důkazu – a nic z toho není zvenku zřejmé."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Tři věci, které váš obor očekává",
+                    "body": "Uveďte slovní zásobu, kterou používáte, aby se odpověď nepřeložila do pojmů někoho jiného. Uveďte konvenci, kterou dodržujete – strukturu zprávy, styl commitů, firemní tón. A uveďte kontrolu: co dělá odpověď ve vašem oboru přijatelnou, a ne jen rozumnou.\n\nTu třetí většina lidí vynechá – a právě ta udělá nejvíc práce."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "Stejný požadavek ve třech oborech",
+                    "body": "Inženýrství: „U každého čísla uveď předpoklad, ze kterého vychází. Je-li hodnota odhadnutá, a ne změřená, označ ji.“\n\nMarketing: „Drž se našeho tónu: přímo, bez superlativů. Dej dvě varianty, abychom je mohli porovnat.“\n\nVývoj: „Dodržuj konvence, které už v souboru jsou. Pokud přístup vyžaduje závislost, kterou nemáme, řekni to, místo abys ji přidal.“"
+                  }
+                },
+                {
+                  "id": "ai-practice",
+                  "type": "ai_exercise",
+                  "order": 4,
+                  "content": {
+                    "exercise_id": "adapt-domain-request",
+                    "instruction": "Napište požadavek pro úkol z vašeho vlastního oboru. Uveďte slovní zásobu, konvenci a kontrolu, díky které je odpověď přijatelná.",
+                    "starting_text": "",
+                    "hint": "Kontrola je část, na kterou většina zapomíná: co by vás přimělo odmítnout jinak rozumnou odpověď?"
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 5,
+                  "content": {
+                    "body": "Slovní zásoba, konvence a kontrola, kterou váš obor uplatňuje. Právě kontrola mění rozumnou odpověď v použitelnou."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "ai-in-engineering",
+              "title": "AI v inženýrství",
+              "description": "Používejte AI jako nástroj, ne jako náhradu uvažování.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 4,
+              "version": 1,
+              "tags": [
+                "engineering",
+                "student"
+              ],
+              "blocks": [
+                {
+                  "id": "idea",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "heading": "AI pro inženýry",
+                    "body": "AI je nejsilnější jako spolupracovník při zkoumání, psaní návrhů a kritice, pokud odpovědnost zůstává na inženýrovi."
+                  }
+                },
+                {
+                  "id": "scenario",
+                  "type": "example",
+                  "order": 2,
+                  "content": {
+                    "label": "Situace",
+                    "body": "Porovnáváte dva koncepty subsystému malého satelitu."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 3,
+                  "content": {
+                    "question": "Který postup využívá AI nejlépe?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Nechat AI vybrat koncept a zkopírovat její zdůvodnění."
+                      },
+                      {
+                        "id": "b",
+                        "label": "Použít ji k odhalení kompromisů, poté ověřit omezení a zdokumentovat rozhodnutí."
+                      },
+                      {
+                        "id": "c",
+                        "label": "Nedokumentovat předpoklady, aby zpráva zůstala krátká."
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "AI posiluje inženýrský úsudek. Nenahrazuje ověření, sledovatelnost ani odpovědnost."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 4,
+                  "content": {
+                    "body": "Nechte AI ukázat možnosti a kompromisy, pak je ověřte, zdokumentujte své předpoklady a za rozhodnutí se postavte."
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "exercises": [
+    {
+      "id": "adapt-domain-request",
+      "task": "learning_feedback",
+      "instruction": "You are helping someone learn to write better requests to an AI assistant. They were asked to write a request for a task in their own professional or academic field, naming three things: the vocabulary of their field, the convention they follow, and the check that makes an answer acceptable rather than merely reasonable.\n\nRead their attempt and reply in at most four short sentences. Say plainly which of the three are present and which are missing. Then give one concrete improvement, rewriting a fragment of their own request rather than replacing it with yours. Do not score them, do not use percentages, and do not praise without a reason. If their request is already complete, say so and name the strongest part.\n\nReply in the language they wrote in."
+    }
+  ]
+}

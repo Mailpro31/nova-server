@@ -1,0 +1,1096 @@
+{
+  "catalog_version": 2,
+  "locale": "nl",
+  "paths": [
+    {
+      "id": "getting-started",
+      "pillar": "learn_ai",
+      "title": "Goed beginnen",
+      "description": "Wat AI goed doet, waar het misgaat en hoe je ermee werkt.",
+      "icon": "brain",
+      "order": 1,
+      "tags": [
+        "general"
+      ],
+      "modules": [
+        {
+          "id": "getting-started-foundations",
+          "title": "De basis",
+          "description": "Genoeg om AI vanaf dag één met beleid te gebruiken.",
+          "order": 1,
+          "lessons": [
+            {
+              "id": "working-with-ai",
+              "title": "Werken met AI",
+              "description": "Begrijp wat AI wel en niet kan.",
+              "estimated_minutes": 3,
+              "difficulty": "beginner",
+              "order": 1,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "idea",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "heading": "AI-principes",
+                    "body": "AI kan snel bruikbare opties bedenken, maar vlot geschreven tekst bewijst niet dat een antwoord klopt."
+                  }
+                },
+                {
+                  "id": "scenario",
+                  "type": "example",
+                  "order": 2,
+                  "content": {
+                    "label": "Een situatie",
+                    "body": "Een AI-assistent stelt een ontwerpkeuze voor een lucht- en ruimtevaartproject voor en brengt die vol zelfvertrouwen."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 3,
+                  "content": {
+                    "question": "Wat is hier de nuttigste rol voor AI?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "De technische beslissing overnemen."
+                      },
+                      {
+                        "id": "b",
+                        "label": "Een mogelijke oplossing aandragen die een ingenieur beoordeelt."
+                      },
+                      {
+                        "id": "c",
+                        "label": "De keuze goedkeuren omdat de uitleg technisch klinkt."
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "Gebruik AI om de opties die je kunt onderzoeken uit te breiden. Het technische oordeel blijft verantwoordelijk voor aannames, onderbouwing en de uiteindelijke beslissing."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 4,
+                  "content": {
+                    "body": "Gebruik AI om meer opties te bekijken. Het besluit, en de redenen erachter, blijven van jou."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "what-an-llm-does",
+              "title": "Wat een LLM werkelijk doet",
+              "description": "Het voorspelt tekst. Dat ene feit verklaart het meeste van zijn gedrag.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 2,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Een taalmodel zoekt niets op en redeneert niet zoals een mens. Het voorspelt welke tekst er aannemelijk volgt. Bijna alles wat verrast aan deze systemen volgt uit die ene zin."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Voorspelling, op grote schaal getraind",
+                    "body": "Tijdens de training zag het model enorme hoeveelheden tekst en werd het heel goed in het voortzetten ervan. Niets wordt als feiten in een database opgeslagen. Wat het leerde, is welke woorden meestal op welke volgen – in grammatica, in de opbouw van een betoog, in code en in conventies.\n\nDaarom schrijft het vlot over dingen die het onmogelijk kan weten, en daarom is vlotheid geen bewijs van juistheid."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "Waarom het helpt dit te weten",
+                    "body": "Vraag naar een bekende formule en je krijgt die meestal juist – hij kwam steeds weer voor in de trainingsteksten.\n\nVraag naar het paginanummer van een citaat in een bepaalde uitgave en je krijgt misschien een zelfverzekerd verzonnen nummer. Het is een aannemelijke voortzetting. Er is nooit iets opgezocht."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 4,
+                  "content": {
+                    "question": "Waarom kan een model een vlot antwoord schrijven dat fout is?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Vlotheid en juistheid komen uit hetzelfde proces – de aannemelijke voortzetting"
+                      },
+                      {
+                        "id": "b",
+                        "label": "Het had geen geheugen meer"
+                      },
+                      {
+                        "id": "c",
+                        "label": "Het is getraind op slechte grammatica"
+                      }
+                    ],
+                    "correct_option_id": "a",
+                    "explanation": "Juist klinken en juist zijn komen uit hetzelfde mechanisme. Daarom zegt de stijl van een antwoord niets over de waarheid ervan."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 5,
+                  "content": {
+                    "body": "Het voorspelt tekst. Zekerheid is een eigenschap van de formulering, niet van de feiten."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "context-and-tokens",
+              "title": "Context en tokens",
+              "description": "Waarom lange gesprekken afdwalen en wat het model werkelijk ziet.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 3,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Halverwege een lang gesprek vergeet het model een voorwaarde die je aan het begin stelde. Het is niet slordig. Wat het in één keer kan zien is begrensd, en jij bent over die grens gegaan."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Tokens en het venster",
+                    "body": "Tekst wordt opgeknipt in tokens – ongeveer woorddelen. In het Engels is een token vaak zo'n driekwart woord. Alles wat het model tegelijk bekijkt, jouw berichten en zijn eigen antwoorden samen, moet in een contextvenster van vaste grootte passen.\n\nWordt het gesprek langer dan dat, dan zijn de oudste delen niet meer zichtbaar. Het model herinnert zich geen gesprek; het leest opnieuw wat er nog in past."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "Wat dit in de praktijk verandert",
+                    "body": "Als een regel belangrijk is – ‘antwoord altijd in het Nederlands’, ‘nooit meer dan 200 woorden’ – herhaal hem dan in het bericht waar hij telt, in plaats van erop te vertrouwen dat hij twintig beurten heeft overleefd.\n\nEn als het gesprek ver is afgedwaald, werkt een nieuw gesprek met een heldere samenvatting meestal beter dan doorgaan in een volgepropt gesprek."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 4,
+                  "content": {
+                    "question": "Een lang gesprek houdt zich niet meer aan een instructie van het begin. Wat is de meest waarschijnlijke oorzaak?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "De instructie is uit het contextvenster geschoven"
+                      },
+                      {
+                        "id": "b",
+                        "label": "Het model heeft besloten je te negeren"
+                      },
+                      {
+                        "id": "c",
+                        "label": "De instructie was grammaticaal onjuist"
+                      }
+                    ],
+                    "correct_option_id": "a",
+                    "explanation": "Wat niet meer in het venster staat, had net zo goed nooit gezegd kunnen zijn. Herhaal de voorwaarde waar die telt."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 5,
+                  "content": {
+                    "body": "Het model ziet een venster, geen geheugen. Herhaal wat telt en begin opnieuw als het gesprek volgepropt raakt."
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "asking-well",
+      "pillar": "use_ai",
+      "title": "Goed vragen",
+      "description": "Betere antwoorden krijgen door beter te vragen.",
+      "icon": "message-square",
+      "order": 2,
+      "tags": [
+        "general"
+      ],
+      "modules": [
+        {
+          "id": "use-ai-foundations",
+          "title": "De gewoonten die het antwoord veranderen",
+          "description": "De drie gewoonten die het antwoord dat je krijgt veranderen.",
+          "order": 1,
+          "lessons": [
+            {
+              "id": "ask-better-questions",
+              "title": "Betere vragen stellen",
+              "description": "Zeg wat je wilt, voor wie en in welke vorm.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 1,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Je vraagt om een samenvatting. Je krijgt drie vlakke alinea's terug die je toch moet herschrijven. Het model faalde niet – niemand vertelde het hoe een goed antwoord eruit zou zien."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Een verzoek heeft drie delen",
+                    "body": "Een nuttig verzoek noemt de taak, de lezer en de vorm van het antwoord. Laat je er één weg, dan vult het model het gat met een gemiddelde gok. De taak zegt wat er moet gebeuren. De lezer bepaalt woordkeus en detailniveau. De vorm – lengte, opmaak, wat behouden moet blijven – voorkomt dat je het resultaat moet herschrijven."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "comparison",
+                  "order": 3,
+                  "content": {
+                    "worse_label": "Vaag",
+                    "worse": "Vat dit samen.",
+                    "better_label": "Concreet",
+                    "better": "Vat deze tekst samen in 5 opsommingstekens voor iemand die nieuw is in het onderwerp. Behoud de belangrijke cijfers en sluit af met de 2 ideeën die het onthouden waard zijn.",
+                    "note": "De tweede versie noemt taak, lezer en vorm. Er is niets slims aan – ze is alleen volledig."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 4,
+                  "content": {
+                    "question": "Welk deel ontbreekt in: ‘Herschrijf deze e-mail zodat hij korter is’?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "De taak"
+                      },
+                      {
+                        "id": "b",
+                        "label": "De lezer"
+                      },
+                      {
+                        "id": "c",
+                        "label": "Er ontbreekt niets"
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "De taak en de vorm zijn er. Wie hem leest – een klant, je leidinggevende, een collega – bepaalt de toon, en die moet het model raden."
+                  }
+                },
+                {
+                  "id": "try-it",
+                  "type": "prompt_exercise",
+                  "order": 5,
+                  "content": {
+                    "instruction": "Herschrijf dit verzoek zodat het taak, lezer en vorm noemt.",
+                    "starting_text": "Leg machine learning uit.",
+                    "hint": "Wie leest het? Hoe lang moet het zijn? Wat moet het antwoord bevatten?",
+                    "sample_answer": "Leg machine learning uit aan een collega zonder technische achtergrond, in minder dan 150 woorden, met één voorbeeld uit het dagelijks leven en zonder jargon."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "Taak, lezer, vorm. Als een antwoord tegenvalt, ontbrak een van de drie."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "give-useful-context",
+              "title": "Nuttige context geven",
+              "description": "Wat het model moet weten en wat alleen ruis toevoegt.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 2,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Het model weet niets over je project, je team of het besluit van vorige week. Het antwoordt op basis van wat voor het ligt – en voor alles wat je weglaat verzint het een aannemelijke vervanging."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Context is wat het antwoord verandert",
+                    "body": "Nuttige context is alles wat het antwoord van een deskundig persoon zou veranderen: beperkingen, doelgroep, wat je al hebt geprobeerd, het formaat waaraan je moet voldoen. De rest is ruis. Een heel document plakken terwijl drie zinnen ertoe doen, maakt het antwoord niet beter – het verdunt wat je eigenlijk wilde."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "Zelfde vraag, andere context",
+                    "body": "‘Is dit een goed ontwerp?’ krijgt een algemene checklist.\n\n‘Is dit een goed ontwerp voor een team van drie dat wekelijks oplevert en geen eigen ops-engineer heeft?’ krijgt een antwoord over de beheerkosten – omdat de beperking genoemd is."
+                  }
+                },
+                {
+                  "id": "warning",
+                  "type": "warning",
+                  "order": 4,
+                  "content": {
+                    "body": "Context is geen plek om geheimen te plakken. Inloggegevens, persoonsgegevens van anderen en vertrouwelijke documenten worden niet veilig doordat ze nuttig zijn."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 5,
+                  "content": {
+                    "question": "Je wilt feedback op een sollicitatie. Welk detail is de moeite waard om toe te voegen?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "De functie en wat de vacature vraagt"
+                      },
+                      {
+                        "id": "b",
+                        "label": "Je volledige adres en geboortedatum"
+                      },
+                      {
+                        "id": "c",
+                        "label": "De datum waarop je begon met schrijven"
+                      }
+                    ],
+                    "correct_option_id": "a",
+                    "explanation": "De functie verandert het antwoord. Je adres niet – en het is een persoonsgegeven dat daar niets te zoeken heeft."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "Voeg toe wat het antwoord van een deskundig persoon zou veranderen. Laat de rest weg en plak nooit iets wat je niet opgeslagen wilt zien."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "iterate-instead-of-restarting",
+              "title": "Bijsturen in plaats van opnieuw beginnen",
+              "description": "De waarde zit in het tweede bericht.",
+              "estimated_minutes": 3,
+              "difficulty": "beginner",
+              "order": 3,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Het antwoord is bijna goed. De meeste mensen gooien het weg en herschrijven het hele verzoek. Zo verdwijnt het deel dat wel werkte."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Corrigeren, niet opnieuw beginnen",
+                    "body": "Behandel het eerste antwoord als een concept dat je al pratend bewerkt. Zeg wat moet blijven en daarna wat moet veranderen. ‘Houd de structuur, maak het tweede punt concreet, schrap de laatste alinea’ brengt je er in één stap. Opnieuw beginnen is opnieuw de dobbelstenen gooien."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "comparison",
+                  "order": 3,
+                  "content": {
+                    "worse_label": "Opnieuw beginnen",
+                    "worse": "Dat bedoelde ik niet. Schrijf een betere samenvatting.",
+                    "better_label": "Corrigeren",
+                    "better": "Goede structuur. Punt 2 is te abstract – vervang het door het precieze cijfer uit de tekst. Schrap de slotalinea.",
+                    "note": "De tweede houdt wat werkte. De eerste laat het model opnieuw raden, met niet meer informatie dan eerst."
+                  }
+                },
+                {
+                  "id": "tip",
+                  "type": "tip",
+                  "order": 4,
+                  "content": {
+                    "body": "Als twee correctierondes niet tot het doel leiden, zit het probleem meestal in het oorspronkelijke verzoek, niet in het antwoord. Ga terug en voeg toe wat ontbrak."
+                  }
+                },
+                {
+                  "id": "practice",
+                  "type": "prompt_exercise",
+                  "order": 5,
+                  "content": {
+                    "instruction": "Het antwoord dat je kreeg is te formeel en te lang. Schrijf de correctie – herschrijf het verzoek niet.",
+                    "starting_text": "",
+                    "hint": "Noem één ding om te houden en twee om te veranderen.",
+                    "sample_answer": "Houd de drie onderdelen. Maak het ongeveer half zo lang en gebruik de toon die je tegen een collega zou gebruiken in plaats van tegen een klant."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "Zeg wat moet blijven voordat je zegt wat moet veranderen. Opnieuw beginnen gooit het deel weg dat al werkte."
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "verify-and-protect",
+      "pillar": "learn_ai",
+      "title": "Controleren en beschermen",
+      "description": "Controleren wat telt en gevoelige informatie beschermen.",
+      "icon": "shield-check",
+      "order": 3,
+      "tags": [
+        "general"
+      ],
+      "modules": [
+        {
+          "id": "verify-and-protect-foundations",
+          "title": "Vertrouwen, maar controleren",
+          "description": "Waar antwoorden de mist in gaan en wat je nooit mag delen.",
+          "order": 1,
+          "lessons": [
+            {
+              "id": "why-ai-hallucinates",
+              "title": "Waarom AI kan hallucineren",
+              "description": "En hoe je ziet welke antwoorden controle verdienen.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 1,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Een hallucinatie is geen storing. Het is het systeem dat precies doet wat het doet – een aannemelijke voortzetting maken – op een plek waar aannemelijk en waar uit elkaar zijn gegaan."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Waar het risico zich concentreert",
+                    "body": "Verzinnen gebeurt het vaakst waar tekst specifiek en controleerbaar, maar zeldzaam is: exacte citaten, paginanummers, statistieken, juridische verwijzingen, API-methoden, levensbeschrijvingen. Het model heeft de vorm van zulke dingen duizenden keren gezien en kan er dus op verzoek een overtuigende maken.\n\nHet gebeurt het minst waar het antwoord algemene kennis is, of waar je de brontekst zelf hebt aangeleverd."
+                  }
+                },
+                {
+                  "id": "tip",
+                  "type": "tip",
+                  "order": 3,
+                  "content": {
+                    "body": "Vragen ‘wat is je bron?’ helpt op zich niet – ook de bron kan verzonnen zijn. De bron controleren helpt wel."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 4,
+                  "content": {
+                    "question": "Welk antwoord verdient het meest een controle?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Een herformulering van een alinea die je zelf hebt geplakt"
+                      },
+                      {
+                        "id": "b",
+                        "label": "Een specifieke statistiek met een jaartal en een percentage"
+                      },
+                      {
+                        "id": "c",
+                        "label": "Een lijst met ideeën voor een teamnaam"
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "Specifiek, controleerbaar en niet door jou aangeleverd – precies daar is een aannemelijke verzinsel het moeilijkst te herkennen."
+                  }
+                },
+                {
+                  "id": "reflection",
+                  "type": "reflection",
+                  "order": 5,
+                  "content": {
+                    "prompt": "Denk aan een taak waarvoor je AI gebruikt. Welk deel van het antwoord zou een echt probleem geven als het ongemerkt fout was?",
+                    "hint": "Dat deel moet je elke keer controleren."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "Controleer wat specifiek, controleerbaar en niet van jou is. Vertrouw niets alleen omdat het zeker klinkt."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "verify-output",
+              "title": "De uitkomst controleren",
+              "description": "Controleer berekeningen, bronnen, beweringen en aannames.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 2,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "idea",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "heading": "Verificatie",
+                    "body": "Verificatie is een aparte technische stap. Hetzelfde model vragen of het zeker is, is geen onafhankelijke controle."
+                  }
+                },
+                {
+                  "id": "scenario",
+                  "type": "example",
+                  "order": 2,
+                  "content": {
+                    "label": "Een situatie",
+                    "body": "Een AI geeft je een belastingberekening voor een constructieve analyse."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 3,
+                  "content": {
+                    "question": "Wat moet je doen voordat je die gebruikt?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Hem direct gebruiken omdat de eenheden erbij staan."
+                      },
+                      {
+                        "id": "b",
+                        "label": "Aannames, eenheden en berekeningen onafhankelijk controleren."
+                      },
+                      {
+                        "id": "c",
+                        "label": "De AI vragen of hij het zeker weet."
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "Controleer het belastinggeval, de eenheden, de vergelijkingen en de randvoorwaarden met betrouwbare methoden of bronnen voordat je op de uitkomst vertrouwt."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 4,
+                  "content": {
+                    "body": "Controleer waar je op vertrouwt met een methode of bron die het model niet in handen heeft. Het model opnieuw vragen is geen controle."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "confidential-information",
+              "title": "Vertrouwelijke informatie",
+              "description": "Weet wat niet naar een niet-goedgekeurd systeem mag.",
+              "estimated_minutes": 3,
+              "difficulty": "beginner",
+              "order": 3,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "idea",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "heading": "Gegevensbescherming",
+                    "body": "Deel alleen gegevens die de tool en je onderwijsinstelling mogen verwerken."
+                  }
+                },
+                {
+                  "id": "scenario",
+                  "type": "example",
+                  "order": 2,
+                  "content": {
+                    "label": "Een situatie",
+                    "body": "Een projectdocument bevat studentnummers, leveranciersgegevens en een intern toegangstoken."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 3,
+                  "content": {
+                    "question": "Wat is de verantwoorde volgende stap?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Alles plakken omdat het een studieopdracht is."
+                      },
+                      {
+                        "id": "b",
+                        "label": "Alleen de namen van studenten verwijderen."
+                      },
+                      {
+                        "id": "c",
+                        "label": "Een goedgekeurd systeem gebruiken en geheimen en onnodige persoonlijke of vertrouwelijke gegevens verwijderen."
+                      }
+                    ],
+                    "correct_option_id": "c",
+                    "explanation": "Toestemming en dataminimalisatie tellen allebei. Inloggegevens horen er nooit bij, en onnodige gevoelige context moet eruit."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 4,
+                  "content": {
+                    "body": "Deel alleen wat het hulpmiddel mag verwerken, verwijder geheimen en onnodige persoonsgegevens, en plak nooit inloggegevens."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "responsible-use",
+              "title": "Verantwoord gebruik",
+              "description": "Herken wanneer AI-gebruik gepast, beperkt of verboden is.",
+              "estimated_minutes": 3,
+              "difficulty": "beginner",
+              "order": 4,
+              "version": 1,
+              "tags": [
+                "general",
+                "student"
+              ],
+              "blocks": [
+                {
+                  "id": "idea",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "heading": "Verantwoorde praktijk",
+                    "body": "Het juiste gebruik hangt af van de taak, de regels van het vak, de goedkeuring van de tool en de vereiste mate van menselijke verantwoordelijkheid."
+                  }
+                },
+                {
+                  "id": "scenario",
+                  "type": "example",
+                  "order": 2,
+                  "content": {
+                    "label": "Een situatie",
+                    "body": "De regels van een beoordeelde opdracht zijn onduidelijk over hulp van generatieve AI."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 3,
+                  "content": {
+                    "question": "Wat moet je doen?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Stilletjes AI gebruiken, want waarschijnlijk doet iedereen het."
+                      },
+                      {
+                        "id": "b",
+                        "label": "De AI de eindversie laten maken en daarna een paar woorden aanpassen."
+                      },
+                      {
+                        "id": "c",
+                        "label": "De regels van het vak nalezen, vragen bij onduidelijkheid en toegestane hulp vermelden."
+                      }
+                    ],
+                    "correct_option_id": "c",
+                    "explanation": "Verantwoord gebruik respecteert het leerdoel en de afgesproken regels. Zijn de regels onduidelijk, vraag dan eerst om uitleg voordat je op AI vertrouwt."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 4,
+                  "content": {
+                    "body": "Ken de regels van de taak voordat je AI gebruikt, vraag het na als ze onduidelijk zijn, en zeg welke hulp je hebt gebruikt."
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "adapt-to-your-field",
+      "pillar": "adapt_ai",
+      "title": "Afstemmen op je vakgebied",
+      "description": "Laat het passen bij je werk, niet andersom.",
+      "icon": "settings-2",
+      "order": 4,
+      "tags": [
+        "general",
+        "student",
+        "engineering",
+        "marketing",
+        "developer",
+        "creator",
+        "management"
+      ],
+      "modules": [
+        {
+          "id": "adapt-ai-foundations",
+          "title": "Passend bij je werk",
+          "description": "Van losse antwoorden naar iets herbruikbaars.",
+          "order": 1,
+          "lessons": [
+            {
+              "id": "an-assistant-for-your-work",
+              "title": "AI inzetten als assistent voor werk of studie",
+              "description": "Beschrijf je situatie één keer en stop met herhalen.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 1,
+              "version": 1,
+              "tags": [
+                "general",
+                "student",
+                "management"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "De meeste mensen leggen bij elk verzoek opnieuw uit wie ze zijn en waaraan ze werken. De assistent die echt tijd bespaart, is de assistent die je één keer hebt beschreven."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Een vaste opdracht",
+                    "body": "Een vaste opdracht bestaat uit drie of vier zinnen die bij veel verzoeken waar blijven: je rol, voor wie je meestal schrijft, de gewenste toon en wat je nooit wilt. Eén keer geschreven, maakt ze elk later verzoek kort.\n\nIn Nova is daar een stijl voor: de instructie staat op één plek en geldt telkens als je die stijl kiest."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "Een vaste opdracht",
+                    "body": "‘Ik zit in het tweede jaar van een ingenieursopleiding. Ik schrijf practicumverslagen voor een begeleider die precisie belangrijker vindt dan lengte. Gebruik helder, technisch Nederlands. Vul nooit aan met inleidingen of conclusies die de kern herhalen.’\n\nElk later verzoek past nu in twee regels in plaats van tien."
+                  }
+                },
+                {
+                  "id": "practice",
+                  "type": "prompt_exercise",
+                  "order": 4,
+                  "content": {
+                    "instruction": "Schrijf je eigen vaste opdracht in drie of vier zinnen.",
+                    "starting_text": "",
+                    "hint": "Rol, gebruikelijke doelgroep, toon en één ding dat je nooit wilt.",
+                    "sample_answer": "Ik ben productmanager en schrijf voor ontwikkelaars en ontwerpers. Wees concreet en kort; liever voorbeelden dan bijvoeglijke naamwoorden. Begin nooit met een samenvatting van wat ik net vroeg."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 5,
+                  "content": {
+                    "body": "Beschrijf je situatie één keer, op een plek die blijft. Daarna wordt elk verzoek korter."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "build-a-reusable-workflow",
+              "title": "Een herbruikbare werkwijze bouwen",
+              "description": "Een taak die je herhaalt omzetten in iets wat je gewoon uitvoert.",
+              "estimated_minutes": 4,
+              "difficulty": "intermediate",
+              "order": 2,
+              "version": 1,
+              "tags": [
+                "general",
+                "engineering",
+                "marketing",
+                "developer"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Als je bijna hetzelfde verzoek drie keer hebt geschreven, heb je geen verzoek meer. Je hebt een werkwijze die je nog niet hebt opgeschreven."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Vaste instructie, wisselende invoer",
+                    "body": "Een werkwijze scheidt het deel dat nooit verandert van het deel dat wel verandert. De instructie – wat er moet gebeuren, voor wie, in welke vorm, wat gecontroleerd moet worden – ligt vast. De tekst die je erin stopt, verandert elke keer.\n\nZodra ze gescheiden zijn, kun je het vaste deel opslaan en hergebruiken, en verandert het niet meer elke keer dat je het uit je hoofd opnieuw typt."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "comparison",
+                  "order": 3,
+                  "content": {
+                    "worse_label": "Elke keer opnieuw getypt",
+                    "worse": "Kun je deze vergadernotities bekijken en eruit halen wat ik moet doen?",
+                    "better_label": "Een werkwijze",
+                    "better": "Haal uit de notities hieronder alleen de acties die aan mij zijn toegewezen. Eén regel per actie, beginnend met een werkwoord, met de deadline als die genoemd is. Is er geen actie aan mij toegewezen, zeg dat dan en stop.",
+                    "note": "De tweede is het bewaren waard. Ze zegt ook wat te doen als er niets te vinden is – precies daar verzint de opnieuw getypte versie ongemerkt taken."
+                  }
+                },
+                {
+                  "id": "tip",
+                  "type": "tip",
+                  "order": 4,
+                  "content": {
+                    "body": "Vertel een werkwijze altijd wat te doen als de invoer niet past. Die ene zin voorkomt de meeste verzonnen resultaten."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 5,
+                  "content": {
+                    "question": "Wat hoort in het vaste deel van een werkwijze?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "De tekst die deze keer verwerkt moet worden"
+                      },
+                      {
+                        "id": "b",
+                        "label": "De regels voor hoe een goed resultaat eruitziet"
+                      },
+                      {
+                        "id": "c",
+                        "label": "De datum van vandaag"
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "De regels zijn wat je niet meer opnieuw wilt typen. De invoer is wat verandert."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "Scheid de vaste instructie van de wisselende invoer, en zeg wat te doen als er niets te vinden is."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "adapt-ai-to-your-domain",
+              "title": "AI afstemmen op je vakgebied",
+              "description": "Vaktaal, conventies en de controles die je vakgebied verwacht.",
+              "estimated_minutes": 5,
+              "difficulty": "intermediate",
+              "order": 3,
+              "version": 1,
+              "tags": [
+                "engineering",
+                "marketing",
+                "developer",
+                "creator",
+                "student",
+                "management"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Een algemeen antwoord is algemeen omdat niets in het verzoek zei in welk vakgebied je werkt. Je vakgebied heeft vaktaal, conventies en een bewijsstandaard – en niets daarvan is van buitenaf duidelijk."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Drie dingen die je vakgebied verwacht",
+                    "body": "Noem de vaktaal die je gebruikt, zodat het antwoord zich niet vertaalt naar de termen van iemand anders. Noem de conventie die je volgt – een rapportstructuur, een commitstijl, een huisstijl. En noem de controle: wat een antwoord in jouw vakgebied aanvaardbaar maakt en niet alleen redelijk.\n\nDe derde laten de meeste mensen weg, en juist die doet het meeste werk."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "Hetzelfde verzoek in drie vakgebieden",
+                    "body": "Techniek: ‘Noem de aanname achter elk getal. Als een waarde geschat is in plaats van gemeten, geef dat aan.’\n\nMarketing: ‘Houd je aan onze huisstijl: direct, zonder superlatieven. Geef twee opties zodat we kunnen vergelijken.’\n\nOntwikkeling: ‘Volg de conventies die al in het bestand staan. Heeft een aanpak een afhankelijkheid nodig die we niet hebben, zeg dat dan in plaats van hem toe te voegen.’"
+                  }
+                },
+                {
+                  "id": "ai-practice",
+                  "type": "ai_exercise",
+                  "order": 4,
+                  "content": {
+                    "exercise_id": "adapt-domain-request",
+                    "instruction": "Schrijf een verzoek voor een taak uit je eigen vakgebied. Noem de vaktaal, de conventie en de controle die een antwoord aanvaardbaar maakt.",
+                    "starting_text": "",
+                    "hint": "De controle is het deel dat de meesten vergeten: wat zou je een verder redelijk antwoord laten afwijzen?"
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 5,
+                  "content": {
+                    "body": "Vaktaal, conventie en de controle die je vakgebied toepast. De controle maakt van een redelijk antwoord een bruikbaar antwoord."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "ai-in-engineering",
+              "title": "AI in de techniek",
+              "description": "Gebruik AI als hulpmiddel, niet als vervanging van nadenken.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 4,
+              "version": 1,
+              "tags": [
+                "engineering",
+                "student"
+              ],
+              "blocks": [
+                {
+                  "id": "idea",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "heading": "AI voor ingenieurs",
+                    "body": "AI is het sterkst als partner bij verkennen, opstellen en kritisch bekijken, zolang de ingenieur verantwoordelijk blijft."
+                  }
+                },
+                {
+                  "id": "scenario",
+                  "type": "example",
+                  "order": 2,
+                  "content": {
+                    "label": "Een situatie",
+                    "body": "Je vergelijkt twee concepten voor een subsysteem van een kleine satelliet."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 3,
+                  "content": {
+                    "question": "Welke werkwijze benut AI het best?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "De AI het concept laten kiezen en de onderbouwing overnemen."
+                      },
+                      {
+                        "id": "b",
+                        "label": "AI gebruiken om afwegingen zichtbaar te maken, daarna de randvoorwaarden toetsen en je beslissing vastleggen."
+                      },
+                      {
+                        "id": "c",
+                        "label": "Aannames niet vastleggen zodat het verslag kort blijft."
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "AI versterkt het technische oordeel. Het vervangt geen validatie, traceerbaarheid of verantwoordelijkheid."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 4,
+                  "content": {
+                    "body": "Laat AI opties en afwegingen zichtbaar maken, valideer ze daarna, leg je aannames vast en sta zelf achter het besluit."
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "exercises": [
+    {
+      "id": "adapt-domain-request",
+      "task": "learning_feedback",
+      "instruction": "You are helping someone learn to write better requests to an AI assistant. They were asked to write a request for a task in their own professional or academic field, naming three things: the vocabulary of their field, the convention they follow, and the check that makes an answer acceptable rather than merely reasonable.\n\nRead their attempt and reply in at most four short sentences. Say plainly which of the three are present and which are missing. Then give one concrete improvement, rewriting a fragment of their own request rather than replacing it with yours. Do not score them, do not use percentages, and do not praise without a reason. If their request is already complete, say so and name the strongest part.\n\nReply in the language they wrote in."
+    }
+  ]
+}
