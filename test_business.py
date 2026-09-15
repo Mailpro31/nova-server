@@ -604,6 +604,9 @@ class BusinessPolicyAndPackageTests(AdminTestCase):
                 # liste reste exhaustive pour continuer a refuser l'ajout
                 # d'une clef propre a l'entreprise.
                 "learning_enabled",
+                # Cle Core : borne la duree d'une dictee pour proteger le
+                # moteur partage, quelle que soit la nature de l'organisation.
+                "max_dictation_seconds",
             },
         )
 
