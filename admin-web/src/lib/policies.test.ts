@@ -137,9 +137,26 @@ describe("No arbitrary JSON", () => {
       "voice_commands_enabled",
       "engineering_notes_enabled",
       "file_import_enabled",
+      // Les categories de l'application.
+      "styles_enabled",
+      "generated_instructions_enabled",
+      "past_dictations_enabled",
     ]) {
       expect(source).toContain(`key: "${key}"`);
     }
+  });
+
+  test("closing Styles says dictations are still reformulated", async () => {
+    // La question qu'on se pose en fermant Styles : les dictees perdent-elles
+    // leur mise en forme ? Non, et l'ecran le dit.
+    const { t } = await import("./messages");
+    expect(t.policies.stylesBody.toLowerCase()).toContain("default style");
+  });
+
+  test("closing Prompts or History says the content stays on the device", async () => {
+    const { t } = await import("./messages");
+    expect(t.policies.deviceCategoryNote.toLowerCase()).toContain("device");
+    expect(code(REST)).toContain("t.policies.deviceCategoryNote");
   });
 
   test("the file import switch says the dictation stays available", async () => {
