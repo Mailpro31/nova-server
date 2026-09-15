@@ -9000,7 +9000,8 @@ def me(user: str = Depends(current_user), u=Depends(current_account)):
 
     # La policy du membre, pas celle de l'organisation active : en multi-tenant
     # ce ne serait pas la meme, et `/api/me` repondrait pour le voisin.
-    capabilities = public_campus_config(organization_id)["capabilities"]
+    member_config = public_campus_config(organization_id)
+    capabilities = member_config["capabilities"]
     return {
         # — contrat historique, inchangé —
         "email": u["email"],
@@ -9029,6 +9030,9 @@ def me(user: str = Depends(current_user), u=Depends(current_account)):
             "has_external_identity": bool(u["external_subject"]),
         },
         "capabilities": sorted(name for name, enabled in capabilities.items() if enabled),
+        # Les bornes de l'organisation du membre : le poste connecte lit cette
+        # route, pas `/api/config`.
+        "limits": member_config["limits"],
     }
 
 def clean_required(value: str, field: str, limit: int = 4000) -> str:

@@ -107,6 +107,15 @@ class DictationLimitDeliveryTests(AdminTestCase):
         self.assertEqual(
             main.public_campus_config()["limits"]["max_dictation_seconds"], 120)
 
+    def test_a_signed_in_member_receives_the_limit_of_their_organization(self):
+        """Le poste connecte lit `/api/me`, pas `/api/config` : la limite doit
+        y figurer, calculee pour l'organisation du membre."""
+        self.set_limit(90)
+        token = self.sign_in("etudiant@example.com")
+        response = self.client.get("/api/me", headers=self.auth(token))
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["limits"], {"max_dictation_seconds": 90})
+
     def test_a_dictation_within_the_limit_is_transcribed(self):
         self.set_limit(60)
         self.assertEqual(self.dictate(wav_of(30)).status_code, 200)
