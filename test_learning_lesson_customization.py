@@ -24,7 +24,13 @@ import copy
 import json
 import unittest
 
-from test_learning_custom_lessons import CustomLessonTestCase, grant_admin_session, member_lessons, lesson_body  # noqa: F401
+from test_learning_custom_lessons import (  # noqa: F401
+    CustomLessonTestCase,
+    clear_custom_lessons,
+    grant_admin_session,
+    lesson_body,
+    member_lessons,
+)
 
 import learning
 import main
@@ -65,6 +71,9 @@ def publish_new_nova_version(lesson_id: str) -> None:
 class CustomizationTestCase(CustomLessonTestCase):
     def setUp(self):
         super().setUp()
+        # Les copies, l'original archive et le catalogue simule ne doivent pas
+        # survivre au test : les modules suivants lisent la meme base.
+        self.addCleanup(clear_custom_lessons)
         self.addCleanup(learning.reset_cache)
 
     def customize(self, lesson_id: str = LESSON, headers: dict | None = None):
