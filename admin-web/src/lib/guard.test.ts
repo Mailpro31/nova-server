@@ -270,9 +270,19 @@ describe("gestion des membres", () => {
     const editor = page.slice(page.indexOf("MEMBER_ROLES"), page.indexOf("export function Members"));
     // Les privileges se gerent depuis leur propre ecran : deux endroits qui
     // modifient le meme privilege finissent par diverger.
-    for (const role of ["organization_admin", "it_admin", "read_only"]) {
+    for (const role of ["organization_admin", "it_admin", "read_only", "content_editor"]) {
       expect(editor).not.toContain(`"${role}"`);
     }
+  });
+
+  test("l'ecran des administrateurs propose l'editeur de contenu", async () => {
+    // Confier les lecons, Styles et vocabulaire sans ouvrir les membres ni
+    // les policies : le role doit pouvoir s'attribuer depuis la console.
+    const page = readFileSync("src/pages/Administrators.tsx", "utf8");
+    expect(page).toContain('value: "content_editor"');
+    const { t } = await import("./messages");
+    expect(t.administrators.roleContentEditor.length).toBeGreaterThan(0);
+    expect(t.administrators.roleContentEditorHint.toLowerCase()).toContain("lessons");
   });
 
   test("les appareils sont nommes sans jeton", async () => {
