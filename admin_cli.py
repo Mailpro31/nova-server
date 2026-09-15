@@ -35,7 +35,7 @@ promouvoir. Hors de ce cas, le refus est la bonne réponse — une faute de frap
 doit s'arrêter là plutôt que de fabriquer un administrateur qui ne désigne
 personne.
 
-Rôles : organization_admin, it_admin, read_only, member.
+Rôles : organization_admin, it_admin, read_only, content_editor, member.
 """
 
 import re

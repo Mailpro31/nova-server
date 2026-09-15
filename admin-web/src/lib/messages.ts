@@ -185,10 +185,13 @@ export const t = {
     roleOrganizationAdmin: "Organization administrator",
     roleItAdmin: "IT administrator",
     roleReadOnly: "Read only",
+    roleContentEditor: "Content editor",
     roleMember: "No admin access",
     roleOrganizationAdminHint: "Manages people: administrators, providers, discovery, security.",
     roleItAdminHint: "Manages the service: providers, discovery, deployment.",
     roleReadOnlyHint: "Reads the console. Changes nothing.",
+    roleContentEditorHint:
+      "Manages content: Learn lessons, Styles, Prompts and vocabulary. No access to members, security or policies.",
     roleMemberHint: "Uses Nova, administers nothing.",
     changeRole: "Change role",
     removeAccess: "Remove admin access",

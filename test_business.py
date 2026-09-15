@@ -326,7 +326,10 @@ class BusinessSecurityRoleTests(AdminTestCase):
         """Business ne fait pas apparaître de rôle d'administration à lui."""
         self.assertEqual(
             main.SECURITY_ROLES,
-            frozenset({"member", "organization_admin", "it_admin", "read_only"}),
+            # `content_editor` est un role d'organisation, pas propre a
+            # Business : il existe aussi pour une ecole.
+            frozenset({"member", "organization_admin", "it_admin", "read_only",
+                       "content_editor"}),
         )
 
     def test_a_business_member_cannot_change_the_policy(self):
