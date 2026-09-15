@@ -11,6 +11,7 @@
 
 import { useState } from "react";
 import { ApiError } from "../lib/api";
+import { auditChanges, formatAuditValue } from "../lib/audit";
 import type { AuditEntry } from "../lib/controlPlane";
 import { errorMessage, t } from "../lib/messages";
 import { CAPABILITY, can, secondsRemaining } from "../lib/session";
@@ -532,7 +533,7 @@ function AuditLog() {
               <Facts
                 entries={entries.map((entry) => [
                   new Date(entry.created_at * 1000).toLocaleString(),
-                  <span>
+                  <div>
                     <strong>{entry.action_label}</strong>
                     {" — "}
                     {/* Le jeton herite n'identifie personne : le dire vaut
@@ -546,7 +547,26 @@ function AuditLog() {
                         <span className="mono">{entry.target}</span>
                       </>
                     )}
-                  </span>,
+                    {/* Ce qui a change, quand la ligne le dit : les valeurs
+                        avant et apres, ou seulement les reglages modifies. */}
+                    {auditChanges(entry.metadata).length > 0 && (
+                      <ul className="problem-list">
+                        {auditChanges(entry.metadata).map((change) => (
+                          <li key={change.field}>
+                            <span className="mono">{change.field}</span>
+                            {(change.before !== undefined || change.after !== undefined) && (
+                              <>
+                                {": "}
+                                {formatAuditValue(change.before)}
+                                {" → "}
+                                {formatAuditValue(change.after)}
+                              </>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>,
                 ])}
               />
               {nextBefore && (
