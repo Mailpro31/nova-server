@@ -252,6 +252,11 @@ const POLICY_GROUPS: {
     title: t.policies.groupCategories,
     items: [
       {
+        key: "learning_enabled",
+        title: t.policies.learningTitle,
+        body: t.policies.learningBody,
+      },
+      {
         key: "styles_enabled",
         title: t.policies.stylesTitle,
         body: t.policies.stylesBody,
@@ -294,7 +299,7 @@ function Policies() {
   // Les modifications en cours, séparées de ce que le serveur a renvoyé : sans
   // cette séparation, on ne saurait pas dire ce qui est enregistré et ce qui
   // ne l'est pas encore.
-  const [draft, setDraft] = useState<Record<string, boolean> | null>(null);
+  const [draft, setDraft] = useState<Record<string, boolean | number> | null>(null);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const [conflict, setConflict] = useState(false);

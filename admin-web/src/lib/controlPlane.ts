@@ -155,7 +155,8 @@ export interface PolicyView {
   schema_version: number;
   /** Monotone. Sert a refuser une ecriture partie d'une version perimee. */
   revision: number;
-  settings: Record<string, boolean>;
+  /** Des interrupteurs, et une duree : `max_dictation_seconds`. */
+  settings: Record<string, boolean | number>;
   updated_at: number | null;
   updated_by_user_id: string | null;
   /** `false` tant que personne n'a rien change : ce sont les defauts. */
@@ -600,7 +601,7 @@ export class ControlPlane {
    * Remplace la policy. `expectedRevision` est obligatoire : sans elle, deux
    * consoles ouvertes cote a cote s'ecraseraient en silence.
    */
-  updatePolicy(expectedRevision: number, settings: Record<string, boolean>) {
+  updatePolicy(expectedRevision: number, settings: Record<string, boolean | number>) {
     return this.client.request<PolicyView>("/api/control/organization/policy", {
       method: "PUT",
       body: { expected_revision: expectedRevision, settings },

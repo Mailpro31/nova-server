@@ -16,6 +16,7 @@ export type NavSectionId =
   | "features"
   | "learn"
   | "content"
+  | "limits"
   | "signIn"
   | "audit"
   | "infrastructure";
@@ -32,6 +33,7 @@ export const NAV_SECTIONS: readonly NavSection[] = [
   { id: "features", pages: ["configuration"] },
   { id: "learn", pages: ["learn"] },
   { id: "content", pages: ["packages"] },
+  { id: "limits", pages: ["limits"] },
   { id: "signIn", pages: ["identity", "security"] },
   { id: "audit", pages: ["audit"] },
   { id: "infrastructure", pages: ["deployment", "diagnostics"] },
