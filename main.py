@@ -2239,6 +2239,20 @@ POLICY_SETTINGS: dict[str, PolicySetting] = {
         PolicySetting("engineering_notes_enabled", bool, True, "engineeringNotes"),
         PolicySetting("file_import_enabled", bool, True, "fileTranscription"),
         PolicySetting("learning_enabled", bool, True, "learning"),
+        # Les categories de l'application. `styles_enabled` ferme la categorie
+        # Styles et la distribution des Styles d'organisation, jamais la
+        # reformulation des dictees : `/api/reformulate` reste ouverte, sans
+        # quoi une case cochee couperait le coeur du produit.
+        PolicySetting("styles_enabled", bool, True, "styles"),
+        # Prompts et Historique vivent sur le poste de la personne : aucune
+        # route serveur ne les sert. La decision est annoncee au poste, qui
+        # retire la categorie ; le serveur n'a rien d'autre a refuser.
+        #
+        # Les cles nomment ce qu'elles designent sans reprendre les mots
+        # « prompt » ou « history » : le document de policy ne doit jamais
+        # ressembler a du contenu de personne, et un test le verifie mot a mot.
+        PolicySetting("generated_instructions_enabled", bool, True, "prompts"),
+        PolicySetting("past_dictations_enabled", bool, True, "history"),
         # Une duree, pas un interrupteur : elle ne ferme aucune capacite. Elle
         # protege le moteur partage d'un enregistrement sans fin. Le poste
         # previent avant la limite et arrete ; `/api/transcribe` refuse ce qui
@@ -3950,6 +3964,11 @@ def public_campus_config(organization_id: str | None = None) -> dict:
             # En mode examen elle se ferme comme le reste de ce qui appelle
             # un modele.
             "learning": EDUCATION_MODE != "assessment",
+            # Categories dont le contenu reste sur le poste. Ouvertes dans tous
+            # les modes : elles n'appellent aucun modele, et seule une policy
+            # de l'organisation les ferme.
+            "prompts": True,
+            "history": True,
         },
         "privacy": {
             "verified": True,

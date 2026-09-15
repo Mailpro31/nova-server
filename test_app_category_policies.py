@@ -9,10 +9,14 @@ deja leur cle. Il manquait Styles, Prompts et Historique.
   du poste, et le serveur cesse de distribuer les Styles de l'organisation. La
   reformulation des dictees continue avec le Style par defaut — la fermer
   couperait le coeur du produit sur une case cochee.
-- `prompts_enabled` et `history_enabled` ferment des categories dont le contenu
-  reste sur le poste de la personne. Aucune route serveur ne les sert : la
-  decision est annoncee au poste, qui retire la categorie. Le serveur ne peut
-  rien refuser de plus, et la cle ne pretend pas le contraire.
+- `generated_instructions_enabled` (Prompts) et `past_dictations_enabled`
+  (Historique) ferment des categories dont le contenu reste sur le poste de la
+  personne. Aucune route serveur ne les sert : la decision est annoncee au
+  poste, qui retire la categorie. Le serveur ne peut rien refuser de plus, et
+  la cle ne pretend pas le contraire.
+
+Les cles evitent les mots « prompt » et « history » : le document de policy ne
+doit jamais ressembler a du contenu de personne (`PolicyPrivacyTests`).
 """
 
 import unittest
@@ -26,8 +30,8 @@ main.init_db()
 
 NEW_KEYS = {
     "styles_enabled": "styles",
-    "prompts_enabled": "prompts",
-    "history_enabled": "history",
+    "generated_instructions_enabled": "prompts",
+    "past_dictations_enabled": "history",
 }
 
 
@@ -70,7 +74,8 @@ class CategoryPolicyDeliveryTests(AdminTestCase):
         self.assertEqual(response.status_code, 200, response.text)
 
     def test_a_member_is_told_which_categories_are_closed(self):
-        self.close(prompts_enabled=False, history_enabled=False, styles_enabled=False)
+        self.close(generated_instructions_enabled=False, past_dictations_enabled=False,
+                   styles_enabled=False)
         token = self.sign_in("etudiant@example.com")
         announced = self.client.get("/api/me", headers=self.auth(token)).json()["capabilities"]
         for capability in ("prompts", "history", "styles"):
@@ -93,7 +98,7 @@ class CategoryPolicyDeliveryTests(AdminTestCase):
         self.assertEqual(response.status_code, 200, response.text)
 
     def test_the_other_categories_stay_open_when_one_closes(self):
-        self.close(history_enabled=False)
+        self.close(past_dictations_enabled=False)
         capabilities = main.public_campus_config()["capabilities"]
         self.assertFalse(capabilities["history"])
         self.assertTrue(capabilities["prompts"])
