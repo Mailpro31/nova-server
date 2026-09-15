@@ -622,6 +622,36 @@ export const t = {
       "Some features may still be unavailable because of this deployment's education mode.",
   },
 
+  groupPolicies: {
+    title: "Settings by group",
+    lead: "A group can change some settings for its members only. Everything else follows the organization policies above.",
+    // La question qu'un administrateur se pose des qu'un membre est dans deux
+    // groupes : lequel gagne ? L'ecran le dit.
+    restrictive:
+      "When a member belongs to several groups that disagree, the most restrictive value applies: disabled rather than enabled, and the shortest dictation limit.",
+    empty: "This organization has no groups yet.",
+    followsOrganization: "Follows the organization",
+    overrideCount: (count: number) =>
+      count === 1 ? "1 setting changed for this group" : `${count} settings changed for this group`,
+    edit: "Edit",
+    view: "View",
+    close: "Close",
+    inherit: "Follow the organization",
+    on: "Enabled for this group",
+    off: "Disabled for this group",
+    limits: "Limits",
+    dictationTitle: "Maximum dictation length (minutes)",
+    dictationBody: "Leave empty to follow the organization limit.",
+    save: "Save group settings",
+    saving: "Saving…",
+    cancel: "Cancel",
+    unsaved: "You have unsaved changes.",
+    readOnly: "You can view these settings, but not change them.",
+    conflict: "This group's settings changed while you were editing them. Reload before saving.",
+    reload: "Reload",
+    notFound: "This group no longer exists.",
+  },
+
   // Libelles produit. Un administrateur choisit du contenu a distribuer ; il
   // n'a pas a connaitre les noms de types du serveur.
   packages: {
@@ -895,6 +925,8 @@ export function errorMessage(kind: ApiErrorKind, code?: string | null): string {
   if (code === "MEMBER_ROLE_INVALID") return "That member type is not recognised.";
   if (code === "SECURITY_ROLE_INVALID") return "That role is not recognised.";
   if (code === "POLICY_REVISION_CONFLICT") return t.policies.conflict;
+  if (code === "GROUP_POLICY_REVISION_CONFLICT") return t.groupPolicies.conflict;
+  if (code === "GROUP_NOT_FOUND") return t.groupPolicies.notFound;
   if (code === "LEARNING_REVISION_CONFLICT") return t.learn.conflict;
   if (code === "LEARNING_CUSTOM_LESSON_INVALID") return t.learn.invalid;
   if (code === "LEARNING_CUSTOM_LESSON_LIMIT") return t.learn.limit;

@@ -163,6 +163,18 @@ export interface PolicyView {
 }
 
 /**
+ * Les reglages qu'un groupe surcharge pour ses membres. `overrides` ne porte
+ * que les choix faits pour ce groupe ; le reste suit l'organisation.
+ */
+export interface GroupPolicyView {
+  id: string;
+  label: string;
+  overrides: Record<string, boolean | number>;
+  revision: number;
+  updated_at: number | null;
+}
+
+/**
  * L'etat du runtime IA prive de l'organisation.
  *
  * Deux blocs, jamais melanges : `desired` est ce que l'administrateur a
@@ -593,6 +605,29 @@ export class ControlPlane {
       method: "PUT",
       body: { expected_revision: expectedRevision, settings },
     });
+  }
+
+  /** Chaque groupe de l'organisation, avec les reglages qu'il surcharge. */
+  groupPolicies() {
+    return this.client.request<{
+      groups: GroupPolicyView[];
+      defaults: Record<string, boolean | number>;
+    }>("/api/control/organization/policy/groups");
+  }
+
+  /**
+   * Remplace les surcharges d'un groupe ; un document vide le rend a
+   * l'organisation. `expectedRevision` : deux consoles ne s'ecrasent pas.
+   */
+  updateGroupPolicy(
+    groupId: string,
+    expectedRevision: number,
+    settings: Record<string, boolean | number>,
+  ) {
+    return this.client.request<GroupPolicyView>(
+      `/api/control/organization/policy/groups/${encodeURIComponent(groupId)}`,
+      { method: "PUT", body: { expected_revision: expectedRevision, settings } },
+    );
   }
 
   aiRuntime() {
