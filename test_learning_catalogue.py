@@ -113,5 +113,35 @@ class DefaultCatalogueTests(unittest.TestCase):
         )
 
 
+
+class RegionalCatalogueTests(unittest.TestCase):
+    """Le chinois traditionnel n'est pas le chinois simplifie.
+
+    Nova propose `zh` et `zh-TW`. Reduire toute langue a ses deux premieres
+    lettres servait le catalogue simplifie a un poste reglé en traditionnel.
+    Une variante regionale livree est servie telle quelle ; sinon, la langue de
+    base ; sinon, l'anglais.
+    """
+
+    def setUp(self):
+        learning.reset_cache()
+
+    def test_a_shipped_regional_variant_is_served_as_is(self):
+        self.assertIn("zh-TW", learning.available_locales())
+        self.assertEqual(learning.load_catalog(locale="zh-TW")["locale"], "zh-TW")
+        self.assertEqual(learning.load_catalog(locale="zh_tw")["locale"], "zh-TW")
+
+    def test_the_base_language_stays_distinct_from_its_variant(self):
+        self.assertEqual(learning.load_catalog(locale="zh")["locale"], "zh")
+        self.assertEqual(learning.load_catalog(locale="zh-CN")["locale"], "zh")
+        self.assertNotEqual(
+            learning.load_catalog(locale="zh")["paths"][0]["title"],
+            learning.load_catalog(locale="zh-TW")["paths"][0]["title"],
+        )
+
+    def test_a_region_without_its_own_catalogue_uses_the_base_language(self):
+        self.assertEqual(learning.load_catalog(locale="fr-CA")["locale"], "fr")
+
+
 if __name__ == "__main__":
     unittest.main()
