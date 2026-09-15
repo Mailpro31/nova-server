@@ -97,7 +97,7 @@ interface Option {
  * `ai_exercise` en est absent à dessein : son instruction ne vient que du
  * catalogue livré, et le serveur refuse qu'une console en écrive une.
  */
-export const EDITABLE_BLOCK_TYPES = [
+export const EDITABLE_BLOCK_TYPES: readonly string[] = [
   "text",
   "example",
   "comparison",
@@ -107,7 +107,7 @@ export const EDITABLE_BLOCK_TYPES = [
   "reflection",
   "prompt_exercise",
   "takeaway",
-] as const;
+];
 
 export const DIFFICULTIES = ["beginner", "intermediate", "advanced"] as const;
 export const MIN_MINUTES = 1;

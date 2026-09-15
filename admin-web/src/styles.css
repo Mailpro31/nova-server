@@ -464,3 +464,177 @@ input[aria-invalid="true"] {
 .field textarea {
   resize: vertical;
 }
+
+/* ── Apprendre ─────────────────────────────────────────────────────── */
+
+.lesson-row {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+.lesson-row:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+.lesson-summary {
+  gap: 6px;
+}
+.lesson-row[data-archived] .lesson-summary strong {
+  color: var(--text-muted);
+}
+
+.lesson-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-sunken);
+}
+/* Case a cocher et libelle sur une ligne, dans ces seuls formulaires : la
+   regle generale des `label` reste celle des autres pages. */
+.lesson-settings label.row,
+.group-picker label.row {
+  flex-direction: row;
+}
+.group-picker,
+.option-list {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.group-picker legend,
+.option-list legend {
+  padding: 0 4px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.lesson-meta .field {
+  flex: 1 1 180px;
+}
+.language-add,
+.block-type {
+  width: auto;
+  min-width: 180px;
+}
+
+/* L'editeur a gauche, l'apercu a droite ; l'un sous l'autre quand la place
+   manque. */
+.lesson-editor {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: 20px;
+  align-items: start;
+}
+@media (max-width: 1100px) {
+  .lesson-editor {
+    grid-template-columns: 1fr;
+  }
+}
+
+.block-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.block-card[draggable="true"] {
+  cursor: grab;
+}
+.block-card[data-dragging] {
+  opacity: 0.5;
+  border-style: dashed;
+  border-color: var(--accent);
+}
+.option-row {
+  flex-wrap: nowrap;
+}
+.option-row input:not([type="radio"]) {
+  flex: 1 1 auto;
+}
+
+.preview-column {
+  position: sticky;
+  top: 16px;
+}
+.lesson-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+}
+.lesson-preview p {
+  white-space: pre-wrap;
+}
+.preview-muted {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.preview-block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.preview-block[data-type="tip"],
+.preview-block[data-type="takeaway"] {
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: var(--accent-soft);
+}
+.preview-block[data-type="warning"] {
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: var(--danger-soft);
+}
+.preview-comparison {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.preview-comparison > div {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+}
+.preview-comparison small {
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.preview-comparison > p {
+  grid-column: 1 / -1;
+}
+.preview-callout {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+}
+.preview-callout ul {
+  margin: 0;
+  padding-left: 18px;
+}
+.preview-callout li[data-correct] {
+  font-weight: 500;
+  color: var(--ok);
+}
+.problem-list {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
