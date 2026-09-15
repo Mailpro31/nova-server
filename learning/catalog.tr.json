@@ -1,0 +1,1096 @@
+{
+  "catalog_version": 2,
+  "locale": "tr",
+  "paths": [
+    {
+      "id": "getting-started",
+      "pillar": "learn_ai",
+      "title": "İyi bir başlangıç",
+      "description": "Yapay zekânın neyi iyi yaptığı, nerede yanıldığı ve onunla nasıl çalışılacağı.",
+      "icon": "brain",
+      "order": 1,
+      "tags": [
+        "general"
+      ],
+      "modules": [
+        {
+          "id": "getting-started-foundations",
+          "title": "Temeller",
+          "description": "Yapay zekâyı ilk günden itibaren sağduyuyla kullanmaya yetecek kadar.",
+          "order": 1,
+          "lessons": [
+            {
+              "id": "working-with-ai",
+              "title": "Yapay zekâ ile çalışmak",
+              "description": "Yapay zekânın neyi yapıp neyi yapamayacağını anla.",
+              "estimated_minutes": 3,
+              "difficulty": "beginner",
+              "order": 1,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "idea",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "heading": "Yapay zekâ temelleri",
+                    "body": "Yapay zekâ hızla faydalı seçenekler üretebilir, ancak akıcı bir metin yanıtın doğru olduğunu kanıtlamaz."
+                  }
+                },
+                {
+                  "id": "scenario",
+                  "type": "example",
+                  "order": 2,
+                  "content": {
+                    "label": "Bir durum",
+                    "body": "Bir yapay zekâ asistanı, bir havacılık ve uzay projesi için bir tasarım seçeneği önerip bunu kendinden emin biçimde sunuyor."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 3,
+                  "content": {
+                    "question": "Burada yapay zekânın en faydalı rolü nedir?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Mühendislik kararının yerine geçmek."
+                      },
+                      {
+                        "id": "b",
+                        "label": "Bir mühendisin değerlendireceği aday bir çözüm sunmak."
+                      },
+                      {
+                        "id": "c",
+                        "label": "Açıklama teknik göründüğü için seçimi onaylamak."
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "Yapay zekâyı inceleyebileceğin seçenekleri genişletmek için kullan. Varsayımlar, kanıtlar ve nihai karar için sorumluluk mühendislik muhakemesinde kalır."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 4,
+                  "content": {
+                    "body": "Yapay zekâyı incelediğiniz seçenekleri çoğaltmak için kullanın. Karar ve gerekçeleri sizde kalır."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "what-an-llm-does",
+              "title": "Bir LLM gerçekte ne yapar",
+              "description": "Metin tahmin eder. Bu tek gerçek, davranışının büyük kısmını açıklar.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 2,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Bir dil modeli bir şeyi aramaz ve bir insan gibi akıl yürütmez. Sırada makul olarak hangi metnin geleceğini tahmin eder. Bu sistemlerle ilgili şaşırtıcı olan neredeyse her şey bu tek cümleden kaynaklanır."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Büyük ölçekte eğitilmiş tahmin",
+                    "body": "Eğitim sırasında model muazzam miktarda metin gördü ve onu sürdürmekte çok iyi hale geldi. Hiçbir şey bir veritabanında olgu olarak saklanmaz. Öğrendiği şey, hangi kelimelerin hangilerini izleme eğiliminde olduğudur – dil bilgisinde, bir argümanın yapısında, kodda ve kurallarda.\n\nBu yüzden hiçbir şekilde bilemeyeceği şeyler hakkında akıcı yazar ve bu yüzden akıcılık doğruluğun kanıtı değildir."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "Bunu bilmek neden işe yarar",
+                    "body": "İyi bilinen bir formülü isterseniz genellikle doğru alırsınız – eğitim metinlerinde defalarca geçmiştir.\n\nBelirli bir baskıdaki bir alıntının sayfa numarasını isterseniz kendinden emin, uydurulmuş bir numara alabilirsiniz. Bu makul bir devamdır. Hiçbir zaman bir arama olmadı."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 4,
+                  "content": {
+                    "question": "Bir model neden akıcı ama yanlış bir yanıt yazabilir?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Akıcılık ve doğruluk aynı süreçten gelir – makul devam"
+                      },
+                      {
+                        "id": "b",
+                        "label": "Belleği tükendi"
+                      },
+                      {
+                        "id": "c",
+                        "label": "Kötü dil bilgisiyle eğitildi"
+                      }
+                    ],
+                    "correct_option_id": "a",
+                    "explanation": "Doğru görünmek ve doğru olmak aynı mekanizmadan gelir. Bu yüzden bir yanıtın üslubu, doğruluğu hakkında hiçbir şey söylemez."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 5,
+                  "content": {
+                    "body": "Metin tahmin eder. Kendinden eminlik yazının bir özelliğidir, olguların değil."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "context-and-tokens",
+              "title": "Bağlam ve token'lar",
+              "description": "Uzun konuşmalar neden kayar ve model gerçekte neyi görebilir.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 3,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Uzun bir konuşmanın ortasında model, başta koyduğunuz bir koşulu unutur. Dikkatsizlik etmiyor. Aynı anda görebileceklerinin bir sınırı var ve siz onu aştınız."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Token'lar ve pencere",
+                    "body": "Metin token'lara bölünür – kabaca kelime parçalarına. İngilizcede bir token çoğu zaman bir kelimenin yaklaşık dörtte üçüdür. Modelin aynı anda dikkate aldığı her şey, sizin mesajlarınız ve kendi yanıtları birlikte, sabit boyutlu bir bağlam penceresine sığmalıdır.\n\nKonuşma bunu aştığında en eski kısımlar görünmez olur. Model bir konuşmayı hatırlamaz; hâlâ sığan kısmı yeniden okur."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "Bu, pratikte neyi değiştirir",
+                    "body": "Bir kural önemliyse – “her zaman Türkçe yanıt ver”, “asla 200 kelimeyi geçme” – yirmi mesajlaşmadan sağ çıktığına güvenmek yerine onu önemli olduğu mesajda yeniden belirtin.\n\nKonuşma çok kaydıysa, net bir özetle yeni bir konuşma başlatmak genellikle kalabalıklaşmış bir konuşmayı sürdürmekten daha iyidir."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 4,
+                  "content": {
+                    "question": "Uzun bir konuşma, baştaki bir talimata uymayı bırakıyor. En olası neden nedir?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Talimat bağlam penceresinin dışına çıktı"
+                      },
+                      {
+                        "id": "b",
+                        "label": "Model sizi görmezden gelmeye karar verdi"
+                      },
+                      {
+                        "id": "c",
+                        "label": "Talimat dil bilgisi açısından yanlıştı"
+                      }
+                    ],
+                    "correct_option_id": "a",
+                    "explanation": "Artık pencerede olmayan şey hiç söylenmemiş sayılır. Koşulu önemli olduğu yerde yeniden belirtin."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 5,
+                  "content": {
+                    "body": "Model bir bellek değil, bir pencere görür. Önemli olanı yeniden belirtin ve konuşma kalabalıklaştığında yeniden başlayın."
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "asking-well",
+      "pillar": "use_ai",
+      "title": "Doğru sormak",
+      "description": "Daha iyi sorarak daha iyi yanıtlar almak.",
+      "icon": "message-square",
+      "order": 2,
+      "tags": [
+        "general"
+      ],
+      "modules": [
+        {
+          "id": "use-ai-foundations",
+          "title": "Yanıtı değiştiren alışkanlıklar",
+          "description": "Aldığınız yanıtı değiştiren üç alışkanlık.",
+          "order": 1,
+          "lessons": [
+            {
+              "id": "ask-better-questions",
+              "title": "Daha iyi sorular sormak",
+              "description": "Ne istediğinizi, kimin için ve hangi biçimde istediğinizi söyleyin.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 1,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Bir özet istiyorsunuz. Geriye zaten yeniden yazmanız gereken üç sıradan paragraf geliyor. Model başarısız olmadı – ona iyi bir yanıtın nasıl görüneceği hiç söylenmedi."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Bir isteğin üç parçası vardır",
+                    "body": "Yararlı bir istek görevi, okuru ve yanıtın biçimini belirtir. Herhangi birini çıkarırsanız model boşluğu ortalama bir tahminle doldurur. Görev ne yapılacağını söyler. Okur kelime seçimini ve ayrıntı düzeyini belirler. Biçim – uzunluk, format, neyin korunacağı – sonucu yeniden yazmaktan sizi kurtaran şeydir."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "comparison",
+                  "order": 3,
+                  "content": {
+                    "worse_label": "Belirsiz",
+                    "worse": "Bunu özetle.",
+                    "better_label": "Net",
+                    "better": "Bu metni konuya yeni başlayan biri için 5 madde halinde özetle. Önemli rakamları koru ve akılda tutulmaya değer 2 fikirle bitir.",
+                    "note": "İkinci sürüm görevi, okuru ve biçimi belirtir. Zekice bir yanı yok – yalnızca eksiksiz."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 4,
+                  "content": {
+                    "question": "“Bu e-postayı daha kısa olacak şekilde yeniden yaz” isteğinde hangi parça eksik?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Görev"
+                      },
+                      {
+                        "id": "b",
+                        "label": "Okur"
+                      },
+                      {
+                        "id": "c",
+                        "label": "Hiçbir şey eksik değil"
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "Görev ve biçim var. Kimin okuyacağı – bir müşteri, yöneticiniz, bir iş arkadaşınız – tonu belirler ve model bunu tahmin etmek zorunda kalır."
+                  }
+                },
+                {
+                  "id": "try-it",
+                  "type": "prompt_exercise",
+                  "order": 5,
+                  "content": {
+                    "instruction": "Bu isteği görevi, okuru ve biçimi belirtecek şekilde yeniden yazın.",
+                    "starting_text": "Makine öğrenmesini açıkla.",
+                    "hint": "Kim okuyor? Ne uzunlukta olmalı? Yanıt ne içermeli?",
+                    "sample_answer": "Makine öğrenmesini teknik geçmişi olmayan bir iş arkadaşıma 150 kelimeden kısa, gündelik bir örnekle ve jargon kullanmadan açıkla."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "Görev, okur, biçim. Bir yanıt hayal kırıklığı yarattığında üçünden biri eksikti."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "give-useful-context",
+              "title": "Yararlı bağlam vermek",
+              "description": "Modelin bilmesi gerekenler ve yalnızca gürültü katanlar.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 2,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Model projeniz, ekibiniz ya da geçen hafta aldığınız karar hakkında hiçbir şey bilmez. Önündekine göre yanıt verir – ve atladığınız her şey için makul bir yedek uydurur."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Bağlam, yanıtı değiştiren şeydir",
+                    "body": "Yararlı bağlam, yetkin birinin yanıtını değiştirecek her şeydir: kısıtlar, hedef kitle, zaten denediğiniz şeyler, uymanız gereken format. Geri kalan her şey gürültüdür. Önemli olan üç cümleyken bütün bir belgeyi yapıştırmak yanıtı iyileştirmez – gerçekte istediğinizi sulandırır."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "Aynı soru, farklı bağlam",
+                    "body": "“Bu iyi bir tasarım mı?” genel bir kontrol listesi alır.\n\n“Bu, her hafta sürüm çıkaran ve özel bir operasyon mühendisi olmayan üç kişilik bir ekip için iyi bir tasarım mı?” işletme maliyetiyle ilgili bir yanıt alır – çünkü kısıt belirtilmiştir."
+                  }
+                },
+                {
+                  "id": "warning",
+                  "type": "warning",
+                  "order": 4,
+                  "content": {
+                    "body": "Bağlam, sır yapıştırılacak bir yer değildir. Kimlik bilgileri, başkalarına ait kişisel veriler ve gizli belgeler yararlı oldukları için güvenli hale gelmez."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 5,
+                  "content": {
+                    "question": "Bir iş başvurusu hakkında görüş istiyorsunuz. Hangi ayrıntıyı eklemeye değer?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Pozisyon ve ilanın istedikleri"
+                      },
+                      {
+                        "id": "b",
+                        "label": "Tam adresiniz ve doğum tarihiniz"
+                      },
+                      {
+                        "id": "c",
+                        "label": "Yazmaya başladığınız tarih"
+                      }
+                    ],
+                    "correct_option_id": "a",
+                    "explanation": "Pozisyon yanıtı değiştirir. Adresiniz değiştirmez – ve orada bulunması için hiçbir neden olmayan kişisel bir veridir."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "Yetkin birinin yanıtını değiştirecek olanı ekleyin. Gerisini dışarıda bırakın ve saklanmasını istemeyeceğiniz hiçbir şeyi yapıştırmayın."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "iterate-instead-of-restarting",
+              "title": "Baştan başlamak yerine düzeltmek",
+              "description": "Asıl değer ikinci mesajdadır.",
+              "estimated_minutes": 3,
+              "difficulty": "beginner",
+              "order": 3,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Yanıt neredeyse doğru. Çoğu kişi onu silip isteğin tamamını yeniden yazar. Böylece işe yarayan kısmı da çöpe atar."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Düzeltin, baştan başlamayın",
+                    "body": "İlk yanıtı konuşarak düzenleyebileceğiniz bir taslak gibi görün. Önce neyin kalacağını, sonra neyin değişeceğini söyleyin. “Yapıyı koru, ikinci maddeyi somutlaştır, son paragrafı çıkar” sizi tek adımda hedefe götürür. Baştan başlamak zarları yeniden atmaktır."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "comparison",
+                  "order": 3,
+                  "content": {
+                    "worse_label": "Baştan başlamak",
+                    "worse": "İstediğim bu değildi. Bana daha iyi bir özet yaz.",
+                    "better_label": "Düzeltmek",
+                    "better": "Yapı iyi. 2. madde fazla soyut – onu metindeki gerçek rakamla değiştir. Kapanış paragrafını çıkar.",
+                    "note": "İkincisi işe yarayanı korur. Birincisi modelden, öncekinden fazla bilgi vermeden yeniden tahmin etmesini ister."
+                  }
+                },
+                {
+                  "id": "tip",
+                  "type": "tip",
+                  "order": 4,
+                  "content": {
+                    "body": "İki düzeltme turu sonuç vermiyorsa sorun genellikle yanıtta değil, ilk istektedir. Geri dönün ve eksik olanı ekleyin."
+                  }
+                },
+                {
+                  "id": "practice",
+                  "type": "prompt_exercise",
+                  "order": 5,
+                  "content": {
+                    "instruction": "Aldığınız yanıt fazla resmî ve fazla uzun. Düzeltmeyi yazın – isteği yeniden yazmayın.",
+                    "starting_text": "",
+                    "hint": "Korunacak bir şey ve değiştirilecek iki şey belirtin.",
+                    "sample_answer": "Üç bölümü koru. Yaklaşık yarı uzunluğa indir ve bir müşteriyle değil, bir iş arkadaşınla konuşurken kullanacağın tonu kullan."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "Neyin değişeceğini söylemeden önce neyin kalacağını söyleyin. Baştan başlamak zaten işe yarayan kısmı çöpe atar."
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "verify-and-protect",
+      "pillar": "learn_ai",
+      "title": "Doğrulamak ve korumak",
+      "description": "Önemli olanı doğrulamak ve hassas bilgileri korumak.",
+      "icon": "shield-check",
+      "order": 3,
+      "tags": [
+        "general"
+      ],
+      "modules": [
+        {
+          "id": "verify-and-protect-foundations",
+          "title": "Güven ama doğrula",
+          "description": "Yanıtların nerede yanıldığı ve asla neyin paylaşılmaması gerektiği.",
+          "order": 1,
+          "lessons": [
+            {
+              "id": "why-ai-hallucinates",
+              "title": "Yapay zekâ neden halüsinasyon görebilir",
+              "description": "Ve hangi yanıtların kontrol edilmeyi hak ettiği nasıl anlaşılır.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 1,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Halüsinasyon bir arıza değildir. Sistemin tam olarak yaptığı şeyi – makul bir devam üretmeyi – makul olanla doğru olanın ayrıldığı bir yerde yapmasıdır."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Riskin toplandığı yer",
+                    "body": "Uydurma en çok metnin belirli ve doğrulanabilir ama nadir olduğu yerde görülür: tam alıntılar, sayfa numaraları, istatistikler, hukuki atıflar, API yöntemleri, kişilerin biyografileri. Model bu tür şeylerin biçimini binlerce kez gördüğü için istendiğinde ikna edici bir tane üretebilir.\n\nEn az olası olduğu durum, yanıtın genel bilgi olması ya da kaynak metni sizin sağlamanızdır."
+                  }
+                },
+                {
+                  "id": "tip",
+                  "type": "tip",
+                  "order": 3,
+                  "content": {
+                    "body": "“Kaynağın ne?” diye sormak tek başına işe yaramaz – kaynak da uydurulmuş olabilir. Kaynağı kontrol etmek işe yarar."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 4,
+                  "content": {
+                    "question": "Hangi yanıt doğrulanmayı en çok hak ediyor?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Sizin yapıştırdığınız bir paragrafın yeniden yazımı"
+                      },
+                      {
+                        "id": "b",
+                        "label": "Yılı ve yüzdesiyle belirli bir istatistik"
+                      },
+                      {
+                        "id": "c",
+                        "label": "Bir takım adı için fikir listesi"
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "Belirli, doğrulanabilir ve sizin sağlamadığınız – makul bir uydurmanın fark edilmesi tam da orada en zordur."
+                  }
+                },
+                {
+                  "id": "reflection",
+                  "type": "reflection",
+                  "order": 5,
+                  "content": {
+                    "prompt": "Yapay zekâyı kullandığınız bir görevi düşünün. Yanıtının hangi kısmı sessizce yanlış olsaydı gerçek bir soruna yol açardı?",
+                    "hint": "Her seferinde kontrol edilecek kısım işte orasıdır."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "Belirli, doğrulanabilir ve sizden gelmeyen şeyleri kontrol edin. Hiçbir şeye yalnızca emin göründüğü için güvenmeyin."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "verify-output",
+              "title": "Çıktıyı doğrula",
+              "description": "Hesaplamaları, kaynakları, iddiaları ve varsayımları kontrol et.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 2,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "idea",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "heading": "Doğrulama",
+                    "body": "Doğrulama ayrı bir mühendislik adımıdır. Aynı modele emin olup olmadığını sormak bağımsız bir kontrol değildir."
+                  }
+                },
+                {
+                  "id": "scenario",
+                  "type": "example",
+                  "order": 2,
+                  "content": {
+                    "label": "Bir durum",
+                    "body": "Bir yapay zekâ, yapısal analiz için sana bir yük hesabı veriyor."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 3,
+                  "content": {
+                    "question": "Kullanmadan önce ne yapmalısın?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Birimler gösterildiği için doğrudan kullanmak."
+                      },
+                      {
+                        "id": "b",
+                        "label": "Varsayımları, birimleri ve hesaplamaları bağımsız olarak doğrulamak."
+                      },
+                      {
+                        "id": "c",
+                        "label": "Yapay zekâya emin olup olmadığını sormak."
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "Sonuca güvenmeden önce yük durumunu, birimleri, denklemleri ve sınır koşullarını güvenilir yöntemler veya kaynaklarla kontrol et."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 4,
+                  "content": {
+                    "body": "Dayandığınız şeyi, modelin kontrol etmediği bir yöntem ya da kaynakla doğrulayın. Modele yeniden sormak doğrulama değildir."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "confidential-information",
+              "title": "Gizli bilgiler",
+              "description": "Yetkisiz bir sisteme nelerin gönderilmemesi gerektiğini bil.",
+              "estimated_minutes": 3,
+              "difficulty": "beginner",
+              "order": 3,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "idea",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "heading": "Gizlilik",
+                    "body": "Yalnızca aracın ve kurumunun işlemeye yetkili olduğu verileri paylaş."
+                  }
+                },
+                {
+                  "id": "scenario",
+                  "type": "example",
+                  "order": 2,
+                  "content": {
+                    "label": "Bir durum",
+                    "body": "Bir proje belgesinde öğrenci kimlik numaraları, tedarikçi verileri ve dahili bir erişim belirteci var."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 3,
+                  "content": {
+                    "question": "Sorumlu bir sonraki adım nedir?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Görev akademik olduğu için her şeyi yapıştırmak."
+                      },
+                      {
+                        "id": "b",
+                        "label": "Yalnızca öğrenci adlarını kaldırmak."
+                      },
+                      {
+                        "id": "c",
+                        "label": "Onaylı bir sistem kullanmak ve gizli anahtarları, gereksiz kişisel veya gizli verileri kaldırmak."
+                      }
+                    ],
+                    "correct_option_id": "c",
+                    "explanation": "Hem yetki hem de veri azaltımı önemlidir. Kimlik bilgileri asla eklenmemeli, gereksiz hassas bağlam da çıkarılmalıdır."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 4,
+                  "content": {
+                    "body": "Yalnızca aracın işlemeye yetkili olduğu şeyleri paylaşın, sırları ve gereksiz kişisel verileri çıkarın ve asla kimlik bilgisi yapıştırmayın."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "responsible-use",
+              "title": "Sorumlu kullanım",
+              "description": "Yapay zekâ kullanımının ne zaman uygun, sınırlı ya da yasak olduğunu fark et.",
+              "estimated_minutes": 3,
+              "difficulty": "beginner",
+              "order": 4,
+              "version": 1,
+              "tags": [
+                "general",
+                "student"
+              ],
+              "blocks": [
+                {
+                  "id": "idea",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "heading": "Sorumlu uygulama",
+                    "body": "Doğru kullanım; göreve, dersin kurallarına, aracın yetkisine ve gereken insan sorumluluğu düzeyine bağlıdır."
+                  }
+                },
+                {
+                  "id": "scenario",
+                  "type": "example",
+                  "order": 2,
+                  "content": {
+                    "label": "Bir durum",
+                    "body": "Notlandırılan bir ödevin kuralları, üretken yapay zekâ desteği konusunda net değil."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 3,
+                  "content": {
+                    "question": "Ne yapmalısın?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Muhtemelen herkes kullanıyor diye yapay zekâyı gizlice kullanmak."
+                      },
+                      {
+                        "id": "b",
+                        "label": "Son teslimi yapay zekâya hazırlatıp birkaç kelimeyi değiştirmek."
+                      },
+                      {
+                        "id": "c",
+                        "label": "Ders politikasını kontrol etmek, belirsizse sormak ve izin verilen desteği belirtmek."
+                      }
+                    ],
+                    "correct_option_id": "c",
+                    "explanation": "Sorumlu kullanım, öğrenme hedefine ve belirlenen kurallara saygı gösterir. Politika belirsizse yapay zekâya güvenmeden önce netleştir."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 4,
+                  "content": {
+                    "body": "Yapay zekâyı kullanmadan önce görevin kurallarını öğrenin, belirsizse sorun ve hangi yardımı kullandığınızı belirtin."
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "adapt-to-your-field",
+      "pillar": "adapt_ai",
+      "title": "Alanınıza uyarlamak",
+      "description": "Yapay zekâ işinize uysun, tersi değil.",
+      "icon": "settings-2",
+      "order": 4,
+      "tags": [
+        "general",
+        "student",
+        "engineering",
+        "marketing",
+        "developer",
+        "creator",
+        "management"
+      ],
+      "modules": [
+        {
+          "id": "adapt-ai-foundations",
+          "title": "İşinize göre ayarlamak",
+          "description": "Tek seferlik yanıtlardan yeniden kullanılabilir bir şeye.",
+          "order": 1,
+          "lessons": [
+            {
+              "id": "an-assistant-for-your-work",
+              "title": "Yapay zekâyı iş ya da ders asistanına dönüştürmek",
+              "description": "Durumunuzu bir kez anlatın ve tekrarlamayı bırakın.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 1,
+              "version": 1,
+              "tags": [
+                "general",
+                "student",
+                "management"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Çoğu kişi her istekte kim olduğunu ve ne üzerinde çalıştığını yeniden açıklar. Gerçekten zaman kazandıran asistan, bir kez tarif ettiğiniz asistandır."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Kalıcı bir talimat",
+                    "body": "Kalıcı bir talimat, birçok istekte geçerliliğini koruyan üç dört cümledir: rolünüz, genellikle kimin için yazdığınız, istediğiniz ton ve asla istemediğiniz şeyler. Bir kez yazıldığında sonraki her isteği kısaltır.\n\nNova'da bir stil tam da bunun içindir: talimat tek bir yerde durur ve onu her seçtiğinizde uygulanır."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "Kalıcı bir talimat",
+                    "body": "“Mühendislik ikinci sınıf öğrencisiyim. Uzunluktan çok kesinliğe önem veren bir hoca için laboratuvar raporları yazıyorum. Sade ve teknik bir Türkçe kullan. Asıl metni tekrarlayan giriş ya da sonuç paragraflarıyla asla dolgu yapma.”\n\nArtık sonraki her istek on satır yerine iki satır olabilir."
+                  }
+                },
+                {
+                  "id": "practice",
+                  "type": "prompt_exercise",
+                  "order": 4,
+                  "content": {
+                    "instruction": "Kendi kalıcı talimatınızı üç ya da dört cümleyle yazın.",
+                    "starting_text": "",
+                    "hint": "Rol, olağan hedef kitle, ton ve asla istemediğiniz bir şey.",
+                    "sample_answer": "Mühendisler ve tasarımcılar için yazan bir ürün yöneticisiyim. Somut ve kısa ol; sıfatlar yerine örnekleri tercih et. Asla az önce sorduğumun özetiyle başlama."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 5,
+                  "content": {
+                    "body": "Durumunuzu bir kez, kalıcı bir yerde anlatın. Sonra her istek kısalır."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "build-a-reusable-workflow",
+              "title": "Yeniden kullanılabilir bir iş akışı kurmak",
+              "description": "Tekrarladığınız bir görevi çalıştırılacak bir şeye dönüştürün.",
+              "estimated_minutes": 4,
+              "difficulty": "intermediate",
+              "order": 2,
+              "version": 1,
+              "tags": [
+                "general",
+                "engineering",
+                "marketing",
+                "developer"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Neredeyse aynı isteği üç kez yazdıysanız, elinizde artık bir istek yok. Henüz yazıya dökmediğiniz bir iş akışınız var."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Sabit talimat, değişken girdi",
+                    "body": "Bir iş akışı, hiç değişmeyen kısmı değişen kısımdan ayırır. Talimat – ne yapılacağı, kimin için, hangi biçimde, neyin kontrol edileceği – sabittir. Verdiğiniz metin her seferinde değişir.\n\nAyrıldıktan sonra sabit kısım kaydedilip yeniden kullanılabilir ve onu her seferinde ezberden yeniden yazdığınızda kaymayı bırakır."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "comparison",
+                  "order": 3,
+                  "content": {
+                    "worse_label": "Her seferinde yeniden yazılan",
+                    "worse": "Şu toplantı notlarına bakıp yapmam gerekenleri çıkarabilir misin?",
+                    "better_label": "Bir iş akışı",
+                    "better": "Aşağıdaki notlardan yalnızca bana atanan işleri çıkar. Her iş için bir satır, bir fiille başlayarak, belirtildiyse son tarihiyle. Bana atanmış bir iş yoksa bunu söyle ve dur.",
+                    "note": "İkincisi kaydetmeye değer. Bulunacak bir şey olmadığında ne yapılacağını da söyler – yeniden yazılan sürümün sessizce iş uydurduğu yer tam orasıdır."
+                  }
+                },
+                {
+                  "id": "tip",
+                  "type": "tip",
+                  "order": 4,
+                  "content": {
+                    "body": "Bir iş akışına girdi uymadığında ne yapacağını her zaman söyleyin. O tek cümle uydurulmuş sonuçların çoğunu önler."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 5,
+                  "content": {
+                    "question": "Bir iş akışının sabit kısmına ne girer?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Bu sefer işlenecek metin"
+                      },
+                      {
+                        "id": "b",
+                        "label": "İyi bir sonucun nasıl olacağına dair kurallar"
+                      },
+                      {
+                        "id": "c",
+                        "label": "Bugünün tarihi"
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "Kurallar, yeniden yazmaktan kurtulmak istediğiniz şeydir. Girdi ise değişen şeydir."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "Sabit talimatı değişen girdiden ayırın ve bulunacak bir şey olmadığında ne yapılacağını söyleyin."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "adapt-ai-to-your-domain",
+              "title": "Yapay zekâyı alanınıza uyarlamak",
+              "description": "Alanınızın beklediği terimler, kurallar ve kontroller.",
+              "estimated_minutes": 5,
+              "difficulty": "intermediate",
+              "order": 3,
+              "version": 1,
+              "tags": [
+                "engineering",
+                "marketing",
+                "developer",
+                "creator",
+                "student",
+                "management"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Genel bir yanıt geneldir, çünkü istekte hangi alanda olduğunuzu söyleyen hiçbir şey yoktu. Alanınızın bir terminolojisi, kuralları ve bir kanıt standardı vardır – ve bunların hiçbiri dışarıdan açık değildir."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Alanınızın beklediği üç şey",
+                    "body": "Kullandığınız terimleri belirtin, böylece yanıt başkasının terimlerine çevrilmez. İzlediğiniz kuralı belirtin – bir rapor yapısı, bir commit stili, bir kurum dili. Ve kontrolü belirtin: bir yanıtı alanınızda yalnızca makul değil, kabul edilebilir kılan şey.\n\nÜçüncüsü çoğu kişinin atladığı şeydir ve en çok işi gören de odur."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "Üç alanda aynı istek",
+                    "body": "Mühendislik: “Her rakamın arkasındaki varsayımı belirt. Bir değer ölçülmek yerine tahmin edildiyse işaretle.”\n\nPazarlama: “Kurum dilimize uy: doğrudan, abartısız. Karşılaştırabilmemiz için iki seçenek ver.”\n\nYazılım geliştirme: “Dosyada zaten var olan kurallara uy. Bir yaklaşım elimizde olmayan bir bağımlılık gerektiriyorsa eklemek yerine bunu söyle.”"
+                  }
+                },
+                {
+                  "id": "ai-practice",
+                  "type": "ai_exercise",
+                  "order": 4,
+                  "content": {
+                    "exercise_id": "adapt-domain-request",
+                    "instruction": "Kendi alanınızdan bir görev için bir istek yazın. Terimleri, kuralı ve bir yanıtı kabul edilebilir kılan kontrolü belirtin.",
+                    "starting_text": "",
+                    "hint": "Kontrol, çoğu kişinin unuttuğu kısımdır: aksi halde makul olan bir yanıtı reddetmenize ne sebep olurdu?"
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 5,
+                  "content": {
+                    "body": "Terimler, kural ve alanınızın uyguladığı kontrol. Makul bir yanıtı kullanılabilir bir yanıta dönüştüren şey kontroldür."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "ai-in-engineering",
+              "title": "Mühendislikte yapay zekâ",
+              "description": "Yapay zekâyı düşünmenin yerine değil, bir araç olarak kullan.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 4,
+              "version": 1,
+              "tags": [
+                "engineering",
+                "student"
+              ],
+              "blocks": [
+                {
+                  "id": "idea",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "heading": "Mühendislik için yapay zekâ",
+                    "body": "Yapay zekâ, sorumluluk mühendiste kaldığında keşif, taslak hazırlama ve eleştiri için en güçlü yardımcıdır."
+                  }
+                },
+                {
+                  "id": "scenario",
+                  "type": "example",
+                  "order": 2,
+                  "content": {
+                    "label": "Bir durum",
+                    "body": "Küçük bir uydunun alt sistemi için iki konsepti karşılaştırıyorsun."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 3,
+                  "content": {
+                    "question": "Hangi çalışma akışı yapay zekâdan en iyi şekilde yararlanır?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Konsepti yapay zekânın seçmesine izin vermek ve gerekçesini kopyalamak."
+                      },
+                      {
+                        "id": "b",
+                        "label": "Ödünleşimleri ortaya çıkarmak için kullanmak, sonra kısıtları doğrulayıp kararı belgelemek."
+                      },
+                      {
+                        "id": "c",
+                        "label": "Rapor kısa kalsın diye varsayımları belgelememek."
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "Yapay zekâ mühendislik muhakemesini güçlendirir. Doğrulamanın, izlenebilirliğin ve hesap verebilirliğin yerini tutmaz."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 4,
+                  "content": {
+                    "body": "Yapay zekânın seçenekleri ve ödünleşimleri ortaya koymasına izin verin; sonra bunları doğrulayın, varsayımlarınızı belgeleyin ve kararın sorumluluğunu üstlenin."
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "exercises": [
+    {
+      "id": "adapt-domain-request",
+      "task": "learning_feedback",
+      "instruction": "You are helping someone learn to write better requests to an AI assistant. They were asked to write a request for a task in their own professional or academic field, naming three things: the vocabulary of their field, the convention they follow, and the check that makes an answer acceptable rather than merely reasonable.\n\nRead their attempt and reply in at most four short sentences. Say plainly which of the three are present and which are missing. Then give one concrete improvement, rewriting a fragment of their own request rather than replacing it with yours. Do not score them, do not use percentages, and do not praise without a reason. If their request is already complete, say so and name the strongest part.\n\nReply in the language they wrote in."
+    }
+  ]
+}

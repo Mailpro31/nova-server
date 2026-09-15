@@ -1,0 +1,1096 @@
+{
+  "catalog_version": 2,
+  "locale": "it",
+  "paths": [
+    {
+      "id": "getting-started",
+      "pillar": "learn_ai",
+      "title": "Iniziare bene",
+      "description": "Che cosa l'IA fa bene, dove sbaglia e come lavorarci.",
+      "icon": "brain",
+      "order": 1,
+      "tags": [
+        "general"
+      ],
+      "modules": [
+        {
+          "id": "getting-started-foundations",
+          "title": "Le basi",
+          "description": "Quanto basta per usare l'IA con giudizio fin dal primo giorno.",
+          "order": 1,
+          "lessons": [
+            {
+              "id": "working-with-ai",
+              "title": "Lavorare con l'IA",
+              "description": "Capisci cosa l'IA può e non può fare.",
+              "estimated_minutes": 3,
+              "difficulty": "beginner",
+              "order": 1,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "idea",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "heading": "Principi dell'IA",
+                    "body": "L'IA può generare rapidamente opzioni utili, ma un testo scorrevole non dimostra che una risposta sia corretta."
+                  }
+                },
+                {
+                  "id": "scenario",
+                  "type": "example",
+                  "order": 2,
+                  "content": {
+                    "label": "Una situazione",
+                    "body": "Un assistente di IA propone una scelta progettuale per un progetto aerospaziale e la presenta con sicurezza."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 3,
+                  "content": {
+                    "question": "Qual è qui il ruolo più utile dell'IA?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Sostituire la decisione ingegneristica."
+                      },
+                      {
+                        "id": "b",
+                        "label": "Fornire una soluzione candidata che un ingegnere valuterà."
+                      },
+                      {
+                        "id": "c",
+                        "label": "Approvare la scelta perché la spiegazione sembra tecnica."
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "Usa l'IA per ampliare le opzioni che puoi esaminare. Il giudizio ingegneristico resta responsabile di ipotesi, prove e decisione finale."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 4,
+                  "content": {
+                    "body": "Usa l'IA per ampliare le opzioni da esaminare. La decisione, e le sue ragioni, restano tue."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "what-an-llm-does",
+              "title": "Che cosa fa davvero un LLM",
+              "description": "Prevede testo. Questo solo fatto spiega quasi tutto il suo comportamento.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 2,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Un modello linguistico non cerca informazioni e non ragiona come una persona. Prevede quale testo viene plausibilmente dopo. Quasi tutto ciò che sorprende di questi sistemi deriva da questa frase."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Previsione, addestrata su larga scala",
+                    "body": "Durante l'addestramento il modello ha visto enormi quantità di testo ed è diventato molto bravo a continuarlo. Nulla viene memorizzato come fatto in un database. Ciò che ha imparato è quali parole tendono a seguire quali altre: nella grammatica, nella struttura di un ragionamento, nel codice e nelle convenzioni.\n\nPer questo scrive con scioltezza di cose che non ha modo di sapere, e per questo la scioltezza non è una prova di accuratezza."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "Perché è utile saperlo",
+                    "body": "Chiedi una formula nota e di solito la otterrai corretta: compariva di continuo nei testi di addestramento.\n\nChiedi il numero di pagina di una citazione in un'edizione precisa e potresti ricevere un numero inventato con sicurezza. È una continuazione plausibile. Non è mai stata una ricerca."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 4,
+                  "content": {
+                    "question": "Perché un modello può scrivere una risposta scorrevole ma sbagliata?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Scioltezza e accuratezza nascono dallo stesso processo: la continuazione plausibile"
+                      },
+                      {
+                        "id": "b",
+                        "label": "Ha esaurito la memoria"
+                      },
+                      {
+                        "id": "c",
+                        "label": "È stato addestrato con una grammatica scorretta"
+                      }
+                    ],
+                    "correct_option_id": "a",
+                    "explanation": "Sembrare giusto ed essere giusto nascono dallo stesso meccanismo. Per questo lo stile di una risposta non dice nulla della sua verità."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 5,
+                  "content": {
+                    "body": "Prevede testo. La sicurezza è una proprietà della scrittura, non dei fatti."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "context-and-tokens",
+              "title": "Contesto e token",
+              "description": "Perché le conversazioni lunghe deviano e che cosa vede davvero il modello.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 3,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "A metà di una lunga conversazione il modello dimentica un vincolo che avevi posto all'inizio. Non è distrazione. Ciò che può vedere in una volta ha un limite, e tu l'hai superato."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "I token e la finestra",
+                    "body": "Il testo viene diviso in token, all'incirca frammenti di parole. In inglese un token corrisponde spesso a circa tre quarti di parola. Tutto ciò che il modello considera in una volta, i tuoi messaggi e le sue risposte insieme, deve stare in una finestra di contesto di dimensione fissa.\n\nQuando la conversazione la supera, le parti più vecchie smettono di essere visibili. Il modello non ricorda una conversazione: rilegge ciò che ci sta ancora."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "Che cosa cambia in pratica",
+                    "body": "Se una regola conta — «rispondi sempre in italiano», «mai più di 200 parole» — ripetila nel messaggio in cui conta, invece di contare sul fatto che sia sopravvissuta a venti scambi.\n\nE se la conversazione si è allontanata molto, ricominciare con un riassunto chiaro di solito funziona meglio che proseguire in una conversazione affollata."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 4,
+                  "content": {
+                    "question": "Una lunga conversazione smette di seguire un'istruzione data all'inizio. Qual è la causa più probabile?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "L'istruzione è uscita dalla finestra di contesto"
+                      },
+                      {
+                        "id": "b",
+                        "label": "Il modello ha deciso di ignorarti"
+                      },
+                      {
+                        "id": "c",
+                        "label": "L'istruzione era grammaticalmente sbagliata"
+                      }
+                    ],
+                    "correct_option_id": "a",
+                    "explanation": "Ciò che non è più nella finestra è come se non fosse mai stato detto. Ripeti il vincolo dove conta."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 5,
+                  "content": {
+                    "body": "Il modello vede una finestra, non una memoria. Ripeti ciò che conta e ricomincia quando la conversazione è affollata."
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "asking-well",
+      "pillar": "use_ai",
+      "title": "Chiedere bene",
+      "description": "Ottenere risposte migliori chiedendo meglio.",
+      "icon": "message-square",
+      "order": 2,
+      "tags": [
+        "general"
+      ],
+      "modules": [
+        {
+          "id": "use-ai-foundations",
+          "title": "Le abitudini che cambiano la risposta",
+          "description": "Le tre abitudini che cambiano la risposta che ottieni.",
+          "order": 1,
+          "lessons": [
+            {
+              "id": "ask-better-questions",
+              "title": "Fare domande migliori",
+              "description": "Di' che cosa vuoi, per chi e in quale forma.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 1,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Chiedi un riassunto. Ricevi tre paragrafi piatti che dovrai comunque riscrivere. Il modello non ha sbagliato: nessuno gli ha detto come sarebbe stata una buona risposta."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Una richiesta ha tre parti",
+                    "body": "Una richiesta utile indica il compito, il lettore e la forma della risposta. Se ne manca anche una, il modello riempie il vuoto con un'ipotesi media. Il compito dice che cosa fare. Il lettore stabilisce il lessico e il livello di dettaglio. La forma — lunghezza, formato, che cosa conservare — è ciò che ti evita di riscrivere il risultato."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "comparison",
+                  "order": 3,
+                  "content": {
+                    "worse_label": "Vaga",
+                    "worse": "Riassumi questo.",
+                    "better_label": "Precisa",
+                    "better": "Riassumi questo testo in 5 punti elenco per chi non conosce l'argomento. Conserva i dati importanti e chiudi con le 2 idee da ricordare.",
+                    "note": "La seconda versione indica compito, lettore e forma. Non ha nulla di ingegnoso: è semplicemente completa."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 4,
+                  "content": {
+                    "question": "Quale parte manca in «Riscrivi questa email per renderla più breve»?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Il compito"
+                      },
+                      {
+                        "id": "b",
+                        "label": "Il lettore"
+                      },
+                      {
+                        "id": "c",
+                        "label": "Non manca nulla"
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "Compito e forma ci sono. Chi la legge — un cliente, il tuo responsabile, un collega — decide il tono, e il modello deve indovinarlo."
+                  }
+                },
+                {
+                  "id": "try-it",
+                  "type": "prompt_exercise",
+                  "order": 5,
+                  "content": {
+                    "instruction": "Riscrivi questa richiesta in modo che indichi compito, lettore e forma.",
+                    "starting_text": "Spiega il machine learning.",
+                    "hint": "Chi legge? Quanto deve essere lunga? Che cosa deve contenere la risposta?",
+                    "sample_answer": "Spiega il machine learning a una collega senza formazione tecnica, in meno di 150 parole, con un esempio di vita quotidiana e senza gergo."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "Compito, lettore, forma. Quando una risposta delude, ne mancava una delle tre."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "give-useful-context",
+              "title": "Dare un contesto utile",
+              "description": "Che cosa deve sapere il modello e che cosa aggiunge solo rumore.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 2,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Il modello non sa nulla del tuo progetto, del tuo team o della decisione presa la settimana scorsa. Risponde a partire da ciò che ha davanti, e per tutto ciò che ometti inventa un sostituto plausibile."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Il contesto è ciò che cambia la risposta",
+                    "body": "Il contesto utile è tutto ciò che cambierebbe la risposta di una persona competente: vincoli, pubblico, ciò che hai già provato, il formato da rispettare. Il resto è rumore. Incollare un intero documento quando contano tre frasi non migliora la risposta: diluisce ciò che volevi davvero."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "Stessa domanda, contesto diverso",
+                    "body": "«È un buon progetto?» ottiene una checklist generica.\n\n«È un buon progetto per un team di tre persone che rilascia ogni settimana e non ha un ingegnere operativo dedicato?» ottiene una risposta sui costi operativi, perché il vincolo è stato dichiarato."
+                  }
+                },
+                {
+                  "id": "warning",
+                  "type": "warning",
+                  "order": 4,
+                  "content": {
+                    "body": "Il contesto non è il posto dove incollare segreti. Credenziali, dati personali di altre persone e documenti riservati non diventano sicuri perché sono utili."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 5,
+                  "content": {
+                    "question": "Vuoi un parere su una candidatura di lavoro. Quale dettaglio vale la pena aggiungere?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Il ruolo e ciò che chiede l'annuncio"
+                      },
+                      {
+                        "id": "b",
+                        "label": "Il tuo indirizzo completo e la tua data di nascita"
+                      },
+                      {
+                        "id": "c",
+                        "label": "La data in cui hai iniziato a scriverla"
+                      }
+                    ],
+                    "correct_option_id": "a",
+                    "explanation": "Il ruolo cambia la risposta. Il tuo indirizzo no, ed è un dato personale che non ha motivo di stare lì."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "Aggiungi ciò che cambierebbe la risposta di una persona competente. Lascia fuori il resto e non incollare mai ciò che non vorresti fosse conservato."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "iterate-instead-of-restarting",
+              "title": "Iterare invece di ricominciare",
+              "description": "Il valore sta nel secondo messaggio.",
+              "estimated_minutes": 3,
+              "difficulty": "beginner",
+              "order": 3,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "La risposta è quasi giusta. La maggior parte delle persone la cancella e riscrive tutta la richiesta. Così butta via la parte che funzionava."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Correggere, non ricominciare",
+                    "body": "Tratta la prima risposta come una bozza da modificare conversando. Di' che cosa tenere, poi che cosa cambiare. «Tieni la struttura, rendi concreto il secondo punto, togli l'ultimo paragrafo» ti porta al risultato in un solo passo. Ricominciare significa tirare di nuovo i dadi."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "comparison",
+                  "order": 3,
+                  "content": {
+                    "worse_label": "Ricominciare",
+                    "worse": "Non è quello che volevo. Scrivimi un riassunto migliore.",
+                    "better_label": "Correggere",
+                    "better": "Buona struttura. Il punto 2 è troppo astratto: sostituiscilo con il dato preciso del testo. Togli il paragrafo finale.",
+                    "note": "La seconda conserva ciò che funzionava. La prima chiede al modello di indovinare di nuovo, senza più informazioni di prima."
+                  }
+                },
+                {
+                  "id": "tip",
+                  "type": "tip",
+                  "order": 4,
+                  "content": {
+                    "body": "Se due giri di correzione non convergono, il problema di solito è nella richiesta iniziale, non nella risposta. Torna indietro e aggiungi ciò che mancava."
+                  }
+                },
+                {
+                  "id": "practice",
+                  "type": "prompt_exercise",
+                  "order": 5,
+                  "content": {
+                    "instruction": "La risposta che hai ricevuto è troppo formale e troppo lunga. Scrivi la correzione, non riscrivere la richiesta.",
+                    "starting_text": "",
+                    "hint": "Indica una cosa da tenere e due da cambiare.",
+                    "sample_answer": "Tieni le tre sezioni. Riducila più o meno a metà e usa il tono che useresti con un collega invece che con un cliente."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "Di' che cosa tenere prima di dire che cosa cambiare. Ricominciare butta via la parte che già funzionava."
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "verify-and-protect",
+      "pillar": "learn_ai",
+      "title": "Verificare e proteggere",
+      "description": "Verificare ciò che conta e proteggere le informazioni sensibili.",
+      "icon": "shield-check",
+      "order": 3,
+      "tags": [
+        "general"
+      ],
+      "modules": [
+        {
+          "id": "verify-and-protect-foundations",
+          "title": "Fidarsi, ma verificare",
+          "description": "Dove le risposte sbagliano e che cosa non va mai condiviso.",
+          "order": 1,
+          "lessons": [
+            {
+              "id": "why-ai-hallucinates",
+              "title": "Perché l'IA può avere allucinazioni",
+              "description": "E come capire quali risposte meritano una verifica.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 1,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Un'allucinazione non è un guasto. È il sistema che fa esattamente ciò che fa — produrre una continuazione plausibile — in un punto in cui plausibile e vero si sono separati."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Dove si concentra il rischio",
+                    "body": "L'invenzione è più probabile dove il testo è preciso e verificabile ma raro: citazioni esatte, numeri di pagina, statistiche, riferimenti normativi, metodi di un'API, biografie di persone. Il modello ha visto la forma di queste cose migliaia di volte, quindi può produrne una convincente su richiesta.\n\nÈ meno probabile quando la risposta è di dominio comune, o quando il testo di partenza l'hai fornito tu."
+                  }
+                },
+                {
+                  "id": "tip",
+                  "type": "tip",
+                  "order": 3,
+                  "content": {
+                    "body": "Chiedere «qual è la tua fonte?» da solo non basta: anche la fonte può essere inventata. Serve verificarla."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 4,
+                  "content": {
+                    "question": "Quale risposta merita di più una verifica?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "La riformulazione di un paragrafo che hai incollato"
+                      },
+                      {
+                        "id": "b",
+                        "label": "Una statistica precisa con un anno e una percentuale"
+                      },
+                      {
+                        "id": "c",
+                        "label": "Un elenco di idee per il nome di un team"
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "Precisa, verificabile e non fornita da te: è proprio lì che un'invenzione plausibile è più difficile da scoprire."
+                  }
+                },
+                {
+                  "id": "reflection",
+                  "type": "reflection",
+                  "order": 5,
+                  "content": {
+                    "prompt": "Pensa a un compito per cui usi l'IA. Quale parte della sua risposta causerebbe un vero problema se fosse sbagliata senza che te ne accorgi?",
+                    "hint": "È quella la parte da verificare, ogni volta."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "Verifica ciò che è preciso, verificabile e non viene da te. Non fidarti di nulla solo perché suona sicuro."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "verify-output",
+              "title": "Verificare il risultato",
+              "description": "Controlla calcoli, fonti, affermazioni e ipotesi.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 2,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "idea",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "heading": "Verifica",
+                    "body": "La verifica è una fase ingegneristica distinta. Chiedere allo stesso modello se è sicuro non è un controllo indipendente."
+                  }
+                },
+                {
+                  "id": "scenario",
+                  "type": "example",
+                  "order": 2,
+                  "content": {
+                    "label": "Una situazione",
+                    "body": "Un'IA ti fornisce un calcolo dei carichi per un'analisi strutturale."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 3,
+                  "content": {
+                    "question": "Cosa dovresti fare prima di usarlo?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Usarlo direttamente perché le unità sono indicate."
+                      },
+                      {
+                        "id": "b",
+                        "label": "Verificare in modo indipendente ipotesi, unità e calcoli."
+                      },
+                      {
+                        "id": "c",
+                        "label": "Chiedere all'IA se è sicura."
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "Controlla il caso di carico, le unità, le equazioni e le condizioni al contorno con metodi o fonti affidabili prima di fare affidamento sul risultato."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 4,
+                  "content": {
+                    "body": "Verifica ciò su cui ti basi con un metodo o una fonte che il modello non controlla. Richiederlo al modello non è una verifica."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "confidential-information",
+              "title": "Informazioni riservate",
+              "description": "Sapere cosa non deve essere inviato a un sistema non autorizzato.",
+              "estimated_minutes": 3,
+              "difficulty": "beginner",
+              "order": 3,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "idea",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "heading": "Riservatezza",
+                    "body": "Condividi solo i dati che lo strumento e il tuo istituto sono autorizzati a trattare."
+                  }
+                },
+                {
+                  "id": "scenario",
+                  "type": "example",
+                  "order": 2,
+                  "content": {
+                    "label": "Una situazione",
+                    "body": "Un documento di progetto contiene identificativi degli studenti, dati dei fornitori e un token di accesso interno."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 3,
+                  "content": {
+                    "question": "Qual è il passo successivo responsabile?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Incollare tutto perché il compito è accademico."
+                      },
+                      {
+                        "id": "b",
+                        "label": "Rimuovere solo i nomi degli studenti."
+                      },
+                      {
+                        "id": "c",
+                        "label": "Usare un sistema approvato e rimuovere segreti e dati personali o riservati non necessari."
+                      }
+                    ],
+                    "correct_option_id": "c",
+                    "explanation": "Contano sia l'autorizzazione sia la minimizzazione dei dati. Le credenziali non vanno mai incluse e il contesto sensibile non necessario va rimosso."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 4,
+                  "content": {
+                    "body": "Condividi solo ciò che lo strumento è autorizzato a trattare, rimuovi segreti e dati personali non necessari, e non incollare mai credenziali."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "responsible-use",
+              "title": "Uso responsabile",
+              "description": "Riconoscere quando l'uso dell'IA è appropriato, limitato o vietato.",
+              "estimated_minutes": 3,
+              "difficulty": "beginner",
+              "order": 4,
+              "version": 1,
+              "tags": [
+                "general",
+                "student"
+              ],
+              "blocks": [
+                {
+                  "id": "idea",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "heading": "Pratica responsabile",
+                    "body": "L'uso corretto dipende dal compito, dalle regole del corso, dall'autorizzazione dello strumento e dal livello di responsabilità umana richiesto."
+                  }
+                },
+                {
+                  "id": "scenario",
+                  "type": "example",
+                  "order": 2,
+                  "content": {
+                    "label": "Una situazione",
+                    "body": "Le regole di un elaborato valutato non sono chiare sull'aiuto dell'IA generativa."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 3,
+                  "content": {
+                    "question": "Cosa dovresti fare?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Usare l'IA di nascosto perché probabilmente lo fanno tutti."
+                      },
+                      {
+                        "id": "b",
+                        "label": "Far produrre all'IA la consegna finale e poi cambiare qualche parola."
+                      },
+                      {
+                        "id": "c",
+                        "label": "Controllare le regole del corso, chiedere se non sono chiare e dichiarare l'aiuto consentito."
+                      }
+                    ],
+                    "correct_option_id": "c",
+                    "explanation": "Un uso responsabile rispetta l'obiettivo di apprendimento e le regole stabilite. Se le regole non sono chiare, chiariscile prima di affidarti all'IA."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 4,
+                  "content": {
+                    "body": "Conosci le regole del compito prima di usare l'IA, chiedi quando non sono chiare e dichiara quale aiuto hai usato."
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "adapt-to-your-field",
+      "pillar": "adapt_ai",
+      "title": "Adattare al tuo ambito",
+      "description": "Farla adattare al tuo lavoro, e non il contrario.",
+      "icon": "settings-2",
+      "order": 4,
+      "tags": [
+        "general",
+        "student",
+        "engineering",
+        "marketing",
+        "developer",
+        "creator",
+        "management"
+      ],
+      "modules": [
+        {
+          "id": "adapt-ai-foundations",
+          "title": "Adattarla al tuo lavoro",
+          "description": "Da risposte occasionali a qualcosa di riutilizzabile.",
+          "order": 1,
+          "lessons": [
+            {
+              "id": "an-assistant-for-your-work",
+              "title": "Fare dell'IA un assistente di lavoro o di studio",
+              "description": "Descrivi la tua situazione una volta e smetti di ripeterla.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 1,
+              "version": 1,
+              "tags": [
+                "general",
+                "student",
+                "management"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "La maggior parte delle persone rispiega a ogni richiesta chi è e su che cosa lavora. L'assistente che fa davvero risparmiare tempo è quello che hai descritto una sola volta."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Un'istruzione permanente",
+                    "body": "Un'istruzione permanente sono tre o quattro frasi che restano valide per molte richieste: il tuo ruolo, il pubblico per cui scrivi di solito, il tono che vuoi e le cose che non vuoi mai. Scritta una volta, rende brevi tutte le richieste successive.\n\nIn Nova serve a questo uno stile: l'istruzione vive in un solo posto e si applica ogni volta che lo scegli."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "Un'istruzione permanente",
+                    "body": "«Frequento il secondo anno di ingegneria. Scrivo relazioni di laboratorio per una tutor che apprezza la precisione più della lunghezza. Usa un italiano chiaro e tecnico. Non riempire mai con introduzioni o conclusioni che ripetono il testo.»\n\nOra ogni richiesta successiva può stare in due righe invece che in dieci."
+                  }
+                },
+                {
+                  "id": "practice",
+                  "type": "prompt_exercise",
+                  "order": 4,
+                  "content": {
+                    "instruction": "Scrivi la tua istruzione permanente in tre o quattro frasi.",
+                    "starting_text": "",
+                    "hint": "Ruolo, pubblico abituale, tono e una cosa che non vuoi mai.",
+                    "sample_answer": "Sono un product manager e scrivo per ingegneri e designer. Sii concreto e breve; preferisci gli esempi agli aggettivi. Non iniziare mai con un riassunto di ciò che ho appena chiesto."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 5,
+                  "content": {
+                    "body": "Descrivi la tua situazione una volta, in un posto che la conserva. Poi ogni richiesta diventa più breve."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "build-a-reusable-workflow",
+              "title": "Costruire un procedimento riutilizzabile",
+              "description": "Trasformare un compito che ripeti in qualcosa da eseguire.",
+              "estimated_minutes": 4,
+              "difficulty": "intermediate",
+              "order": 2,
+              "version": 1,
+              "tags": [
+                "general",
+                "engineering",
+                "marketing",
+                "developer"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Se hai scritto quasi la stessa richiesta tre volte, non hai più una richiesta. Hai un procedimento che non hai ancora messo per iscritto."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Istruzione fissa, input variabile",
+                    "body": "Un procedimento separa la parte che non cambia mai da quella che cambia. L'istruzione — che cosa fare, per chi, in quale forma, che cosa verificare — è fissa. Il testo che gli dai cambia ogni volta.\n\nUna volta separata, la parte fissa si può salvare e riutilizzare, e smette di cambiare ogni volta che la riscrivi a memoria."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "comparison",
+                  "order": 3,
+                  "content": {
+                    "worse_label": "Riscritta ogni volta",
+                    "worse": "Puoi guardare questi appunti della riunione e tirare fuori quello che devo fare?",
+                    "better_label": "Un procedimento",
+                    "better": "Dagli appunti qui sotto estrai solo le attività assegnate a me. Una riga per attività, iniziando con un verbo, con la scadenza se è indicata. Se non mi è assegnata nessuna attività, dillo e fermati.",
+                    "note": "La seconda vale la pena di salvarla. Dice anche che cosa fare quando non c'è nulla da trovare, che è proprio dove la versione riscritta inventa attività senza dirlo."
+                  }
+                },
+                {
+                  "id": "tip",
+                  "type": "tip",
+                  "order": 4,
+                  "content": {
+                    "body": "Di' sempre a un procedimento che cosa fare quando l'input non corrisponde. Questa sola frase evita la maggior parte dei risultati inventati."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 5,
+                  "content": {
+                    "question": "Che cosa va nella parte fissa di un procedimento?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Il testo da elaborare questa volta"
+                      },
+                      {
+                        "id": "b",
+                        "label": "Le regole di un buon risultato"
+                      },
+                      {
+                        "id": "c",
+                        "label": "La data di oggi"
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "Le regole sono ciò che vuoi smettere di riscrivere. L'input è ciò che cambia."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "Separa l'istruzione fissa dall'input che cambia e di' che cosa fare quando non c'è nulla da trovare."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "adapt-ai-to-your-domain",
+              "title": "Adattare l'IA al tuo ambito",
+              "description": "Il lessico, le convenzioni e le verifiche che il tuo settore si aspetta.",
+              "estimated_minutes": 5,
+              "difficulty": "intermediate",
+              "order": 3,
+              "version": 1,
+              "tags": [
+                "engineering",
+                "marketing",
+                "developer",
+                "creator",
+                "student",
+                "management"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Una risposta generica è generica perché nella richiesta nulla diceva in quale ambito lavori. Il tuo settore ha un lessico, delle convenzioni e un criterio di prova, e niente di tutto questo è evidente dall'esterno."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Tre cose che il tuo ambito si aspetta",
+                    "body": "Indica il lessico che usi, così la risposta non si traduce nei termini di qualcun altro. Indica la convenzione che segui: una struttura di relazione, uno stile di commit, un tono aziendale. E indica la verifica: ciò che rende una risposta accettabile nel tuo ambito e non solo ragionevole.\n\nLa terza è quella che quasi tutti tralasciano, ed è quella che fa più lavoro."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "La stessa richiesta in tre ambiti",
+                    "body": "Ingegneria: «Indica l'ipotesi dietro ogni dato. Se un valore è stimato e non misurato, segnalalo.»\n\nMarketing: «Rispetta il nostro tono: diretto, senza superlativi. Dammi due opzioni da confrontare.»\n\nSviluppo: «Segui le convenzioni già presenti nel file. Se un approccio richiede una dipendenza che non abbiamo, dillo invece di aggiungerla.»"
+                  }
+                },
+                {
+                  "id": "ai-practice",
+                  "type": "ai_exercise",
+                  "order": 4,
+                  "content": {
+                    "exercise_id": "adapt-domain-request",
+                    "instruction": "Scrivi una richiesta per un compito del tuo ambito. Indica il lessico, la convenzione e la verifica che rende accettabile una risposta.",
+                    "starting_text": "",
+                    "hint": "La verifica è la parte che quasi tutti dimenticano: che cosa ti farebbe scartare una risposta altrimenti ragionevole?"
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 5,
+                  "content": {
+                    "body": "Lessico, convenzione e la verifica che applica il tuo ambito. È la verifica a trasformare una risposta ragionevole in una utilizzabile."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "ai-in-engineering",
+              "title": "L'IA nell'ingegneria",
+              "description": "Usa l'IA come strumento, non come sostituto del ragionamento.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 4,
+              "version": 1,
+              "tags": [
+                "engineering",
+                "student"
+              ],
+              "blocks": [
+                {
+                  "id": "idea",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "heading": "IA per l'ingegneria",
+                    "body": "L'IA dà il meglio come collaboratrice per esplorare, abbozzare e criticare, quando l'ingegnere resta responsabile."
+                  }
+                },
+                {
+                  "id": "scenario",
+                  "type": "example",
+                  "order": 2,
+                  "content": {
+                    "label": "Una situazione",
+                    "body": "Stai confrontando due concept per un sottosistema di un piccolo satellite."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 3,
+                  "content": {
+                    "question": "Quale flusso di lavoro sfrutta meglio l'IA?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Lasciare che l'IA scelga il concept e copiarne la motivazione."
+                      },
+                      {
+                        "id": "b",
+                        "label": "Usarla per far emergere i compromessi, poi verificare i vincoli e documentare la decisione."
+                      },
+                      {
+                        "id": "c",
+                        "label": "Non documentare le ipotesi per mantenere breve la relazione."
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "L'IA amplifica il giudizio ingegneristico. Non sostituisce convalida, tracciabilità e responsabilità."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 4,
+                  "content": {
+                    "body": "Lascia che l'IA faccia emergere opzioni e compromessi, poi validali, documenta le tue ipotesi e assumiti la decisione."
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "exercises": [
+    {
+      "id": "adapt-domain-request",
+      "task": "learning_feedback",
+      "instruction": "You are helping someone learn to write better requests to an AI assistant. They were asked to write a request for a task in their own professional or academic field, naming three things: the vocabulary of their field, the convention they follow, and the check that makes an answer acceptable rather than merely reasonable.\n\nRead their attempt and reply in at most four short sentences. Say plainly which of the three are present and which are missing. Then give one concrete improvement, rewriting a fragment of their own request rather than replacing it with yours. Do not score them, do not use percentages, and do not praise without a reason. If their request is already complete, say so and name the strongest part.\n\nReply in the language they wrote in."
+    }
+  ]
+}

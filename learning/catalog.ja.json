@@ -1,0 +1,1096 @@
+{
+  "catalog_version": 2,
+  "locale": "ja",
+  "paths": [
+    {
+      "id": "getting-started",
+      "pillar": "learn_ai",
+      "title": "はじめの一歩",
+      "description": "AI が得意なこと、間違えるところ、上手な付き合い方。",
+      "icon": "brain",
+      "order": 1,
+      "tags": [
+        "general"
+      ],
+      "modules": [
+        {
+          "id": "getting-started-foundations",
+          "title": "基本",
+          "description": "初日から AI を分別をもって使うのに十分な内容。",
+          "order": 1,
+          "lessons": [
+            {
+              "id": "working-with-ai",
+              "title": "AIと協働する",
+              "description": "AIにできること・できないことを理解する。",
+              "estimated_minutes": 3,
+              "difficulty": "beginner",
+              "order": 1,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "idea",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "heading": "AIの基本",
+                    "body": "AIは役立つ選択肢をすばやく出せますが、文章が流暢だからといって答えが正しい証拠にはなりません。"
+                  }
+                },
+                {
+                  "id": "scenario",
+                  "type": "example",
+                  "order": 2,
+                  "content": {
+                    "label": "場面",
+                    "body": "AIアシスタントが航空宇宙プロジェクトの設計案を自信たっぷりに提示しています。"
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 3,
+                  "content": {
+                    "question": "ここでAIが果たす最も有益な役割はどれですか？",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "エンジニアリング上の判断を代わりに下す。"
+                      },
+                      {
+                        "id": "b",
+                        "label": "エンジニアが評価するための候補案を示す。"
+                      },
+                      {
+                        "id": "c",
+                        "label": "説明が技術的に聞こえるので、その案を承認する。"
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "AIは検討できる選択肢を広げるために使いましょう。前提、根拠、最終判断に責任を持つのは、引き続きエンジニアの判断です。"
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 4,
+                  "content": {
+                    "body": "AI は検討する選択肢を広げるために使いましょう。決定とその理由は、あなたのものです。"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "what-an-llm-does",
+              "title": "LLM が実際にしていること",
+              "description": "LLM はテキストを予測しています。この一つの事実が、そのふるまいのほとんどを説明します。",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 2,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "言語モデルは何かを調べるわけでも、人間のように推論するわけでもありません。次に来そうなテキストを予測しています。こうしたシステムの意外な点のほとんどは、この一文から説明できます。"
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "大規模に学習された予測",
+                    "body": "学習の過程で、モデルは膨大な量のテキストを読み、その続きを書くことに非常に長けるようになりました。事実がデータベースのように保存されているわけではありません。学んだのは、どの語のあとにどの語が来やすいかです。文法でも、議論の組み立てでも、コードでも、慣習でも同じです。\n\nだからこそ、知りようのないことについても流暢に書けてしまい、流暢さは正確さの証拠になりません。"
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "これを知っておくと役立つ理由",
+                    "body": "よく知られた公式を尋ねれば、たいてい正しく返ってきます。学習データの中に何度も登場していたからです。\n\n特定の版で、ある引用が何ページにあるかを尋ねると、自信たっぷりに作り話の番号が返ってくることがあります。それはもっともらしい続きです。調べた結果ではありません。"
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 4,
+                  "content": {
+                    "question": "モデルが流暢なのに間違った答えを書けてしまうのはなぜですか？",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "流暢さと正確さは同じ仕組み、つまりもっともらしい続きの生成から生まれるから"
+                      },
+                      {
+                        "id": "b",
+                        "label": "メモリが足りなくなったから"
+                      },
+                      {
+                        "id": "c",
+                        "label": "文法の誤った文章で学習したから"
+                      }
+                    ],
+                    "correct_option_id": "a",
+                    "explanation": "正しく聞こえることと正しいことは、同じ仕組みから生まれます。だから答えの文体は、その内容が本当かどうかを何も教えてくれません。"
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 5,
+                  "content": {
+                    "body": "LLM はテキストを予測しています。自信は文章の性質であって、事実の性質ではありません。"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "context-and-tokens",
+              "title": "コンテキストとトークン",
+              "description": "長い会話がずれていく理由と、モデルに実際に見えているもの。",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 3,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "長い会話の途中で、最初に決めた条件をモデルが忘れてしまう。これは不注意ではありません。一度に見られる量には上限があり、それを超えてしまったのです。"
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "トークンとウィンドウ",
+                    "body": "テキストはトークンという単位に分けられます。おおよそ単語の断片です。英語では、1 トークンはだいたい単語の 4 分の 3 ほどです。モデルが一度に扱うもの、つまりあなたのメッセージとモデル自身の返答の合計は、決まった大きさのコンテキストウィンドウに収まる必要があります。\n\n会話がそれを超えると、最初のほうの部分は見えなくなります。モデルは会話を覚えているのではなく、まだ収まっている部分を毎回読み直しているのです。"
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "実際に何が変わるか",
+                    "body": "大事なルール（「常に日本語で答える」「200 字を超えない」など）は、20 往復を経ても残っていると期待せず、それが必要なメッセージで改めて伝えましょう。\n\n会話が大きくずれてしまったら、ごちゃごちゃした会話を続けるより、要点をまとめて新しい会話を始めるほうがうまくいくことが多いです。"
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 4,
+                  "content": {
+                    "question": "長い会話で、最初に出した指示が守られなくなりました。最も考えられる原因は何ですか？",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "指示がコンテキストウィンドウの外に出てしまった"
+                      },
+                      {
+                        "id": "b",
+                        "label": "モデルがあなたを無視することにした"
+                      },
+                      {
+                        "id": "c",
+                        "label": "指示の文法が間違っていた"
+                      }
+                    ],
+                    "correct_option_id": "a",
+                    "explanation": "ウィンドウから外れたことは、言わなかったのと同じです。条件は、それが必要な場面で繰り返しましょう。"
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 5,
+                  "content": {
+                    "body": "モデルが見ているのは記憶ではなくウィンドウです。大事なことは繰り返し、会話が混み合ってきたら新しく始めましょう。"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "asking-well",
+      "pillar": "use_ai",
+      "title": "上手に頼む",
+      "description": "頼み方を工夫して、よりよい答えを得る。",
+      "icon": "message-square",
+      "order": 2,
+      "tags": [
+        "general"
+      ],
+      "modules": [
+        {
+          "id": "use-ai-foundations",
+          "title": "答えを変える習慣",
+          "description": "得られる答えを変える 3 つの習慣。",
+          "order": 1,
+          "lessons": [
+            {
+              "id": "ask-better-questions",
+              "title": "よりよい質問をする",
+              "description": "何を、誰に向けて、どんな形で欲しいのかを伝える。",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 1,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "要約を頼んだら、結局書き直す必要のある平凡な段落が 3 つ返ってきた。モデルが失敗したのではありません。よい答えがどんな形なのか、誰も伝えていなかったのです。"
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "依頼には 3 つの要素がある",
+                    "body": "役に立つ依頼は、タスク、読み手、答えの形を示しています。どれか一つでも欠けると、モデルは平均的な推測でその穴を埋めます。タスクは何をするかを伝えます。読み手は言葉づかいと詳しさを決めます。形、つまり長さ、書式、残すべき内容が決まっていれば、結果を書き直さずに済みます。"
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "comparison",
+                  "order": 3,
+                  "content": {
+                    "worse_label": "あいまい",
+                    "worse": "これを要約して。",
+                    "better_label": "具体的",
+                    "better": "このテキストを、このテーマに初めて触れる人向けに 5 つの箇条書きで要約してください。重要な数値は残し、最後に覚えておくべき 2 つのポイントで締めくくってください。",
+                    "note": "2 つ目はタスク、読み手、形を示しています。工夫しているわけではなく、ただ抜けがないだけです。"
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 4,
+                  "content": {
+                    "question": "「このメールを短く書き直して」に欠けている要素はどれですか？",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "タスク"
+                      },
+                      {
+                        "id": "b",
+                        "label": "読み手"
+                      },
+                      {
+                        "id": "c",
+                        "label": "何も欠けていない"
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "タスクと形はあります。誰が読むのか（顧客、上司、同僚）でトーンが決まるのに、モデルはそれを推測するしかありません。"
+                  }
+                },
+                {
+                  "id": "try-it",
+                  "type": "prompt_exercise",
+                  "order": 5,
+                  "content": {
+                    "instruction": "この依頼を、タスク・読み手・形がわかるように書き直してください。",
+                    "starting_text": "機械学習を説明して。",
+                    "hint": "誰が読みますか？ どのくらいの長さですか？ 答えに何が含まれている必要がありますか？",
+                    "sample_answer": "技術的な知識のない同僚に向けて、機械学習を 150 字程度で、身近な例を一つ使い、専門用語を使わずに説明してください。"
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "タスク、読み手、形。答えに不満があるときは、そのどれかが欠けていました。"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "give-useful-context",
+              "title": "役に立つコンテキストを伝える",
+              "description": "モデルが知っておくべきことと、雑音にしかならないこと。",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 2,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "モデルは、あなたのプロジェクトやチーム、先週決めたことについて何も知りません。目の前にある情報だけから答え、あなたが書かなかったことは、もっともらしい代わりの内容で埋めてしまいます。"
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "答えを変えるものがコンテキスト",
+                    "body": "役に立つコンテキストとは、有能な人の答えを変えるような情報すべてです。制約、対象読者、すでに試したこと、守るべき形式などです。それ以外は雑音です。大事なのが 3 文だけなのに文書全体を貼り付けても答えはよくならず、本当に欲しかったものが薄まるだけです。"
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "同じ質問、違うコンテキスト",
+                    "body": "「これはよい設計ですか？」には、一般的なチェックリストが返ってきます。\n\n「毎週リリースしていて、運用専任のエンジニアがいない 3 人のチームにとって、これはよい設計ですか？」には、運用コストについての答えが返ってきます。制約が伝わったからです。"
+                  }
+                },
+                {
+                  "id": "warning",
+                  "type": "warning",
+                  "order": 4,
+                  "content": {
+                    "body": "コンテキストは秘密を貼り付ける場所ではありません。認証情報、他人の個人情報、機密文書は、役に立つからといって安全になるわけではありません。"
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 5,
+                  "content": {
+                    "question": "応募書類について意見がほしいとき、加える価値がある情報はどれですか？",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "応募する職種と、募集要項が求めていること"
+                      },
+                      {
+                        "id": "b",
+                        "label": "自宅の住所と生年月日"
+                      },
+                      {
+                        "id": "c",
+                        "label": "書き始めた日付"
+                      }
+                    ],
+                    "correct_option_id": "a",
+                    "explanation": "職種は答えを変えます。住所は変えません。しかもそれは、そこに書く理由のない個人情報です。"
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "有能な人の答えを変えるものを加え、それ以外は省きましょう。保存されて困るものは決して貼り付けないでください。"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "iterate-instead-of-restarting",
+              "title": "やり直すより、修正を重ねる",
+              "description": "価値は 2 通目のメッセージにあります。",
+              "estimated_minutes": 3,
+              "difficulty": "beginner",
+              "order": 3,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "答えはほぼ合っている。それでも多くの人は答えを消して、依頼をまるごと書き直します。うまくいっていた部分まで捨ててしまうのです。"
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "やり直さず、直す",
+                    "body": "最初の答えは、会話しながら手を入れられる下書きだと考えましょう。まず残す部分を伝え、次に変える部分を伝えます。「構成はそのまま、2 つ目の点を具体的に、最後の段落は削除」と言えば、一度で目的に近づきます。やり直すのは、もう一度サイコロを振るのと同じです。"
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "comparison",
+                  "order": 3,
+                  "content": {
+                    "worse_label": "やり直す",
+                    "worse": "欲しかったのはこれじゃない。もっといい要約を書いて。",
+                    "better_label": "直す",
+                    "better": "構成はいいです。2 点目は抽象的すぎるので、本文の正確な数値に置き換えてください。最後の段落は削除してください。",
+                    "note": "2 つ目はうまくいっていた部分を残します。1 つ目は、前と同じ情報しかないまま、モデルにもう一度推測させます。"
+                  }
+                },
+                {
+                  "id": "tip",
+                  "type": "tip",
+                  "order": 4,
+                  "content": {
+                    "body": "2 回修正してもまとまらないなら、問題はたいてい答えではなく最初の依頼にあります。戻って、足りなかった情報を加えましょう。"
+                  }
+                },
+                {
+                  "id": "practice",
+                  "type": "prompt_exercise",
+                  "order": 5,
+                  "content": {
+                    "instruction": "返ってきた答えは堅苦しく、長すぎます。依頼を書き直すのではなく、修正の指示を書いてください。",
+                    "starting_text": "",
+                    "hint": "残すことを 1 つ、変えることを 2 つ挙げましょう。",
+                    "sample_answer": "3 つのセクションはそのままで。長さを半分くらいにして、顧客ではなく同僚に話すようなトーンにしてください。"
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "変えることを言う前に、残すことを伝えましょう。やり直すと、うまくいっていた部分まで失われます。"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "verify-and-protect",
+      "pillar": "learn_ai",
+      "title": "確かめて、守る",
+      "description": "大事なことを確かめ、機密情報を守る。",
+      "icon": "shield-check",
+      "order": 3,
+      "tags": [
+        "general"
+      ],
+      "modules": [
+        {
+          "id": "verify-and-protect-foundations",
+          "title": "信頼しつつ、確かめる",
+          "description": "答えが間違えやすいところと、決して共有してはいけないもの。",
+          "order": 1,
+          "lessons": [
+            {
+              "id": "why-ai-hallucinates",
+              "title": "AI が「幻覚」を起こす理由",
+              "description": "どの答えを確認すべきかを見分ける方法。",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 1,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "幻覚は故障ではありません。システムがいつもどおり、もっともらしい続きを生成した結果です。ただ、その場所では「もっともらしい」と「正しい」が食い違っていたのです。"
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "リスクが集中する場所",
+                    "body": "作り話が最も起こりやすいのは、具体的で確認可能だけれど、あまり出てこない情報です。正確な引用、ページ番号、統計、法令の参照、API のメソッド、人物の経歴などです。モデルはこうした情報の形を何千回も見てきたので、求められれば説得力のあるものを作り出せます。\n\n反対に起こりにくいのは、答えが一般常識の場合や、元になるテキストを自分で渡した場合です。"
+                  }
+                },
+                {
+                  "id": "tip",
+                  "type": "tip",
+                  "order": 3,
+                  "content": {
+                    "body": "「情報源は？」と聞くだけでは役に立ちません。情報源そのものが作り話のこともあります。役に立つのは、その情報源を実際に確かめることです。"
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 4,
+                  "content": {
+                    "question": "確認する価値が最も高い答えはどれですか？",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "自分で貼り付けた段落の言い換え"
+                      },
+                      {
+                        "id": "b",
+                        "label": "年とパーセンテージが入った具体的な統計"
+                      },
+                      {
+                        "id": "c",
+                        "label": "チーム名のアイデア一覧"
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "具体的で、確認でき、自分が渡した情報ではない。まさにそこで、もっともらしい作り話が最も見抜きにくくなります。"
+                  }
+                },
+                {
+                  "id": "reflection",
+                  "type": "reflection",
+                  "order": 5,
+                  "content": {
+                    "prompt": "AI を使っている作業を一つ思い浮かべてください。答えのどの部分が、気づかないうちに間違っていたら本当に困りますか？",
+                    "hint": "毎回確認すべきなのは、まさにその部分です。"
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "具体的で、確認でき、自分が出した情報ではないものは確認しましょう。確かそうに聞こえるからといって信じてはいけません。"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "verify-output",
+              "title": "出力を検証する",
+              "description": "計算、出典、主張、前提を確認する。",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 2,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "idea",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "heading": "検証",
+                    "body": "検証は独立したエンジニアリングの工程です。同じモデルに「本当に正しいか」と尋ねても、独立した確認にはなりません。"
+                  }
+                },
+                {
+                  "id": "scenario",
+                  "type": "example",
+                  "order": 2,
+                  "content": {
+                    "label": "場面",
+                    "body": "AIが構造解析のための荷重計算を示しました。"
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 3,
+                  "content": {
+                    "question": "使う前に何をすべきですか？",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "単位が書かれているので、そのまま使う。"
+                      },
+                      {
+                        "id": "b",
+                        "label": "前提、単位、計算を独立して検証する。"
+                      },
+                      {
+                        "id": "c",
+                        "label": "AIに本当に正しいか尋ねる。"
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "結果に頼る前に、荷重ケース、単位、方程式、境界条件を信頼できる手法や情報源で確認しましょう。"
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 4,
+                  "content": {
+                    "body": "頼りにする内容は、モデルが左右できない方法や情報源で確かめましょう。モデルに聞き直すのは確認ではありません。"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "confidential-information",
+              "title": "機密情報",
+              "description": "許可されていないシステムに送ってはいけない情報を知る。",
+              "estimated_minutes": 3,
+              "difficulty": "beginner",
+              "order": 3,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "idea",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "heading": "プライバシー",
+                    "body": "共有するのは、そのツールと所属機関が処理を認められているデータだけにしましょう。"
+                  }
+                },
+                {
+                  "id": "scenario",
+                  "type": "example",
+                  "order": 2,
+                  "content": {
+                    "label": "場面",
+                    "body": "プロジェクト文書に、学生の識別番号、取引先のデータ、社内用アクセストークンが含まれています。"
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 3,
+                  "content": {
+                    "question": "責任ある次の行動はどれですか？",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "学業の課題なので、すべて貼り付ける。"
+                      },
+                      {
+                        "id": "b",
+                        "label": "学生の名前だけを削除する。"
+                      },
+                      {
+                        "id": "c",
+                        "label": "承認されたシステムを使い、秘密情報や不要な個人情報・機密データを削除する。"
+                      }
+                    ],
+                    "correct_option_id": "c",
+                    "explanation": "許可とデータの最小化はどちらも重要です。認証情報は決して含めず、不要な機密の文脈は取り除きましょう。"
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 4,
+                  "content": {
+                    "body": "ツールが扱ってよい情報だけを共有し、秘密や不要な個人情報は取り除き、認証情報は決して貼り付けないでください。"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "responsible-use",
+              "title": "責任ある利用",
+              "description": "AIの利用が適切か、制限されるか、禁止されるかを見極める。",
+              "estimated_minutes": 3,
+              "difficulty": "beginner",
+              "order": 4,
+              "version": 1,
+              "tags": [
+                "general",
+                "student"
+              ],
+              "blocks": [
+                {
+                  "id": "idea",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "heading": "責任ある実践",
+                    "body": "適切な使い方は、課題の内容、授業のルール、ツールの利用許可、求められる人間の責任の度合いによって決まります。"
+                  }
+                },
+                {
+                  "id": "scenario",
+                  "type": "example",
+                  "order": 2,
+                  "content": {
+                    "label": "場面",
+                    "body": "評価対象の課題で、生成AIの支援に関するルールがはっきりしません。"
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 3,
+                  "content": {
+                    "question": "どうすべきですか？",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "みんな使っているはずなので、黙ってAIを使う。"
+                      },
+                      {
+                        "id": "b",
+                        "label": "AIに最終提出物を作らせ、いくつか言葉を変える。"
+                      },
+                      {
+                        "id": "c",
+                        "label": "授業の方針を確認し、不明な点は質問し、認められた支援を明記する。"
+                      }
+                    ],
+                    "correct_option_id": "c",
+                    "explanation": "責任ある利用とは、学習の目的と示されたルールを尊重することです。方針が不明確なときは、AIに頼る前に確認しましょう。"
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 4,
+                  "content": {
+                    "body": "AI を使う前に課題のルールを確認し、不明な点は質問し、どんな支援を使ったかを明らかにしましょう。"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "adapt-to-your-field",
+      "pillar": "adapt_ai",
+      "title": "自分の分野に合わせる",
+      "description": "仕事を AI に合わせるのではなく、AI を仕事に合わせる。",
+      "icon": "settings-2",
+      "order": 4,
+      "tags": [
+        "general",
+        "student",
+        "engineering",
+        "marketing",
+        "developer",
+        "creator",
+        "management"
+      ],
+      "modules": [
+        {
+          "id": "adapt-ai-foundations",
+          "title": "自分の仕事に合わせる",
+          "description": "その場限りの答えから、使い回せるものへ。",
+          "order": 1,
+          "lessons": [
+            {
+              "id": "an-assistant-for-your-work",
+              "title": "AI を仕事や学習のアシスタントにする",
+              "description": "自分の状況は一度だけ伝え、繰り返すのをやめる。",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 1,
+              "version": 1,
+              "tags": [
+                "general",
+                "student",
+                "management"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "多くの人は、依頼のたびに自分が誰で何に取り組んでいるのかを説明し直しています。本当に時間を節約してくれるのは、一度説明しておいたアシスタントです。"
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "常に使う指示",
+                    "body": "常に使う指示とは、多くの依頼に共通して当てはまる 3、4 文のことです。自分の役割、ふだん書く相手、望むトーン、そして決して望まないことを書きます。一度書いておけば、その後の依頼はすべて短くて済みます。\n\nNova では、スタイルがまさにそのためのものです。指示は一か所にまとまり、スタイルを選ぶたびに適用されます。"
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "常に使う指示",
+                    "body": "「私は工学部の 2 年生です。長さよりも正確さを重視する指導教員に向けて、実験レポートを書いています。わかりやすく技術的な日本語を使ってください。本文を繰り返すだけの前置きやまとめで水増ししないでください。」\n\nこれで、その後の依頼は 10 行ではなく 2 行で済みます。"
+                  }
+                },
+                {
+                  "id": "practice",
+                  "type": "prompt_exercise",
+                  "order": 4,
+                  "content": {
+                    "instruction": "自分用の「常に使う指示」を 3、4 文で書いてください。",
+                    "starting_text": "",
+                    "hint": "役割、ふだんの読み手、トーン、そして決して望まないことを 1 つ。",
+                    "sample_answer": "私はプロダクトマネージャーで、エンジニアとデザイナー向けに書いています。具体的かつ簡潔に、形容詞より例を優先してください。直前に私が尋ねたことの要約から始めないでください。"
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 5,
+                  "content": {
+                    "body": "自分の状況は、残しておける場所に一度だけ書きましょう。そうすれば、どの依頼も短くなります。"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "build-a-reusable-workflow",
+              "title": "再利用できる手順をつくる",
+              "description": "繰り返している作業を、実行するだけのものに変える。",
+              "estimated_minutes": 4,
+              "difficulty": "intermediate",
+              "order": 2,
+              "version": 1,
+              "tags": [
+                "general",
+                "engineering",
+                "marketing",
+                "developer"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "ほとんど同じ依頼を 3 回書いたなら、それはもう一回きりの依頼ではありません。まだ書き留めていない手順です。"
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "固定の指示と、変わる入力",
+                    "body": "手順とは、変わらない部分と変わる部分を分けたものです。指示（何を、誰のために、どんな形で、何を確認するか）は固定です。渡すテキストは毎回変わります。\n\n分けてしまえば、固定の部分は保存して使い回せます。記憶を頼りに打ち直すたびに少しずつ変わってしまうこともなくなります。"
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "comparison",
+                  "order": 3,
+                  "content": {
+                    "worse_label": "毎回打ち直す",
+                    "worse": "この会議メモを見て、私がやるべきことを抜き出してくれる？",
+                    "better_label": "手順",
+                    "better": "以下のメモから、私に割り当てられたタスクだけを抜き出してください。1 タスク 1 行で、動詞から始め、期限が書かれていれば添えてください。私に割り当てられたタスクがなければ、そう伝えて終了してください。",
+                    "note": "2 つ目は保存しておく価値があります。見つかるものがないときにどうするかも決めています。打ち直した版がこっそりタスクを作り出してしまうのは、まさにそこです。"
+                  }
+                },
+                {
+                  "id": "tip",
+                  "type": "tip",
+                  "order": 4,
+                  "content": {
+                    "body": "入力が合わないときにどうするかを、手順に必ず書いておきましょう。その一文で、作り話の結果のほとんどを防げます。"
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 5,
+                  "content": {
+                    "question": "手順の固定部分に入れるべきものはどれですか？",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "今回処理するテキスト"
+                      },
+                      {
+                        "id": "b",
+                        "label": "よい結果の条件となるルール"
+                      },
+                      {
+                        "id": "c",
+                        "label": "今日の日付"
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "ルールこそ、もう打ち直したくない部分です。入力は毎回変わる部分です。"
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "固定の指示と変わる入力を分け、見つかるものがないときにどうするかを決めておきましょう。"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "adapt-ai-to-your-domain",
+              "title": "AI を自分の分野に合わせる",
+              "description": "自分の分野が求める用語、慣習、確認の基準。",
+              "estimated_minutes": 5,
+              "difficulty": "intermediate",
+              "order": 3,
+              "version": 1,
+              "tags": [
+                "engineering",
+                "marketing",
+                "developer",
+                "creator",
+                "student",
+                "management"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "一般的な答えが一般的なのは、依頼のどこにもあなたの分野が書かれていなかったからです。分野にはそれぞれ用語、慣習、根拠の基準があり、そのどれも外からは見えません。"
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "分野が求める 3 つのこと",
+                    "body": "使っている用語を伝えましょう。そうすれば、答えが別の人の言葉に置き換えられません。従っている慣習を伝えましょう。報告書の構成、コミットの書き方、組織の文体などです。そして確認の基準を伝えましょう。あなたの分野で、単にもっともらしいだけでなく受け入れられる答えにする条件です。\n\n3 つ目はほとんどの人が省きますが、最も効果が大きいのはそれです。"
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "3 つの分野での同じ依頼",
+                    "body": "エンジニアリング：「各数値の前提を示してください。測定値ではなく推定値の場合は、そうと明記してください。」\n\nマーケティング：「当社の文体に合わせてください。率直に、誇張表現は使わずに。比較できるよう 2 案出してください。」\n\n開発：「ファイル内の既存の規約に従ってください。手元にない依存関係が必要な方法なら、追加せずにそう伝えてください。」"
+                  }
+                },
+                {
+                  "id": "ai-practice",
+                  "type": "ai_exercise",
+                  "order": 4,
+                  "content": {
+                    "exercise_id": "adapt-domain-request",
+                    "instruction": "自分の分野の作業について依頼を書いてください。用語、慣習、答えを受け入れられるものにする確認の基準を示しましょう。",
+                    "starting_text": "",
+                    "hint": "確認の基準は、多くの人が忘れる部分です。ほかの点では妥当な答えを、あなたが却下するとしたらどんな理由でしょう？"
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 5,
+                  "content": {
+                    "body": "用語、慣習、そして分野の確認基準。妥当な答えを使える答えに変えるのは、その確認基準です。"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "ai-in-engineering",
+              "title": "エンジニアリングとAI",
+              "description": "AIは思考の代わりではなく、道具として使う。",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 4,
+              "version": 1,
+              "tags": [
+                "engineering",
+                "student"
+              ],
+              "blocks": [
+                {
+                  "id": "idea",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "heading": "エンジニアリングAI",
+                    "body": "エンジニアが責任を持ち続けるとき、AIは探索、下書き、批評のパートナーとして最も力を発揮します。"
+                  }
+                },
+                {
+                  "id": "scenario",
+                  "type": "example",
+                  "order": 2,
+                  "content": {
+                    "label": "場面",
+                    "body": "小型衛星のサブシステムについて、2つのコンセプトを比較しています。"
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 3,
+                  "content": {
+                    "question": "AIを最もうまく活用するワークフローはどれですか？",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "AIにコンセプトを選ばせ、その根拠をそのまま写す。"
+                      },
+                      {
+                        "id": "b",
+                        "label": "AIでトレードオフを洗い出し、制約を検証して判断を記録する。"
+                      },
+                      {
+                        "id": "c",
+                        "label": "報告書を短くするため、前提を記録しない。"
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "AIはエンジニアリングの判断を強化します。検証、トレーサビリティ、説明責任の代わりにはなりません。"
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 4,
+                  "content": {
+                    "body": "AI に選択肢とトレードオフを挙げさせ、それを検証し、前提を記録して、決定に責任を持ちましょう。"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "exercises": [
+    {
+      "id": "adapt-domain-request",
+      "task": "learning_feedback",
+      "instruction": "You are helping someone learn to write better requests to an AI assistant. They were asked to write a request for a task in their own professional or academic field, naming three things: the vocabulary of their field, the convention they follow, and the check that makes an answer acceptable rather than merely reasonable.\n\nRead their attempt and reply in at most four short sentences. Say plainly which of the three are present and which are missing. Then give one concrete improvement, rewriting a fragment of their own request rather than replacing it with yours. Do not score them, do not use percentages, and do not praise without a reason. If their request is already complete, say so and name the strongest part.\n\nReply in the language they wrote in."
+    }
+  ]
+}

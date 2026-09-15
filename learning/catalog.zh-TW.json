@@ -1,0 +1,1096 @@
+{
+  "catalog_version": 2,
+  "locale": "zh-TW",
+  "paths": [
+    {
+      "id": "getting-started",
+      "pillar": "learn_ai",
+      "title": "入門",
+      "description": "AI 擅長什麼、會在哪裡出錯，以及如何與它合作。",
+      "icon": "brain",
+      "order": 1,
+      "tags": [
+        "general"
+      ],
+      "modules": [
+        {
+          "id": "getting-started-foundations",
+          "title": "基礎知識",
+          "description": "足以讓你從第一天起就審慎地使用 AI。",
+          "order": 1,
+          "lessons": [
+            {
+              "id": "working-with-ai",
+              "title": "與 AI 協作",
+              "description": "了解 AI 能做什麼、不能做什麼。",
+              "estimated_minutes": 3,
+              "difficulty": "beginner",
+              "order": 1,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "idea",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "heading": "AI 基本原理",
+                    "body": "AI 可以快速提出有用的選項，但表達流暢並不能證明答案正確。"
+                  }
+                },
+                {
+                  "id": "scenario",
+                  "type": "example",
+                  "order": 2,
+                  "content": {
+                    "label": "情境",
+                    "body": "一個 AI 助理為航太專案提出一項設計方案，而且說得信心十足。"
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 3,
+                  "content": {
+                    "question": "在這裡，AI 最有用的角色是什麼？",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "取代工程決策。"
+                      },
+                      {
+                        "id": "b",
+                        "label": "提供候選方案，由工程師評估。"
+                      },
+                      {
+                        "id": "c",
+                        "label": "因為解釋聽起來很專業，就核准這個方案。"
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "用 AI 來擴展你能檢視的選項。對假設、證據與最終決策負責的，仍然是工程判斷。"
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 4,
+                  "content": {
+                    "body": "用 AI 拓寬你要考慮的選項。決定以及決定的理由，仍然由你負責。"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "what-an-llm-does",
+              "title": "LLM 實際上在做什麼",
+              "description": "它在預測文字。光是這一點，就能解釋它大部分的行為。",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 2,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "語言模型不會去查資料，也不像人那樣推理。它預測接下來最可能出現的文字。這類系統中幾乎所有令人意外的表現，都來自這一句話。"
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "以大量資料訓練出來的預測",
+                    "body": "訓練時，模型讀過大量文字，並變得非常擅長接續寫下去。它並沒有把事實存進資料庫。它學到的是哪些詞通常接在哪些詞後面——不論是文法、論證結構、程式碼還是各種慣例。\n\n正因如此，它能流暢地寫出自己根本無從得知的內容，也正因如此，流暢並不代表正確。"
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "為什麼了解這一點很有用",
+                    "body": "問一個廣為人知的公式，你通常會得到正確答案——它在訓練文字中反覆出現過。\n\n問某個版本中一句引文在第幾頁，你可能會得到一個信心十足卻憑空捏造的頁碼。那只是一個看似合理的接續，從來不是查詢的結果。"
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 4,
+                  "content": {
+                    "question": "為什麼模型可能寫出流暢但錯誤的答案？",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "流暢和正確來自同一個過程——看似合理的接續"
+                      },
+                      {
+                        "id": "b",
+                        "label": "它的記憶體用完了"
+                      },
+                      {
+                        "id": "c",
+                        "label": "它是用文法錯誤的文字訓練的"
+                      }
+                    ],
+                    "correct_option_id": "a",
+                    "explanation": "聽起來正確和真正正確來自同一個機制。所以答案的文風完全無法說明它是否屬實。"
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 5,
+                  "content": {
+                    "body": "它在預測文字。自信是文字的特徵，而不是事實的特徵。"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "context-and-tokens",
+              "title": "脈絡與 token",
+              "description": "為什麼長對話會偏離主題，以及模型實際上看得到什麼。",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 3,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "長對話進行到一半，模型忘了你一開始設定的條件。這不是粗心。它一次能看到的內容有上限，而你已經超過了。"
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "token 與視窗",
+                    "body": "文字會被切分成 token——大致相當於詞的片段。在英文中，一個 token 通常約為四分之三個單字。模型一次考量的所有內容，包括你的訊息和它自己的回覆，都必須放進一個固定大小的脈絡視窗。\n\n當對話超出視窗時，最早的部分就看不到了。模型並不是在記住對話，而是在重新讀取仍放得下的內容。"
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "這在實際上代表什麼",
+                    "body": "如果某條規則很重要——「一律用中文回答」「不超過 200 字」——就在需要它的那則訊息裡再說一次，而不是指望它在二十輪對話之後依然有效。\n\n如果對話已經偏離很遠，帶著清楚的摘要開啟新對話，通常比繼續一段擁擠的對話效果更好。"
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 4,
+                  "content": {
+                    "question": "一段長對話不再遵守開頭給的指示。最可能的原因是什麼？",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "這條指示已經移出了脈絡視窗"
+                      },
+                      {
+                        "id": "b",
+                        "label": "模型決定不理你"
+                      },
+                      {
+                        "id": "c",
+                        "label": "這條指示有文法錯誤"
+                      }
+                    ],
+                    "correct_option_id": "a",
+                    "explanation": "不在視窗裡的內容，就等於從來沒說過。在需要的地方重新說明這個條件。"
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 5,
+                  "content": {
+                    "body": "模型看到的是視窗，不是記憶。重要的事再說一次，對話太擁擠時就重新開始。"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "asking-well",
+      "pillar": "use_ai",
+      "title": "學會提問",
+      "description": "問得更好，答案就更好。",
+      "icon": "message-square",
+      "order": 2,
+      "tags": [
+        "general"
+      ],
+      "modules": [
+        {
+          "id": "use-ai-foundations",
+          "title": "改變答案的習慣",
+          "description": "改變你所得答案的三個習慣。",
+          "order": 1,
+          "lessons": [
+            {
+              "id": "ask-better-questions",
+              "title": "提出更好的問題",
+              "description": "說清楚你要什麼、給誰看、以什麼形式呈現。",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 1,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "你要一份摘要，結果收到三段平淡無奇、還得自己重寫的文字。模型並沒有失敗——只是從來沒有人告訴它，好的答案應該長什麼樣子。"
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "一個請求有三個部分",
+                    "body": "有用的請求會說明任務、讀者和答案的形式。缺少其中任何一個，模型都會用一個平均化的猜測來補上。任務說明要做什麼。讀者決定用字和詳細程度。形式——長度、格式、要保留什麼——能讓你不必重寫結果。"
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "comparison",
+                  "order": 3,
+                  "content": {
+                    "worse_label": "模糊",
+                    "worse": "幫我摘要一下。",
+                    "better_label": "具體",
+                    "better": "把這篇文字整理成 5 個重點，給不熟悉這個主題的人看。保留重要數據，最後用 2 個值得記住的觀點作結。",
+                    "note": "第二個版本說明了任務、讀者和形式。它並不巧妙——只是完整。"
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 4,
+                  "content": {
+                    "question": "「把這封信改短一點」缺少哪一部分？",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "任務"
+                      },
+                      {
+                        "id": "b",
+                        "label": "讀者"
+                      },
+                      {
+                        "id": "c",
+                        "label": "什麼都不缺"
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "任務和形式都有。但誰來讀——客戶、你的主管還是同事——決定了語氣，而模型只能用猜的。"
+                  }
+                },
+                {
+                  "id": "try-it",
+                  "type": "prompt_exercise",
+                  "order": 5,
+                  "content": {
+                    "instruction": "改寫這個請求，讓它說明任務、讀者和形式。",
+                    "starting_text": "解釋一下機器學習。",
+                    "hint": "誰來讀？要多長？答案一定要包含什麼？",
+                    "sample_answer": "向一位沒有技術背景的同事解釋機器學習，控制在 150 字以內，用一個日常生活的例子，不要用術語。"
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "任務、讀者、形式。答案令人失望時，往往是少了其中一項。"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "give-useful-context",
+              "title": "提供有用的脈絡",
+              "description": "模型需要知道什麼，什麼只會造成干擾。",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 2,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "模型對你的專案、團隊或上週做出的決定一無所知。它只根據眼前的資訊回答——凡是你沒提到的，它都會編出一個看似合理的替代品。"
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "脈絡就是會改變答案的資訊",
+                    "body": "有用的脈絡，是任何會改變一位內行人答案的資訊：限制條件、受眾、你已經試過的方法、必須遵守的格式。其他的都是干擾。只有三句話重要，卻貼上整份文件，並不會讓答案更好——反而會稀釋你真正想要的東西。"
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "同一個問題，不同的脈絡",
+                    "body": "「這個設計好嗎？」得到的是一份通用的檢查清單。\n\n「對於一個每週發布、沒有專職維運工程師的三人團隊來說，這個設計好嗎？」得到的是關於維運成本的回答——因為限制條件被說明了。"
+                  }
+                },
+                {
+                  "id": "warning",
+                  "type": "warning",
+                  "order": 4,
+                  "content": {
+                    "body": "脈絡不是貼上機密的地方。登入憑證、他人的個人資料和機密文件，並不會因為有用就變得安全。"
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 5,
+                  "content": {
+                    "question": "你想請人看看一份求職申請。哪個細節值得補充？",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "應徵的職位以及徵才啟事的要求"
+                      },
+                      {
+                        "id": "b",
+                        "label": "你的完整地址和出生日期"
+                      },
+                      {
+                        "id": "c",
+                        "label": "你開始寫申請的日期"
+                      }
+                    ],
+                    "correct_option_id": "a",
+                    "explanation": "職位會改變答案，你的地址不會——而且那是沒有理由出現在那裡的個人資料。"
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "補充會改變內行人答案的資訊，其餘都省略，也永遠不要貼上你不希望被儲存的內容。"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "iterate-instead-of-restarting",
+              "title": "反覆修改，而不是重頭來過",
+              "description": "價值在第二則訊息裡。",
+              "estimated_minutes": 3,
+              "difficulty": "beginner",
+              "order": 3,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "答案已經差不多對了。大多數人卻把它刪掉，重寫整個請求。這樣就把原本有用的部分也丟掉了。"
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "修改，而不是重來",
+                    "body": "把第一個答案當成可以透過對話修改的草稿。先說要保留什麼，再說要改什麼。「保留結構，把第二點寫具體，刪掉最後一段」一步就能到位。重新開始等於再擲一次骰子。"
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "comparison",
+                  "order": 3,
+                  "content": {
+                    "worse_label": "重頭來過",
+                    "worse": "這不是我要的。幫我寫一份更好的摘要。",
+                    "better_label": "修改",
+                    "better": "結構很好。第 2 點太抽象了——換成文中的具體數字。刪掉結尾段落。",
+                    "note": "第二種保留了有用的部分。第一種則讓模型在沒有任何新資訊的情況下重新猜一次。"
+                  }
+                },
+                {
+                  "id": "tip",
+                  "type": "tip",
+                  "order": 4,
+                  "content": {
+                    "body": "如果改了兩輪還是不對，問題通常出在最初的請求，而不是答案。回頭把缺少的資訊補上。"
+                  }
+                },
+                {
+                  "id": "practice",
+                  "type": "prompt_exercise",
+                  "order": 5,
+                  "content": {
+                    "instruction": "你收到的答案太正式，也太長。請寫出修改意見——不要重寫請求。",
+                    "starting_text": "",
+                    "hint": "說出一處要保留的，和兩處要修改的。",
+                    "sample_answer": "保留三個部分。篇幅縮短到大約一半，語氣改成跟同事說話，而不是跟客戶說話。"
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "先說保留什麼，再說修改什麼。重頭來過會丟掉已經有用的部分。"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "verify-and-protect",
+      "pillar": "learn_ai",
+      "title": "查證與保護",
+      "description": "查證重要的內容，保護敏感資訊。",
+      "icon": "shield-check",
+      "order": 3,
+      "tags": [
+        "general"
+      ],
+      "modules": [
+        {
+          "id": "verify-and-protect-foundations",
+          "title": "信任，但要查證",
+          "description": "答案容易出錯的地方，以及絕不能分享的內容。",
+          "order": 1,
+          "lessons": [
+            {
+              "id": "why-ai-hallucinates",
+              "title": "為什麼 AI 會產生「幻覺」",
+              "description": "以及如何判斷哪些答案值得查證。",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 1,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "幻覺不是故障。它是系統在做它一貫做的事——產生看似合理的接續——只不過是在「看似合理」與「真實」已經分道揚鑣的地方。"
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "風險集中在哪裡",
+                    "body": "最容易捏造的，是那些具體、可查證但不常見的內容：精確引文、頁碼、統計數據、法律條文、API 方法、人物生平。模型看過這類內容的樣子成千上萬次，所以只要被問到，就能產生一個很有說服力的版本。\n\n當答案屬於常識，或者原始文字是你自己提供的時候，捏造的可能性最小。"
+                  }
+                },
+                {
+                  "id": "tip",
+                  "type": "tip",
+                  "order": 3,
+                  "content": {
+                    "body": "問一句「你的來源是什麼？」本身沒有用——來源也可能是編的。真正有用的是去查證來源。"
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 4,
+                  "content": {
+                    "question": "哪個答案最值得查證？",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "改寫你自己貼上的一段文字"
+                      },
+                      {
+                        "id": "b",
+                        "label": "一個帶有年份和百分比的具體統計數據"
+                      },
+                      {
+                        "id": "c",
+                        "label": "一份團隊名稱的點子清單"
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "具體、可查證，又不是你提供的——恰恰是在這裡，看似合理的捏造最難被發現。"
+                  }
+                },
+                {
+                  "id": "reflection",
+                  "type": "reflection",
+                  "order": 5,
+                  "content": {
+                    "prompt": "想一個你會用 AI 完成的任務。它的答案中，哪一部分如果悄悄出錯，會造成真正的問題？",
+                    "hint": "每一次都要查證的，正是這一部分。"
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "查證那些具體、可查證、又不是出自你的內容。不要因為聽起來很確定就相信任何東西。"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "verify-output",
+              "title": "查核輸出",
+              "description": "檢查計算、來源、主張與假設。",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 2,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "idea",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "heading": "查核",
+                    "body": "查核是獨立的工程步驟。問同一個模型它是否確定，並不是獨立的檢查。"
+                  }
+                },
+                {
+                  "id": "scenario",
+                  "type": "example",
+                  "order": 2,
+                  "content": {
+                    "label": "情境",
+                    "body": "AI 為一項結構分析提供了負載計算。"
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 3,
+                  "content": {
+                    "question": "使用之前你應該怎麼做？",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "因為有標示單位，直接使用。"
+                      },
+                      {
+                        "id": "b",
+                        "label": "獨立查核假設、單位與計算。"
+                      },
+                      {
+                        "id": "c",
+                        "label": "問 AI 它是否確定。"
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "在依賴結果之前，用可靠的方法或來源檢查負載情況、單位、方程式與邊界條件。"
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 4,
+                  "content": {
+                    "body": "用模型無法左右的方法或來源，查證你所依賴的內容。再問一次模型並不是查證。"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "confidential-information",
+              "title": "機密資訊",
+              "description": "了解哪些內容不能傳送到未經授權的系統。",
+              "estimated_minutes": 3,
+              "difficulty": "beginner",
+              "order": 3,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "idea",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "heading": "隱私",
+                    "body": "只分享該工具與你的學校獲准處理的資料。"
+                  }
+                },
+                {
+                  "id": "scenario",
+                  "type": "example",
+                  "order": 2,
+                  "content": {
+                    "label": "情境",
+                    "body": "一份專案文件包含學生學號、供應商資料和一組內部存取權杖。"
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 3,
+                  "content": {
+                    "question": "負責任的下一步是什麼？",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "因為是課業任務，全部貼上。"
+                      },
+                      {
+                        "id": "b",
+                        "label": "只刪除學生姓名。"
+                      },
+                      {
+                        "id": "c",
+                        "label": "使用經核准的系統，並刪除機密金鑰以及不必要的個人或機密資料。"
+                      }
+                    ],
+                    "correct_option_id": "c",
+                    "explanation": "授權與資料最小化同樣重要。絕不能包含登入憑證，不必要的敏感背景也應移除。"
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 4,
+                  "content": {
+                    "body": "只分享工具獲准處理的內容，刪除機密資訊和不必要的個人資料，永遠不要貼上登入憑證。"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "responsible-use",
+              "title": "負責任地使用",
+              "description": "辨識何時使用 AI 是適當、受限或被禁止的。",
+              "estimated_minutes": 3,
+              "difficulty": "beginner",
+              "order": 4,
+              "version": 1,
+              "tags": [
+                "general",
+                "student"
+              ],
+              "blocks": [
+                {
+                  "id": "idea",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "heading": "負責任的實踐",
+                    "body": "正確的使用方式取決於任務、課程規定、工具是否獲准，以及所需的人類當責程度。"
+                  }
+                },
+                {
+                  "id": "scenario",
+                  "type": "example",
+                  "order": 2,
+                  "content": {
+                    "label": "情境",
+                    "body": "一份計分作業的規定沒有說清楚能否借助生成式 AI。"
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 3,
+                  "content": {
+                    "question": "你應該怎麼做？",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "悄悄使用 AI，因為大家可能都在用。"
+                      },
+                      {
+                        "id": "b",
+                        "label": "讓 AI 完成最終繳交內容，再改幾個字。"
+                      },
+                      {
+                        "id": "c",
+                        "label": "查看課程規定，不清楚時提問，並說明獲准使用的協助。"
+                      }
+                    ],
+                    "correct_option_id": "c",
+                    "explanation": "負責任的使用尊重學習目標與既定規則。規定不明確時，先釐清再依賴 AI。"
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 4,
+                  "content": {
+                    "body": "使用 AI 之前先了解任務的規則，規則不清楚時就去問，並說明你使用了哪些協助。"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "adapt-to-your-field",
+      "pillar": "adapt_ai",
+      "title": "適應你的領域",
+      "description": "讓 AI 適應你的工作，而不是反過來。",
+      "icon": "settings-2",
+      "order": 4,
+      "tags": [
+        "general",
+        "student",
+        "engineering",
+        "marketing",
+        "developer",
+        "creator",
+        "management"
+      ],
+      "modules": [
+        {
+          "id": "adapt-ai-foundations",
+          "title": "貼合你的工作",
+          "description": "從一次性的答案，到可以重複使用的成果。",
+          "order": 1,
+          "lessons": [
+            {
+              "id": "an-assistant-for-your-work",
+              "title": "把 AI 變成工作或學習助理",
+              "description": "把你的狀況說明一次，從此不再重複。",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 1,
+              "version": 1,
+              "tags": [
+                "general",
+                "student",
+                "management"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "大多數人每次提問都要重新解釋自己是誰、在做什麼。真正節省時間的助理，是你只描述過一次的那一個。"
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "長期指示",
+                    "body": "長期指示是三四句在許多請求中都成立的話：你的角色、你通常面向的讀者、你想要的語氣，以及你絕對不想要的東西。寫一次，之後的每個請求都能變得很短。\n\n在 Nova 中，寫作風格正是為此而設：指示放在一個地方，每次選擇這個風格時都會套用。"
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "長期指示",
+                    "body": "「我是工程系二年級學生。我為一位重視準確勝過篇幅的指導老師寫實驗報告。請使用清楚、專業的中文。不要用重複內文的開頭或結尾來湊字數。」\n\n現在，之後的每個請求只需要兩行，而不是十行。"
+                  }
+                },
+                {
+                  "id": "practice",
+                  "type": "prompt_exercise",
+                  "order": 4,
+                  "content": {
+                    "instruction": "用三四句話寫出你自己的長期指示。",
+                    "starting_text": "",
+                    "hint": "角色、常見讀者、語氣，以及一件你絕對不想要的事。",
+                    "sample_answer": "我是產品經理，替工程師和設計師寫作。請具體、簡潔；多用例子，少用形容詞。絕對不要以複述我剛才的問題開頭。"
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 5,
+                  "content": {
+                    "body": "把你的狀況在一個能保存的地方說明一次。之後每個請求都會更短。"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "build-a-reusable-workflow",
+              "title": "建立可重複使用的流程",
+              "description": "把你反覆在做的任務，變成可以直接執行的東西。",
+              "estimated_minutes": 4,
+              "difficulty": "intermediate",
+              "order": 2,
+              "version": 1,
+              "tags": [
+                "general",
+                "engineering",
+                "marketing",
+                "developer"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "如果你已經把幾乎一樣的請求寫了三次，那它就不再是一個請求，而是一個你還沒寫下來的流程。"
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "固定的指示，可變的輸入",
+                    "body": "流程會把永遠不變的部分和會變動的部分分開。指示——做什麼、給誰、以什麼形式、檢查什麼——是固定的。你輸入的文字每次都不一樣。\n\n一旦分開，固定的部分就能儲存並重複使用，也不會再因為每次憑記憶重打而走樣。"
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "comparison",
+                  "order": 3,
+                  "content": {
+                    "worse_label": "每次重打",
+                    "worse": "你能看看這些會議紀錄，把我要做的事挑出來嗎？",
+                    "better_label": "一個流程",
+                    "better": "從下面的紀錄中，只擷取指派給我的任務。每項任務一行，以動詞開頭，有註明截止日期就一併寫上。如果沒有指派給我的任務，就直接說明並停止。",
+                    "note": "第二種值得儲存。它還說明了找不到內容時該怎麼辦——而重打的版本恰恰會在這時悄悄編出任務。"
+                  }
+                },
+                {
+                  "id": "tip",
+                  "type": "tip",
+                  "order": 4,
+                  "content": {
+                    "body": "一定要告訴流程，輸入不符合時該怎麼做。這一句話就能避免大多數捏造的結果。"
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 5,
+                  "content": {
+                    "question": "流程的固定部分應該包含什麼？",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "這次要處理的文字"
+                      },
+                      {
+                        "id": "b",
+                        "label": "好結果應符合的規則"
+                      },
+                      {
+                        "id": "c",
+                        "label": "今天的日期"
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "規則是你不想再重打的部分，輸入則是會變動的部分。"
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "把固定的指示和變動的輸入分開，並說明找不到內容時該怎麼辦。"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "adapt-ai-to-your-domain",
+              "title": "讓 AI 適應你的領域",
+              "description": "你的領域所要求的術語、慣例和檢驗標準。",
+              "estimated_minutes": 5,
+              "difficulty": "intermediate",
+              "order": 3,
+              "version": 1,
+              "tags": [
+                "engineering",
+                "marketing",
+                "developer",
+                "creator",
+                "student",
+                "management"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "籠統的答案之所以籠統，是因為請求裡沒說明你身處哪個領域。你的領域有自己的術語、慣例和論證標準——而這些從外面都看不出來。"
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "你的領域期待的三件事",
+                    "body": "說明你使用的術語，避免答案被轉換成別人的說法。說明你遵循的慣例——報告結構、commit 訊息的寫法、機構的行文風格。再說明檢驗標準：在你的領域裡，什麼樣的答案才算合格，而不只是合理。\n\n第三點是大多數人會漏掉的，也恰恰是最有作用的。"
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "同一個請求在三個領域",
+                    "body": "工程：「說明每個數字背後的假設。如果某個數值是估算而非實測，請標註出來。」\n\n行銷：「符合我們的行文風格：直接，不用誇大的形容詞。給兩個版本，方便我們比較。」\n\n開發：「遵循檔案中既有的慣例。如果某種做法需要我們沒有的相依套件，請直接說明，不要自行加入。」"
+                  }
+                },
+                {
+                  "id": "ai-practice",
+                  "type": "ai_exercise",
+                  "order": 4,
+                  "content": {
+                    "exercise_id": "adapt-domain-request",
+                    "instruction": "為你所在領域的一項任務寫一個請求。說明術語、慣例，以及讓答案能被接受的檢驗標準。",
+                    "starting_text": "",
+                    "hint": "檢驗標準是大多數人會忘記的部分：什麼會讓你否決一個其他方面都合理的答案？"
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 5,
+                  "content": {
+                    "body": "術語、慣例，以及你所在領域採用的檢驗標準。正是檢驗標準，讓合理的答案變得可用。"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "ai-in-engineering",
+              "title": "工程中的 AI",
+              "description": "把 AI 當作工具，而不是思考的替代品。",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 4,
+              "version": 1,
+              "tags": [
+                "engineering",
+                "student"
+              ],
+              "blocks": [
+                {
+                  "id": "idea",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "heading": "工程 AI",
+                    "body": "當工程師仍然負責時，AI 作為探索、起草與批判的協作者最能發揮作用。"
+                  }
+                },
+                {
+                  "id": "scenario",
+                  "type": "example",
+                  "order": 2,
+                  "content": {
+                    "label": "情境",
+                    "body": "你正在比較一顆小型衛星某個子系統的兩種概念設計。"
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 3,
+                  "content": {
+                    "question": "哪種工作流程最能發揮 AI 的作用？",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "讓 AI 選擇概念，並照抄它的理由。"
+                      },
+                      {
+                        "id": "b",
+                        "label": "用它找出取捨，再查核限制條件並記錄你的決策。"
+                      },
+                      {
+                        "id": "c",
+                        "label": "為了讓報告簡短，不記錄假設。"
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "AI 會強化工程判斷，但無法取代驗證、可追溯性與當責。"
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 4,
+                  "content": {
+                    "body": "讓 AI 提出選項和取捨，接著加以驗證，記錄你的假設，並對決定負責。"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "exercises": [
+    {
+      "id": "adapt-domain-request",
+      "task": "learning_feedback",
+      "instruction": "You are helping someone learn to write better requests to an AI assistant. They were asked to write a request for a task in their own professional or academic field, naming three things: the vocabulary of their field, the convention they follow, and the check that makes an answer acceptable rather than merely reasonable.\n\nRead their attempt and reply in at most four short sentences. Say plainly which of the three are present and which are missing. Then give one concrete improvement, rewriting a fragment of their own request rather than replacing it with yours. Do not score them, do not use percentages, and do not praise without a reason. If their request is already complete, say so and name the strongest part.\n\nReply in the language they wrote in."
+    }
+  ]
+}

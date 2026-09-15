@@ -1,0 +1,1096 @@
+{
+  "catalog_version": 2,
+  "locale": "sv",
+  "paths": [
+    {
+      "id": "getting-started",
+      "pillar": "learn_ai",
+      "title": "Kom igång",
+      "description": "Vad AI gör bra, var den brister och hur du arbetar med den.",
+      "icon": "brain",
+      "order": 1,
+      "tags": [
+        "general"
+      ],
+      "modules": [
+        {
+          "id": "getting-started-foundations",
+          "title": "Grunderna",
+          "description": "Tillräckligt för att använda AI med omdöme från första dagen.",
+          "order": 1,
+          "lessons": [
+            {
+              "id": "working-with-ai",
+              "title": "Arbeta med AI",
+              "description": "Förstå vad AI kan och inte kan göra.",
+              "estimated_minutes": 3,
+              "difficulty": "beginner",
+              "order": 1,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "idea",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "heading": "AI-principer",
+                    "body": "AI kan snabbt ta fram användbara alternativ, men en välformulerad text bevisar inte att svaret är rätt."
+                  }
+                },
+                {
+                  "id": "scenario",
+                  "type": "example",
+                  "order": 2,
+                  "content": {
+                    "label": "En situation",
+                    "body": "En AI-assistent föreslår ett konstruktionsval för ett flyg- och rymdprojekt och presenterar det med stor säkerhet."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 3,
+                  "content": {
+                    "question": "Vilken roll är mest användbar för AI här?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Ersätta det tekniska beslutet."
+                      },
+                      {
+                        "id": "b",
+                        "label": "Ge ett lösningsförslag som en ingenjör bedömer."
+                      },
+                      {
+                        "id": "c",
+                        "label": "Godkänna valet eftersom förklaringen låter teknisk."
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "Använd AI för att bredda alternativen du kan granska. Det tekniska omdömet ansvarar fortfarande för antaganden, belägg och det slutliga beslutet."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 4,
+                  "content": {
+                    "body": "Använd AI för att bredda de alternativ du prövar. Beslutet, och skälen bakom det, är fortfarande dina."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "what-an-llm-does",
+              "title": "Vad en LLM faktiskt gör",
+              "description": "Den förutsäger text. Det enda faktumet förklarar det mesta av dess beteende.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 2,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "En språkmodell slår inte upp saker, och den resonerar inte som en människa. Den förutsäger vilken text som rimligen kommer härnäst. Nästan allt som överraskar med de här systemen följer av den enda meningen."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Förutsägelse, tränad i stor skala",
+                    "body": "Under träningen såg modellen enorma mängder text och blev mycket bra på att fortsätta den. Ingenting lagras som fakta i en databas. Det den lärde sig är vilka ord som brukar följa på vilka – i grammatik, i hur ett resonemang byggs upp, i kod och i konventioner.\n\nDärför skriver den ledigt om saker den inte har någon möjlighet att veta, och därför bevisar ett ledigt språk inte att något stämmer."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "Varför det hjälper att veta detta",
+                    "body": "Be om en välkänd formel så får du oftast rätt – den förekom om och om igen i träningstexterna.\n\nBe om sidnumret för ett citat i en viss utgåva så kan du få ett självsäkert påhittat nummer. Det är en rimlig fortsättning. Det var aldrig en sökning."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 4,
+                  "content": {
+                    "question": "Varför kan en modell skriva ett ledigt svar som är fel?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Ledighet och korrekthet kommer ur samma process – den rimliga fortsättningen"
+                      },
+                      {
+                        "id": "b",
+                        "label": "Den fick slut på minne"
+                      },
+                      {
+                        "id": "c",
+                        "label": "Den tränades på dålig grammatik"
+                      }
+                    ],
+                    "correct_option_id": "a",
+                    "explanation": "Att låta rätt och att vara rätt kommer ur samma mekanism. Därför säger stilen i ett svar ingenting om dess sanning."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 5,
+                  "content": {
+                    "body": "Den förutsäger text. Säkerhet är en egenskap hos formuleringen, inte hos fakta."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "context-and-tokens",
+              "title": "Kontext och tokens",
+              "description": "Varför långa samtal glider iväg, och vad modellen faktiskt ser.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 3,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Mitt i ett långt samtal glömmer modellen ett villkor du satte i början. Den är inte slarvig. Det finns en gräns för vad den kan se på en gång, och du har passerat den."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Tokens och fönstret",
+                    "body": "Text delas upp i tokens – ungefär ordbitar. På engelska motsvarar en token ofta ungefär tre fjärdedelar av ett ord. Allt modellen tar hänsyn till på en gång, dina meddelanden och dess egna svar tillsammans, måste rymmas i ett kontextfönster av fast storlek.\n\nNär samtalet blir längre än så slutar de äldsta delarna att synas. Modellen minns inte ett samtal; den läser om det som fortfarande får plats."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "Vad det ändrar i praktiken",
+                    "body": "Om en regel är viktig – ”svara alltid på svenska”, ”aldrig mer än 200 ord” – upprepa den i det meddelande där den spelar roll, i stället för att lita på att den överlevt tjugo repliker.\n\nOch om samtalet har glidit långt iväg fungerar ett nytt samtal med en tydlig sammanfattning oftast bättre än att fortsätta i ett överfullt."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 4,
+                  "content": {
+                    "question": "Ett långt samtal slutar följa en instruktion från början. Vad är den troligaste orsaken?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Instruktionen har hamnat utanför kontextfönstret"
+                      },
+                      {
+                        "id": "b",
+                        "label": "Modellen har bestämt sig för att ignorera dig"
+                      },
+                      {
+                        "id": "c",
+                        "label": "Instruktionen var grammatiskt fel"
+                      }
+                    ],
+                    "correct_option_id": "a",
+                    "explanation": "Det som inte längre finns i fönstret kunde lika gärna aldrig ha sagts. Upprepa villkoret där det spelar roll."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 5,
+                  "content": {
+                    "body": "Modellen ser ett fönster, inte ett minne. Upprepa det som är viktigt och börja om när samtalet blivit överfullt."
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "asking-well",
+      "pillar": "use_ai",
+      "title": "Fråga rätt",
+      "description": "Bättre svar genom bättre frågor.",
+      "icon": "message-square",
+      "order": 2,
+      "tags": [
+        "general"
+      ],
+      "modules": [
+        {
+          "id": "use-ai-foundations",
+          "title": "Vanorna som ändrar svaret",
+          "description": "De tre vanorna som ändrar svaret du får.",
+          "order": 1,
+          "lessons": [
+            {
+              "id": "ask-better-questions",
+              "title": "Ställa bättre frågor",
+              "description": "Säg vad du vill ha, för vem och i vilken form.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 1,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Du ber om en sammanfattning. Tillbaka kommer tre intetsägande stycken som du ändå måste skriva om. Modellen misslyckades inte – ingen berättade för den hur ett bra svar skulle se ut."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "En förfrågan har tre delar",
+                    "body": "En användbar förfrågan anger uppgiften, läsaren och svarets form. Utelämna någon av dem så fyller modellen luckan med en genomsnittlig gissning. Uppgiften säger vad som ska göras. Läsaren styr ordval och detaljnivå. Formen – längd, format, vad som ska behållas – är det som gör att du slipper skriva om resultatet."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "comparison",
+                  "order": 3,
+                  "content": {
+                    "worse_label": "Vag",
+                    "worse": "Sammanfatta det här.",
+                    "better_label": "Specifik",
+                    "better": "Sammanfatta den här texten i 5 punkter för någon som är ny inom ämnet. Behåll de viktiga siffrorna och avsluta med de 2 idéer som är värda att komma ihåg.",
+                    "note": "Den andra versionen anger uppgift, läsare och form. Det finns inget smart med den – den är bara komplett."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 4,
+                  "content": {
+                    "question": "Vilken del saknas i ”Skriv om det här mejlet så att det blir kortare”?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Uppgiften"
+                      },
+                      {
+                        "id": "b",
+                        "label": "Läsaren"
+                      },
+                      {
+                        "id": "c",
+                        "label": "Ingenting saknas"
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "Uppgiften och formen finns där. Vem som läser – en kund, din chef, en kollega – avgör tonen, och den måste modellen gissa."
+                  }
+                },
+                {
+                  "id": "try-it",
+                  "type": "prompt_exercise",
+                  "order": 5,
+                  "content": {
+                    "instruction": "Skriv om den här förfrågan så att den anger uppgift, läsare och form.",
+                    "starting_text": "Förklara maskininlärning.",
+                    "hint": "Vem läser? Hur långt ska det vara? Vad måste svaret innehålla?",
+                    "sample_answer": "Förklara maskininlärning för en kollega utan teknisk bakgrund, på under 150 ord, med ett vardagligt exempel och utan jargong."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "Uppgift, läsare, form. När ett svar gör dig besviken saknades en av de tre."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "give-useful-context",
+              "title": "Ge användbar kontext",
+              "description": "Vad modellen behöver veta, och vad som bara är brus.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 2,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Modellen vet ingenting om ditt projekt, ditt team eller beslutet ni tog förra veckan. Den svarar utifrån det som ligger framför den – och för allt du utelämnar hittar den på en rimlig ersättning."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Kontext är det som ändrar svaret",
+                    "body": "Användbar kontext är allt som skulle ändra svaret från en kompetent person: begränsningar, målgrupp, vad du redan har provat, formatet du måste hålla dig till. Allt annat är brus. Att klistra in ett helt dokument när tre meningar spelar roll gör inte svaret bättre – det späder ut det du faktiskt ville ha."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "Samma fråga, annan kontext",
+                    "body": "”Är det här en bra design?” får en allmän checklista.\n\n”Är det här en bra design för ett team på tre som släpper varje vecka och saknar en egen driftingenjör?” får ett svar om driftkostnad – eftersom begränsningen nämndes."
+                  }
+                },
+                {
+                  "id": "warning",
+                  "type": "warning",
+                  "order": 4,
+                  "content": {
+                    "body": "Kontext är inte en plats för hemligheter. Inloggningsuppgifter, personuppgifter om andra och konfidentiella dokument blir inte säkra för att de är användbara."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 5,
+                  "content": {
+                    "question": "Du vill ha synpunkter på en jobbansökan. Vilken detalj är värd att lägga till?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Tjänsten och vad annonsen efterfrågar"
+                      },
+                      {
+                        "id": "b",
+                        "label": "Din fullständiga adress och ditt födelsedatum"
+                      },
+                      {
+                        "id": "c",
+                        "label": "Datumet då du började skriva den"
+                      }
+                    ],
+                    "correct_option_id": "a",
+                    "explanation": "Tjänsten ändrar svaret. Din adress gör det inte – och det är en personuppgift som inte har något där att göra."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "Lägg till det som skulle ändra en kompetent persons svar. Utelämna resten, och klistra aldrig in något du inte vill ska sparas."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "iterate-instead-of-restarting",
+              "title": "Justera i stället för att börja om",
+              "description": "Värdet finns i det andra meddelandet.",
+              "estimated_minutes": 3,
+              "difficulty": "beginner",
+              "order": 3,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Svaret är nästan rätt. De flesta raderar det och skriver om hela förfrågan. Då kastar de bort den del som fungerade."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Rätta, börja inte om",
+                    "body": "Behandla det första svaret som ett utkast du redigerar genom att prata. Säg vad som ska behållas, sedan vad som ska ändras. ”Behåll strukturen, gör andra punkten konkret, stryk sista stycket” tar dig dit i ett steg. Att börja om är att slå tärningen igen."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "comparison",
+                  "order": 3,
+                  "content": {
+                    "worse_label": "Börja om",
+                    "worse": "Det var inte det jag ville ha. Skriv en bättre sammanfattning.",
+                    "better_label": "Rätta",
+                    "better": "Bra struktur. Punkt 2 är för abstrakt – byt ut den mot den exakta siffran från texten. Stryk avslutningsstycket.",
+                    "note": "Den andra behåller det som fungerade. Den första ber modellen gissa igen, utan mer information än tidigare."
+                  }
+                },
+                {
+                  "id": "tip",
+                  "type": "tip",
+                  "order": 4,
+                  "content": {
+                    "body": "Om två rättningsrundor inte leder fram ligger problemet oftast i den ursprungliga förfrågan, inte i svaret. Gå tillbaka och lägg till det som saknades."
+                  }
+                },
+                {
+                  "id": "practice",
+                  "type": "prompt_exercise",
+                  "order": 5,
+                  "content": {
+                    "instruction": "Svaret du fick är för formellt och för långt. Skriv rättelsen – skriv inte om förfrågan.",
+                    "starting_text": "",
+                    "hint": "Nämn en sak att behålla och två att ändra.",
+                    "sample_answer": "Behåll de tre avsnitten. Korta ner till ungefär hälften och använd den ton du skulle ha mot en kollega snarare än mot en kund."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "Säg vad som ska behållas innan du säger vad som ska ändras. Att börja om kastar bort det som redan fungerade."
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "verify-and-protect",
+      "pillar": "learn_ai",
+      "title": "Kontrollera och skydda",
+      "description": "Kontrollera det som spelar roll och skydda känslig information.",
+      "icon": "shield-check",
+      "order": 3,
+      "tags": [
+        "general"
+      ],
+      "modules": [
+        {
+          "id": "verify-and-protect-foundations",
+          "title": "Lita, men kontrollera",
+          "description": "Var svaren blir fel och vad som aldrig får delas.",
+          "order": 1,
+          "lessons": [
+            {
+              "id": "why-ai-hallucinates",
+              "title": "Varför AI kan hallucinera",
+              "description": "Och hur du ser vilka svar som är värda att kontrollera.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 1,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "En hallucination är inget tekniskt fel. Det är systemet som gör exakt det det gör – skapar en rimlig fortsättning – på ett ställe där rimligt och sant har gått isär."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Där risken samlas",
+                    "body": "Påhitt är mest sannolikt där texten är specifik och kontrollerbar men ovanlig: exakta citat, sidnummer, statistik, juridiska hänvisningar, API-metoder, biografier. Modellen har sett formen på sådant tusentals gånger och kan därför ta fram något övertygande på beställning.\n\nDet är minst sannolikt när svaret är allmänt känt, eller när du själv har gett den källtexten."
+                  }
+                },
+                {
+                  "id": "tip",
+                  "type": "tip",
+                  "order": 3,
+                  "content": {
+                    "body": "Att fråga ”vad är din källa?” hjälper inte i sig – källan kan också vara påhittad. Att kontrollera källan hjälper."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 4,
+                  "content": {
+                    "question": "Vilket svar är mest värt att kontrollera?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "En omskrivning av ett stycke du själv klistrade in"
+                      },
+                      {
+                        "id": "b",
+                        "label": "En specifik statistikuppgift med årtal och procentsats"
+                      },
+                      {
+                        "id": "c",
+                        "label": "En lista med idéer till ett lagnamn"
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "Specifikt, kontrollerbart och inte tillhandahållet av dig – just där är ett rimligt påhitt svårast att upptäcka."
+                  }
+                },
+                {
+                  "id": "reflection",
+                  "type": "reflection",
+                  "order": 5,
+                  "content": {
+                    "prompt": "Tänk på en uppgift du använder AI till. Vilken del av svaret skulle orsaka ett verkligt problem om den i tysthet var fel?",
+                    "hint": "Det är den delen du ska kontrollera, varje gång."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "Kontrollera det som är specifikt, kontrollerbart och inte kommer från dig. Lita inte på något bara för att det låter säkert."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "verify-output",
+              "title": "Kontrollera resultatet",
+              "description": "Granska beräkningar, källor, påståenden och antaganden.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 2,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "idea",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "heading": "Verifiering",
+                    "body": "Verifiering är ett separat tekniskt steg. Att fråga samma modell om den är säker är ingen oberoende kontroll."
+                  }
+                },
+                {
+                  "id": "scenario",
+                  "type": "example",
+                  "order": 2,
+                  "content": {
+                    "label": "En situation",
+                    "body": "En AI ger dig en lastberäkning för en strukturanalys."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 3,
+                  "content": {
+                    "question": "Vad bör du göra innan du använder den?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Använda den direkt eftersom enheterna visas."
+                      },
+                      {
+                        "id": "b",
+                        "label": "Kontrollera antaganden, enheter och beräkningar oberoende av AI:n."
+                      },
+                      {
+                        "id": "c",
+                        "label": "Fråga AI:n om den är säker."
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "Kontrollera lastfall, enheter, ekvationer och randvillkor med pålitliga metoder eller källor innan du förlitar dig på resultatet."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 4,
+                  "content": {
+                    "body": "Kontrollera det du förlitar dig på med en metod eller källa som modellen inte styr. Att fråga den igen är ingen kontroll."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "confidential-information",
+              "title": "Konfidentiell information",
+              "description": "Vet vad som inte får skickas till ett system som inte är godkänt.",
+              "estimated_minutes": 3,
+              "difficulty": "beginner",
+              "order": 3,
+              "version": 1,
+              "tags": [
+                "general"
+              ],
+              "blocks": [
+                {
+                  "id": "idea",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "heading": "Integritet",
+                    "body": "Dela bara data som verktyget och ditt lärosäte har rätt att behandla."
+                  }
+                },
+                {
+                  "id": "scenario",
+                  "type": "example",
+                  "order": 2,
+                  "content": {
+                    "label": "En situation",
+                    "body": "Ett projektdokument innehåller student-id, leverantörsdata och en intern åtkomsttoken."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 3,
+                  "content": {
+                    "question": "Vilket är det ansvarsfulla nästa steget?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Klistra in allt eftersom uppgiften är akademisk."
+                      },
+                      {
+                        "id": "b",
+                        "label": "Ta bort bara studenternas namn."
+                      },
+                      {
+                        "id": "c",
+                        "label": "Använda ett godkänt system och ta bort hemligheter och onödiga personliga eller konfidentiella uppgifter."
+                      }
+                    ],
+                    "correct_option_id": "c",
+                    "explanation": "Både behörighet och dataminimering spelar roll. Inloggningsuppgifter får aldrig tas med, och onödigt känsligt sammanhang bör tas bort."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 4,
+                  "content": {
+                    "body": "Dela bara det verktyget har rätt att behandla, ta bort hemligheter och onödiga personuppgifter, och klistra aldrig in inloggningsuppgifter."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "responsible-use",
+              "title": "Ansvarsfull användning",
+              "description": "Känn igen när AI-användning är lämplig, begränsad eller förbjuden.",
+              "estimated_minutes": 3,
+              "difficulty": "beginner",
+              "order": 4,
+              "version": 1,
+              "tags": [
+                "general",
+                "student"
+              ],
+              "blocks": [
+                {
+                  "id": "idea",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "heading": "Ansvarsfull praxis",
+                    "body": "Rätt användning beror på uppgiften, kursens regler, verktygets godkännande och hur mycket mänskligt ansvar som krävs."
+                  }
+                },
+                {
+                  "id": "scenario",
+                  "type": "example",
+                  "order": 2,
+                  "content": {
+                    "label": "En situation",
+                    "body": "Reglerna för en betygsatt uppgift är otydliga om hjälp från generativ AI."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 3,
+                  "content": {
+                    "question": "Vad bör du göra?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Använda AI i smyg eftersom alla antagligen gör det."
+                      },
+                      {
+                        "id": "b",
+                        "label": "Låta AI:n skriva slutinlämningen och sedan ändra några ord."
+                      },
+                      {
+                        "id": "c",
+                        "label": "Läsa kursens regler, fråga om något är oklart och redovisa tillåten hjälp."
+                      }
+                    ],
+                    "correct_option_id": "c",
+                    "explanation": "Ansvarsfull användning respekterar lärandemålet och de regler som gäller. Om reglerna är oklara, reda ut dem innan du förlitar dig på AI."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 4,
+                  "content": {
+                    "body": "Känn till uppgiftens regler innan du använder AI, fråga när de är oklara, och berätta vilken hjälp du har använt."
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "adapt-to-your-field",
+      "pillar": "adapt_ai",
+      "title": "Anpassa till ditt område",
+      "description": "Låt den passa ditt arbete, inte tvärtom.",
+      "icon": "settings-2",
+      "order": 4,
+      "tags": [
+        "general",
+        "student",
+        "engineering",
+        "marketing",
+        "developer",
+        "creator",
+        "management"
+      ],
+      "modules": [
+        {
+          "id": "adapt-ai-foundations",
+          "title": "Anpassad till ditt arbete",
+          "description": "Från enstaka svar till något du kan återanvända.",
+          "order": 1,
+          "lessons": [
+            {
+              "id": "an-assistant-for-your-work",
+              "title": "Gör AI till en assistent för arbete eller studier",
+              "description": "Beskriv din situation en gång och sluta upprepa den.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 1,
+              "version": 1,
+              "tags": [
+                "general",
+                "student",
+                "management"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "De flesta förklarar på nytt i varje förfrågan vilka de är och vad de arbetar med. Assistenten som verkligen sparar tid är den du har beskrivit en gång."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "En stående instruktion",
+                    "body": "En stående instruktion är tre eller fyra meningar som gäller över många förfrågningar: din roll, vilka du oftast skriver för, tonen du vill ha och det du aldrig vill ha. Skriven en gång gör den varje senare förfrågan kort.\n\nI Nova är det vad en stil är till för: instruktionen finns på ett ställe och gäller varje gång du väljer den."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "En stående instruktion",
+                    "body": "”Jag läser andra året på civilingenjörsprogrammet. Jag skriver labbrapporter till en handledare som värderar precision framför längd. Använd enkel, teknisk svenska. Fyll aldrig ut med inledningar eller slutsatser som upprepar innehållet.”\n\nVarje senare förfrågan kan nu vara två rader i stället för tio."
+                  }
+                },
+                {
+                  "id": "practice",
+                  "type": "prompt_exercise",
+                  "order": 4,
+                  "content": {
+                    "instruction": "Skriv din egen stående instruktion på tre eller fyra meningar.",
+                    "starting_text": "",
+                    "hint": "Roll, vanlig målgrupp, ton och en sak du aldrig vill ha.",
+                    "sample_answer": "Jag är produktchef och skriver för utvecklare och designer. Var konkret och kort; föredra exempel framför adjektiv. Börja aldrig med en sammanfattning av det jag just frågade."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 5,
+                  "content": {
+                    "body": "Beskriv din situation en gång, på ett ställe som finns kvar. Sedan blir varje förfrågan kortare."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "build-a-reusable-workflow",
+              "title": "Bygg ett återanvändbart arbetsflöde",
+              "description": "Gör en uppgift du upprepar till något du bara kör.",
+              "estimated_minutes": 4,
+              "difficulty": "intermediate",
+              "order": 2,
+              "version": 1,
+              "tags": [
+                "general",
+                "engineering",
+                "marketing",
+                "developer"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Om du har skrivit nästan samma förfrågan tre gånger har du inte längre en förfrågan. Du har ett arbetsflöde som du ännu inte skrivit ner."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Fast instruktion, varierande indata",
+                    "body": "Ett arbetsflöde skiljer den del som aldrig ändras från den som gör det. Instruktionen – vad som ska göras, för vem, i vilken form, vad som ska kontrolleras – är fast. Texten du matar in ändras varje gång.\n\nNär de väl är åtskilda kan den fasta delen sparas och återanvändas, och den slutar glida iväg varje gång du skriver den ur minnet."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "comparison",
+                  "order": 3,
+                  "content": {
+                    "worse_label": "Skrivs om varje gång",
+                    "worse": "Kan du titta på de här mötesanteckningarna och plocka ut vad jag behöver göra?",
+                    "better_label": "Ett arbetsflöde",
+                    "better": "Plocka ur anteckningarna nedan bara ut de åtgärder som tilldelats mig. En rad per åtgärd, som börjar med ett verb, med deadline om en sådan anges. Om ingen åtgärd tilldelats mig, säg det och sluta.",
+                    "note": "Den andra är värd att spara. Den säger också vad som ska hända när det inte finns något att hitta – det är just där den omskrivna versionen i tysthet hittar på uppgifter."
+                  }
+                },
+                {
+                  "id": "tip",
+                  "type": "tip",
+                  "order": 4,
+                  "content": {
+                    "body": "Tala alltid om för ett arbetsflöde vad det ska göra när indatan inte passar. Den enda meningen förhindrar det mesta av påhittade resultat."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 5,
+                  "content": {
+                    "question": "Vad hör hemma i den fasta delen av ett arbetsflöde?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Texten som ska bearbetas den här gången"
+                      },
+                      {
+                        "id": "b",
+                        "label": "Reglerna för hur ett bra resultat ser ut"
+                      },
+                      {
+                        "id": "c",
+                        "label": "Dagens datum"
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "Reglerna är det du vill slippa skriva om. Indatan är det som ändras."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 6,
+                  "content": {
+                    "body": "Skilj den fasta instruktionen från den indata som ändras, och säg vad som ska hända när det inte finns något att hitta."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "adapt-ai-to-your-domain",
+              "title": "Anpassa AI till ditt område",
+              "description": "Fackspråk, konventioner och de kontroller ditt område förväntar sig.",
+              "estimated_minutes": 5,
+              "difficulty": "intermediate",
+              "order": 3,
+              "version": 1,
+              "tags": [
+                "engineering",
+                "marketing",
+                "developer",
+                "creator",
+                "student",
+                "management"
+              ],
+              "blocks": [
+                {
+                  "id": "hook",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "body": "Ett allmänt svar är allmänt eftersom ingenting i förfrågan sa vilket område du arbetar inom. Ditt område har ett fackspråk, konventioner och ett beviskrav – och inget av det syns utifrån."
+                  }
+                },
+                {
+                  "id": "concept",
+                  "type": "text",
+                  "order": 2,
+                  "content": {
+                    "heading": "Tre saker ditt område förväntar sig",
+                    "body": "Ange fackspråket du använder, så att svaret inte översätts till någon annans termer. Ange konventionen du följer – en rapportstruktur, en commit-stil, en husstil. Och ange kontrollen: vad som gör ett svar godtagbart inom ditt område snarare än bara rimligt.\n\nDen tredje är den som de flesta utelämnar, och den som gör mest nytta."
+                  }
+                },
+                {
+                  "id": "example",
+                  "type": "example",
+                  "order": 3,
+                  "content": {
+                    "label": "Samma förfrågan inom tre områden",
+                    "body": "Teknik: ”Ange antagandet bakom varje siffra. Om ett värde är uppskattat snarare än uppmätt, markera det.”\n\nMarknadsföring: ”Håll vår husstil: rakt på, inga superlativ. Ge två alternativ så att vi kan jämföra.”\n\nUtveckling: ”Följ de konventioner som redan finns i filen. Om ett upplägg kräver ett beroende vi inte har, säg det i stället för att lägga till det.”"
+                  }
+                },
+                {
+                  "id": "ai-practice",
+                  "type": "ai_exercise",
+                  "order": 4,
+                  "content": {
+                    "exercise_id": "adapt-domain-request",
+                    "instruction": "Skriv en förfrågan för en uppgift inom ditt eget område. Ange fackspråket, konventionen och kontrollen som gör ett svar godtagbart.",
+                    "starting_text": "",
+                    "hint": "Kontrollen är den del de flesta glömmer: vad skulle få dig att förkasta ett annars rimligt svar?"
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 5,
+                  "content": {
+                    "body": "Fackspråk, konvention och den kontroll ditt område tillämpar. Det är kontrollen som gör ett rimligt svar användbart."
+                  }
+                }
+              ]
+            },
+            {
+              "id": "ai-in-engineering",
+              "title": "AI inom teknik",
+              "description": "Använd AI som verktyg, inte som ersättning för eget tänkande.",
+              "estimated_minutes": 4,
+              "difficulty": "beginner",
+              "order": 4,
+              "version": 1,
+              "tags": [
+                "engineering",
+                "student"
+              ],
+              "blocks": [
+                {
+                  "id": "idea",
+                  "type": "text",
+                  "order": 1,
+                  "content": {
+                    "heading": "AI för ingenjörer",
+                    "body": "AI gör mest nytta som samarbetspartner för att utforska, skissa och granska, så länge ingenjören behåller ansvaret."
+                  }
+                },
+                {
+                  "id": "scenario",
+                  "type": "example",
+                  "order": 2,
+                  "content": {
+                    "label": "En situation",
+                    "body": "Du jämför två koncept för ett delsystem i en liten satellit."
+                  }
+                },
+                {
+                  "id": "check",
+                  "type": "multiple_choice",
+                  "order": 3,
+                  "content": {
+                    "question": "Vilket arbetssätt utnyttjar AI bäst?",
+                    "options": [
+                      {
+                        "id": "a",
+                        "label": "Låta AI:n välja koncept och kopiera dess motivering."
+                      },
+                      {
+                        "id": "b",
+                        "label": "Använda den för att lyfta fram avvägningar, sedan kontrollera begränsningarna och dokumentera beslutet."
+                      },
+                      {
+                        "id": "c",
+                        "label": "Låta bli att dokumentera antaganden så att rapporten blir kort."
+                      }
+                    ],
+                    "correct_option_id": "b",
+                    "explanation": "AI förstärker det tekniska omdömet. Den ersätter inte validering, spårbarhet eller ansvar."
+                  }
+                },
+                {
+                  "id": "takeaway",
+                  "type": "takeaway",
+                  "order": 4,
+                  "content": {
+                    "body": "Låt AI lyfta fram alternativ och avvägningar, validera dem sedan, dokumentera dina antaganden och stå för beslutet."
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "exercises": [
+    {
+      "id": "adapt-domain-request",
+      "task": "learning_feedback",
+      "instruction": "You are helping someone learn to write better requests to an AI assistant. They were asked to write a request for a task in their own professional or academic field, naming three things: the vocabulary of their field, the convention they follow, and the check that makes an answer acceptable rather than merely reasonable.\n\nRead their attempt and reply in at most four short sentences. Say plainly which of the three are present and which are missing. Then give one concrete improvement, rewriting a fragment of their own request rather than replacing it with yours. Do not score them, do not use percentages, and do not praise without a reason. If their request is already complete, say so and name the strongest part.\n\nReply in the language they wrote in."
+    }
+  ]
+}
