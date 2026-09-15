@@ -26,6 +26,7 @@ export const t = {
     provisioning: "Provisioning",
     administrators: "Administrators",
     members: "Members",
+    learn: "Learn",
     packages: "Packages",
     deployment: "Deployment",
     configuration: "Configuration",
@@ -707,6 +708,136 @@ export const t = {
     removeRow: "Remove",
   },
 
+  learn: {
+    title: "Learn",
+    lead: "Choose which lessons members see, which are required and by when, and write lessons of your own.",
+    readOnly: "You can view Learn settings, but not change them.",
+    newLesson: "New lesson",
+    newTitle: "New lesson",
+    editTitle: "Edit lesson",
+    close: "Close",
+    emptyModule: "No lesson in this module.",
+    custom: "Written by your organization",
+    archived: "Archived",
+    required: "Required",
+    dueOn: (date: string) => `Due ${date}`,
+    groupsAll: "Everyone",
+    groupsSome: (count: number) => (count === 1 ? "1 group" : `${count} groups`),
+    settings: "Settings",
+    requiredLabel: "Required lesson",
+    dueDate: "Due date",
+    groups: "Groups",
+    groupsHint: "No group selected means every member.",
+    saveSettings: "Save settings",
+    save: "Save lesson",
+    saving: "Saving…",
+    cancel: "Cancel",
+    edit: "Edit",
+    archive: "Archive",
+    archiveTitle: "Archive this lesson?",
+    archiveBody:
+      "Members stop seeing this lesson. Nothing is deleted: their progress is kept, and restoring the lesson brings it back as it was.",
+    restore: "Restore",
+    delete: "Delete lesson",
+    deleteTitle: "Delete this lesson permanently?",
+    deleteBody:
+      "The lesson, its settings and every member's progress on it are removed. This cannot be undone. To hide it without losing anything, archive it instead.",
+    module: "Module",
+    sourceLanguage: "Source language",
+    minutes: "Duration (minutes)",
+    minutesShort: (minutes: number) => `${minutes} min`,
+    difficulty: "Difficulty",
+    difficultyLabel: (value: string) =>
+      value === "beginner"
+        ? "Beginner"
+        : value === "intermediate"
+          ? "Intermediate"
+          : value === "advanced"
+            ? "Advanced"
+            : value,
+    languages: "Languages",
+    addLanguage: "Add a language…",
+    removeLanguage: "Remove this language",
+    sourceBadge: "source",
+    translationNote:
+      "Blocks are added, moved and removed in the source language. Here, only their text is translated.",
+    lessonTitle: "Title",
+    lessonDescription: "Description",
+    blocks: "Blocks",
+    addBlock: "Add block",
+    blockType: "Block type",
+    blockLabel: (type: string) =>
+      (
+        ({
+          text: "Text",
+          example: "Example",
+          comparison: "Before and after",
+          tip: "Tip",
+          warning: "Warning",
+          multiple_choice: "Quiz",
+          question: "Quiz",
+          reflection: "Reflection",
+          prompt_exercise: "Writing exercise",
+          takeaway: "Key takeaway",
+        }) as Record<string, string>
+      )[type] ?? type,
+    moveUp: "Move up",
+    moveDown: "Move down",
+    removeBlock: "Remove",
+    dragHint: "Drag a block to reorder it, or use the arrows.",
+    fieldLabel: (field: string) =>
+      (
+        ({
+          heading: "Heading (optional)",
+          body: "Text",
+          worse_label: "Label of the weaker version (optional)",
+          worse: "Weaker version",
+          better_label: "Label of the stronger version (optional)",
+          better: "Stronger version",
+          note: "Note (optional)",
+          question: "Question",
+          explanation: "Explanation shown after answering",
+          prompt: "Question to reflect on",
+          instruction: "Instruction",
+          starting_text: "Starting text (optional)",
+          hint: "Hint (optional)",
+          sample_answer: "Sample answer",
+        }) as Record<string, string>
+      )[field] ?? field,
+    options: "Answers",
+    addOption: "Add an answer",
+    removeOption: "Remove",
+    correct: "Correct answer",
+    correctHint: "Select the correct answer. Members see the explanation after answering.",
+    preview: "Preview",
+    previewNote: "As members read it in this language. The correct answer is marked here only.",
+    untitled: "Untitled lesson",
+    worseDefault: "Before",
+    betterDefault: "After",
+    problemsTitle: "Before saving",
+    lessonWide: "Lesson",
+    problemLabel: (field: string) =>
+      (
+        ({
+          title: "the title is missing or longer than 120 characters",
+          description: "the description is missing or longer than 400 characters",
+          blocks: "add between 1 and 40 blocks",
+          blocks_mismatch: "the blocks differ from the source language",
+          estimated_minutes: "the duration must be between 1 and 10 minutes",
+          difficulty: "choose a difficulty",
+          module_id: "choose a module",
+          missing_source: "the source language has no content",
+          options: "every answer needs a label",
+          correct_option_id: "select the correct answer",
+        }) as Record<string, string>
+      )[field] ?? "this text is empty",
+    conflict: "This lesson changed while you were editing it. Reload before saving.",
+    reload: "Reload",
+    invalid: "The server rejected this lesson. Check the fields listed and try again.",
+    limit: "This organization has reached the number of lessons it can write.",
+    notFound: "This lesson no longer exists.",
+  },
+
   security: {
     title: "Security",
     lead: "How administration of this organization is protected.",
@@ -760,6 +891,10 @@ export function errorMessage(kind: ApiErrorKind, code?: string | null): string {
   if (code === "MEMBER_ROLE_INVALID") return "That member type is not recognised.";
   if (code === "SECURITY_ROLE_INVALID") return "That role is not recognised.";
   if (code === "POLICY_REVISION_CONFLICT") return t.policies.conflict;
+  if (code === "LEARNING_REVISION_CONFLICT") return t.learn.conflict;
+  if (code === "LEARNING_CUSTOM_LESSON_INVALID") return t.learn.invalid;
+  if (code === "LEARNING_CUSTOM_LESSON_LIMIT") return t.learn.limit;
+  if (code === "LESSON_NOT_FOUND") return t.learn.notFound;
   if (code === "AI_RUNTIME_REVISION_CONFLICT") return t.aiRuntime.conflict;
   if (code === "AI_RUNTIME_HARDWARE_INCOMPATIBLE")
     return t.aiRuntime.hardwareIncompatible;

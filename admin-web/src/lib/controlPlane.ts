@@ -6,6 +6,12 @@
  */
 
 import { ApiClient } from "./api";
+import type {
+  CustomLessonDraft,
+  CustomLessonView,
+  LearningAdminView,
+  LearningLessonView,
+} from "./learning";
 
 export interface OrganizationView {
   organization: {
@@ -842,6 +848,77 @@ export class ControlPlane {
   deleteMember(organizationId: string, userId: string) {
     return this.client.request<{ deleted: string }>(
       `/api/control/organizations/${organizationId}/members/${userId}`,
+      { method: "DELETE" },
+    );
+  }
+
+  /** Chaque leçon avec ses réglages, les groupes, les modules et les langues. */
+  learning() {
+    return this.client.request<LearningAdminView>("/api/control/organization/learning");
+  }
+
+  /**
+   * Obligatoire, échéance, groupes visés — pour une leçon livrée comme pour
+   * une leçon de l'organisation. `expectedRevision` est la révision des
+   * réglages affichés : deux consoles ouvertes ne s'écrasent pas.
+   */
+  updateLearningLesson(
+    lessonId: string,
+    expectedRevision: number,
+    settings: { required?: boolean; due_at?: number | null; group_ids?: string[] },
+  ) {
+    return this.client.request<LearningLessonView>(
+      `/api/control/organization/learning/lessons/${encodeURIComponent(lessonId)}`,
+      { method: "PUT", body: { expected_revision: expectedRevision, ...settings } },
+    );
+  }
+
+  /** Retire la leçon des membres. Leur progression est gardée. */
+  archiveLearningLesson(lessonId: string, expectedRevision: number) {
+    return this.client.request<LearningLessonView>(
+      `/api/control/organization/learning/lessons/${encodeURIComponent(lessonId)}/archive`,
+      { method: "POST", body: { expected_revision: expectedRevision } },
+    );
+  }
+
+  restoreLearningLesson(lessonId: string, expectedRevision: number) {
+    return this.client.request<LearningLessonView>(
+      `/api/control/organization/learning/lessons/${encodeURIComponent(lessonId)}/restore`,
+      { method: "POST", body: { expected_revision: expectedRevision } },
+    );
+  }
+
+  /** Une leçon de l'organisation, avec toutes ses langues. */
+  customLesson(lessonId: string) {
+    return this.client.request<CustomLessonView>(
+      `/api/control/organization/learning/custom-lessons/${encodeURIComponent(lessonId)}`,
+    );
+  }
+
+  createCustomLesson(draft: CustomLessonDraft) {
+    return this.client.request<CustomLessonView>(
+      "/api/control/organization/learning/custom-lessons",
+      { method: "POST", body: draft },
+    );
+  }
+
+  /** `translations`, quand il est envoyé, remplace toutes les langues. */
+  updateCustomLesson(
+    lessonId: string,
+    expectedRevision: number,
+    draft: CustomLessonDraft,
+  ) {
+    return this.client.request<CustomLessonView>(
+      `/api/control/organization/learning/custom-lessons/${encodeURIComponent(lessonId)}`,
+      { method: "PUT", body: { expected_revision: expectedRevision, ...draft } },
+    );
+  }
+
+  /** Définitif : la leçon, ses réglages et la progression des membres. */
+  deleteCustomLesson(lessonId: string, expectedRevision: number) {
+    return this.client.request<void>(
+      `/api/control/organization/learning/custom-lessons/${encodeURIComponent(lessonId)}` +
+        `?expected_revision=${expectedRevision}`,
       { method: "DELETE" },
     );
   }
