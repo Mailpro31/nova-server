@@ -10321,6 +10321,9 @@ def control_read_learning(
         ],
         "groups": groups,
         "modules": list(placements.values()),
+        # Les langues d'une lecon creee : celles du catalogue livre. La console
+        # ne les ecrit pas en dur, elle suit ce que le serveur sait servir.
+        "locales": sorted(learning.custom_lesson_locales()),
     }
 
 
