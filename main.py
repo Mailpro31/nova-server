@@ -9021,6 +9021,20 @@ def me(user: str = Depends(current_user), u=Depends(current_account)):
     # ce ne serait pas la meme, et `/api/me` repondrait pour le voisin.
     member_config = public_campus_config(organization_id)
     capabilities = member_config["capabilities"]
+    # Les categories du Nova Core que l'organisation a fermees, nommees
+    # explicitement. Le poste ne peut pas les deduire de `capabilities` : un
+    # serveur plus ancien ou une reponse tronquee n'y citerait pas `history`
+    # sans l'avoir ferme, et une fonction ne s'eteint jamais sur un silence.
+    # Seules les decisions de policy comptent ici, pas le mode pedagogique.
+    closable_core = {"learning", "styles", "prompts", "history"}
+    member_policy = organization_policy(organization_id)["settings"]
+    closed_capabilities = sorted(
+        setting.capability
+        for setting in POLICY_SETTINGS.values()
+        if setting.capability in closable_core
+        and setting.kind is bool
+        and not member_policy.get(setting.key, setting.default)
+    )
     return {
         # — contrat historique, inchangé —
         "email": u["email"],
@@ -9052,6 +9066,7 @@ def me(user: str = Depends(current_user), u=Depends(current_account)):
         # Les bornes de l'organisation du membre : le poste connecte lit cette
         # route, pas `/api/config`.
         "limits": member_config["limits"],
+        "closed_capabilities": closed_capabilities,
     }
 
 def clean_required(value: str, field: str, limit: int = 4000) -> str:
