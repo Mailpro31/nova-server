@@ -418,9 +418,17 @@ input[aria-invalid="true"] {
     border-right: none;
     border-bottom: 1px solid var(--border);
   }
-  .nav {
+  /* En largeur réduite, les liens reprennent une seule ligne qui passe à la
+     ligne : empilés par domaine, ils s'étalaient en colonnes enchevêtrées.
+     Chaque domaine reste un groupe ; seul son titre disparaît. */
+  .nav,
+  .nav-section {
     flex-direction: row;
     flex-wrap: wrap;
+    gap: 2px;
+  }
+  .nav-section-title {
+    display: none;
   }
 }
 
