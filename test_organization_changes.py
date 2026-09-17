@@ -78,6 +78,31 @@ class OrganizationChangesTests(AdminTestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertNotEqual(self.changes()["learning_version"], before)
 
+    def test_joining_or_leaving_a_group_moves_the_learning_marker(self):
+        """Une lecon peut viser un groupe : entrer dans ce groupe, par la console
+        ou par l'annuaire, doit faire recharger Apprendre sur le poste."""
+        organization = main.nova_organization_id()
+        with main.db() as conn:
+            conn.execute("DELETE FROM organization_group_memberships")
+            conn.execute("DELETE FROM organization_groups")
+            user_id = main.user_by_email(conn, organization, "etudiant@example.com")["user_id"]
+        groups = f"/api/control/organizations/{organization}/groups"
+        created = self.client.post(groups, headers=self.auth(self.admin),
+                                   json={"display_name": "Aero 2"})
+        self.assertEqual(created.status_code, 201, created.text)
+        group_id = created.json()["group"]["id"]
+        before = self.changes()["learning_version"]
+
+        added = self.client.put(f"{groups}/{group_id}/members/{user_id}",
+                                headers=self.auth(self.admin))
+        self.assertEqual(added.status_code, 200, added.text)
+        joined = self.changes()["learning_version"]
+        self.assertNotEqual(joined, before)
+
+        self.client.delete(f"{groups}/{group_id}/members/{user_id}",
+                           headers=self.auth(self.admin))
+        self.assertEqual(self.changes()["learning_version"], before)
+
     def test_the_packages_marker_is_the_version_the_member_receives(self):
         packages = self.client.get(
             "/api/organization/packages", headers=self.auth(self.member)).json()
