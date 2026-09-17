@@ -14,7 +14,7 @@ export const DEFAULT_DICTATION_MINUTES = 10;
 export const MIN_DICTATION_MINUTES = 1;
 export const MAX_DICTATION_MINUTES = 120;
 
-export type PolicySettings = Record<string, boolean | number>;
+export type PolicySettings = Record<string, boolean | number | string[]>;
 export type LimitProblem = "empty" | "whole" | "range";
 
 export function dictationLimitMinutes(settings: PolicySettings): number {
