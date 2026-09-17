@@ -601,12 +601,12 @@ export const t = {
     disabled: "Disabled",
     // Regroupement par usage plutot que par nom technique : un administrateur
     // cherche « ce qui touche a l'ecriture », pas une cle de configuration.
-    groupAi: "AI",
-    groupWriting: "Writing",
-    groupInput: "Input",
-    groupCategories: "App categories",
     learningTitle: "Learn",
     learningBody: "Show the Learn category, where members follow the organization's lessons.",
+    // Les categories de la barre laterale de Nova, et le reste.
+    groupSidebar: "Sidebar categories",
+    groupOther: "Other features",
+    sidebarNote: "When closed, it disappears from the member's sidebar in Nova.",
     stylesTitle: "Styles",
     // La question qu'un administrateur se pose en fermant Styles : les dictees
     // perdent-elles leur mise en forme ? Non.
@@ -625,10 +625,10 @@ export const t = {
     vocabularyTitle: "Organization vocabulary",
     vocabularyBody:
       "Allow members to use the vocabulary and dictionary provided by this organization.",
-    commandsTitle: "Voice commands",
-    commandsBody: "Allow members to trigger voice commands in Nova.",
-    notesTitle: "Engineering notes",
-    notesBody: "Allow members to use engineering notes.",
+    commandsTitle: "Nova Commands",
+    commandsBody: "Allow members to run Nova Commands on the text they select.",
+    notesTitle: "Structured notes",
+    notesBody: "Allow members to turn dictations into structured notes.",
     fileImportTitle: "Audio file import",
     // La phrase sur la dictee vit dans `dictationSafe`, ajoutee a l'affichage.
     // La repeter ici la faisait apparaitre deux fois de suite a l'ecran.
@@ -660,6 +660,18 @@ export const t = {
     groups:
       "A group can set its own limit in Configuration, under Settings by group. When a member belongs to several groups, the shortest limit applies.",
     readOnly: "You can view this limit, but not change it.",
+  },
+
+  styles: {
+    title: "Styles",
+    lead: "Turn off a single Style for every member. Nova shows it as disabled by your organization, and dictations use another style instead.",
+    builtin: "Built into Nova",
+    organization: "Published by your organization",
+    enabled: "Enabled",
+    disabled: "Disabled",
+    readOnly: "You can view these Styles, but not change them.",
+    conflict: "The organization policy changed while you were editing it. Reload before changing a Style.",
+    reload: "Reload",
   },
 
   groupPolicies: {

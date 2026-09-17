@@ -21,6 +21,7 @@ import { AsyncSection, Facts, Notice, Panel, Tag } from "../components/primitive
 import { AIRuntime } from "./AIRuntime";
 import { PrivateConnector } from "./Connector";
 import { DesktopDeployment } from "./DesktopDeployment";
+import { DisabledStyles } from "./DisabledStyles";
 import { GroupPolicies } from "./GroupPolicies";
 
 function formatDuration(seconds: number): string {
@@ -185,6 +186,7 @@ export function Configuration() {
         )}
       </AsyncSection>
       <Policies />
+      <DisabledStyles />
       {/* Les groupes surchargent la meme table de reglages, sous ceux de
           l'organisation qu'ils modifient. */}
       <GroupPolicies catalog={POLICY_GROUPS} />
@@ -207,59 +209,30 @@ const POLICY_GROUPS: {
   items: { key: string; title: string; body: string }[];
 }[] = [
   {
-    title: t.policies.groupAi,
-    items: [
-      {
-        key: "ai_skills_enabled",
-        title: t.policies.aiSkillsTitle,
-        body: t.policies.aiSkillsBody,
-      },
-    ],
-  },
-  {
-    title: t.policies.groupWriting,
-    items: [
-      {
-        key: "organization_vocabulary_enabled",
-        title: t.policies.vocabularyTitle,
-        body: t.policies.vocabularyBody,
-      },
-      {
-        key: "engineering_notes_enabled",
-        title: t.policies.notesTitle,
-        body: t.policies.notesBody,
-      },
-    ],
-  },
-  {
-    title: t.policies.groupInput,
-    items: [
-      {
-        key: "voice_commands_enabled",
-        title: t.policies.commandsTitle,
-        body: t.policies.commandsBody,
-      },
-      {
-        key: "file_import_enabled",
-        title: t.policies.fileImportTitle,
-        // La question qu'on se pose en lisant « import audio » : est-ce que
-        // cela coupe la dictée ? Non, et l'écran le dit.
-        body: `${t.policies.fileImportBody} ${t.policies.dictationSafe}`,
-      },
-    ],
-  },
-  {
-    title: t.policies.groupCategories,
+    // Les categories de la barre laterale de Nova, sous le nom que le membre
+    // y lit, dans le meme ordre. Accueil et Reglages n'y sont pas : sans eux,
+    // l'application ne s'utilise plus.
+    title: t.policies.groupSidebar,
     items: [
       {
         key: "learning_enabled",
         title: t.policies.learningTitle,
-        body: t.policies.learningBody,
+        body: `${t.policies.learningBody} ${t.policies.sidebarNote}`,
+      },
+      {
+        key: "voice_commands_enabled",
+        title: t.policies.commandsTitle,
+        body: `${t.policies.commandsBody} ${t.policies.sidebarNote}`,
+      },
+      {
+        key: "ai_skills_enabled",
+        title: t.policies.aiSkillsTitle,
+        body: `${t.policies.aiSkillsBody} ${t.policies.sidebarNote}`,
       },
       {
         key: "styles_enabled",
         title: t.policies.stylesTitle,
-        body: t.policies.stylesBody,
+        body: `${t.policies.stylesBody} ${t.policies.sidebarNote}`,
       },
       {
         key: "generated_instructions_enabled",
@@ -267,9 +240,31 @@ const POLICY_GROUPS: {
         body: `${t.policies.generatedInstructionsBody} ${t.policies.deviceCategoryNote}`,
       },
       {
+        key: "engineering_notes_enabled",
+        title: t.policies.notesTitle,
+        body: `${t.policies.notesBody} ${t.policies.sidebarNote}`,
+      },
+      {
         key: "past_dictations_enabled",
         title: t.policies.pastDictationsTitle,
         body: `${t.policies.pastDictationsBody} ${t.policies.deviceCategoryNote}`,
+      },
+    ],
+  },
+  {
+    title: t.policies.groupOther,
+    items: [
+      {
+        key: "organization_vocabulary_enabled",
+        title: t.policies.vocabularyTitle,
+        body: t.policies.vocabularyBody,
+      },
+      {
+        key: "file_import_enabled",
+        title: t.policies.fileImportTitle,
+        // La question qu'on se pose en lisant « import audio » : est-ce que
+        // cela coupe la dictée ? Non, et l'écran le dit.
+        body: `${t.policies.fileImportBody} ${t.policies.dictationSafe}`,
       },
     ],
   },
@@ -299,7 +294,7 @@ function Policies() {
   // Les modifications en cours, séparées de ce que le serveur a renvoyé : sans
   // cette séparation, on ne saurait pas dire ce qui est enregistré et ce qui
   // ne l'est pas encore.
-  const [draft, setDraft] = useState<Record<string, boolean | number> | null>(null);
+  const [draft, setDraft] = useState<Record<string, boolean | number | string[]> | null>(null);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const [conflict, setConflict] = useState(false);

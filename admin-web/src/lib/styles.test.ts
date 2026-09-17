@@ -57,23 +57,41 @@ describe("Styles model", () => {
       max_dictation_seconds: 600,
       [DISABLED_STYLES_KEY]: ["nova_style_email", "nova_style_prompt"],
     });
-    expect(withStyleDisabled(twice, "nova_style_email", true)[DISABLED_STYLES_KEY]).toEqual([
-      "nova_style_email",
-      "nova_style_prompt",
-    ]);
-    expect(withStyleDisabled(twice, "nova_style_prompt", false)[DISABLED_STYLES_KEY]).toEqual([
-      "nova_style_email",
-    ]);
+    expect(
+      withStyleDisabled(twice, "nova_style_email", true)[DISABLED_STYLES_KEY],
+    ).toEqual(["nova_style_email", "nova_style_prompt"]);
+    expect(
+      withStyleDisabled(twice, "nova_style_prompt", false)[DISABLED_STYLES_KEY],
+    ).toEqual(["nova_style_email"]);
     expect(disabledStyleIds(settings)).toEqual([]);
   });
 
   test("the catalogue lists builtin Styles, then the organization's published Styles", () => {
     const catalog = stylesCatalog([
-      { package_id: "p1", package_type: "style", name: "House email", status: "published" },
-      { package_id: "p2", package_type: "ai_skill", name: "Summarize", status: "published" },
-      { package_id: "p3", package_type: "style", name: "Old style", status: "archived" },
+      {
+        package_id: "p1",
+        package_type: "style",
+        name: "House email",
+        status: "published",
+      },
+      {
+        package_id: "p2",
+        package_type: "ai_skill",
+        name: "Summarize",
+        status: "published",
+      },
+      {
+        package_id: "p3",
+        package_type: "style",
+        name: "Old style",
+        status: "archived",
+      },
     ]);
-    expect(catalog.slice(0, BUILTIN_STYLES.length).every((style) => style.origin === "builtin")).toBe(true);
+    expect(
+      catalog
+        .slice(0, BUILTIN_STYLES.length)
+        .every((style) => style.origin === "builtin"),
+    ).toBe(true);
     expect(catalog.slice(BUILTIN_STYLES.length)).toEqual([
       { id: "org_style_p1", name: "House email", origin: "organization" },
     ]);
