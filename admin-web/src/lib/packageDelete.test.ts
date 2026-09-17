@@ -19,7 +19,9 @@ function code(path: string): string {
 describe("Package deletion", () => {
   test("the client deletes a package by id", () => {
     const client = code("src/lib/controlPlane.ts");
-    expect(client).toContain("deletePackage(organizationId: string, packageId: string)");
+    expect(client).toContain(
+      "deletePackage(organizationId: string, packageId: string)",
+    );
     expect(client).toContain('method: "DELETE"');
   });
 
@@ -35,6 +37,8 @@ describe("Package deletion", () => {
 
   test("the server refusal is explained", async () => {
     const { errorMessage, t } = await import("./messages");
-    expect(errorMessage("conflict", "PACKAGE_NOT_ARCHIVED")).toBe(t.packages.notArchived);
+    expect(errorMessage("conflict", "PACKAGE_NOT_ARCHIVED")).toBe(
+      t.packages.notArchived,
+    );
   });
 });

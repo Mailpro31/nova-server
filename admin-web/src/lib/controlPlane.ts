@@ -808,6 +808,14 @@ export class ControlPlane {
     );
   }
 
+  /** Définitif, et refusé tant que le package n'est pas archivé. */
+  deletePackage(organizationId: string, packageId: string) {
+    return this.client.request<void>(
+      `/api/control/organizations/${organizationId}/packages/${packageId}`,
+      { method: "DELETE" },
+    );
+  }
+
   archivePackage(organizationId: string, packageId: string) {
     return this.client.request<PackageView>(
       `/api/control/organizations/${organizationId}/packages/${packageId}/archive`,

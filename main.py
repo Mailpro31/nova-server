@@ -8415,6 +8415,38 @@ def control_archive_package(
         return package_view(conn, package_row(conn, organization_id, package_id))
 
 
+@app.delete("/api/control/organizations/{organization_id}/packages/{package_id}",
+            status_code=204)
+def control_delete_package(
+    organization_id: str,
+    package_id: str,
+    principal: AdminPrincipal = Depends(
+        require_admin_capability(CAPABILITY_CONTENT_MANAGE)),
+):
+    """Supprime definitivement un package archive, avec toutes ses versions.
+
+    Seulement archive : un package encore distribue se retire d'abord. Ce
+    passage oblige evite d'effacer par erreur un contenu que les membres
+    recoivent, et laisse le temps de le restaurer. Le journal garde le type et
+    le nom de ce qui a disparu.
+    """
+    require_package_organization(principal, organization_id)
+    with db() as conn:
+        package = package_row(conn, organization_id, package_id)
+        if package is None:
+            raise auth_error(404, "PACKAGE_NOT_FOUND")
+        if package["status"] != PACKAGE_STATUS_ARCHIVED:
+            raise auth_error(409, "PACKAGE_NOT_ARCHIVED")
+        conn.execute("DELETE FROM organization_package_versions WHERE package_id=?",
+                     (package_id,))
+        conn.execute("DELETE FROM organization_packages WHERE package_id=?", (package_id,))
+        record_admin_action(
+            principal, "package.delete", target_type="package", target_id=package_id,
+            metadata={"package_type": package["package_type"], "name": package["name"]},
+            conn=conn)
+    return Response(status_code=204)
+
+
 @app.post("/api/control/organizations/{organization_id}/packages/{package_id}/restore")
 def control_restore_package(
     organization_id: str,
@@ -9213,6 +9245,7 @@ AUDIT_ACTION_LABELS = {
     "package.version_rollback": "Rolled back to a package version",
     "package.archive": "Archived a package",
     "package.restore": "Restored a package",
+    "package.delete": "Deleted a package",
     "member.disable": "Disabled a member",
     "member.enable": "Re-enabled a member",
     "member.type_change": "Changed a member type",

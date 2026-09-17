@@ -465,6 +465,7 @@ function PackageCard({
   const [confirmPublish, setConfirmPublish] = useState<string | null>(null);
   const [confirmActivate, setConfirmActivate] = useState<string | null>(null);
   const [confirmArchive, setConfirmArchive] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const draftVersion = entry.versions.find((v) => v.status === "draft") ?? null;
   const dirty = draft !== null && detail !== null;
@@ -619,16 +620,25 @@ function PackageCard({
                 {draftVersion ? t.packages.editDraft : t.packages.newDraft}
               </button>
               {entry.status === "archived" ? (
-                <button
-                  disabled={busy}
-                  onClick={() =>
-                    void guard(() =>
-                      control!.restorePackage(organizationId, entry.package_id),
-                    )
-                  }
-                >
-                  {t.packages.restore}
-                </button>
+                <>
+                  <button
+                    disabled={busy}
+                    onClick={() =>
+                      void guard(() =>
+                        control!.restorePackage(organizationId, entry.package_id),
+                      )
+                    }
+                  >
+                    {t.packages.restore}
+                  </button>
+                  <button
+                    data-variant="danger"
+                    disabled={busy}
+                    onClick={() => setConfirmDelete(true)}
+                  >
+                    {t.packages.delete}
+                  </button>
+                </>
               ) : (
                 // Confirmée : elle retire le contenu à tous les membres, et se
                 // trouve juste à côté des actions d'édition.
@@ -721,6 +731,22 @@ function PackageCard({
             setConfirmArchive(false);
             void guard(() =>
               control!.archivePackage(organizationId, entry.package_id),
+            );
+          }}
+        />
+      )}
+      {confirmDelete && entry.status === "archived" && (
+        <ConfirmDialog
+          title={t.packages.deleteTitle}
+          body={t.packages.deleteBody}
+          confirmLabel={t.packages.delete}
+          tone="danger"
+          busy={busy}
+          onCancel={() => setConfirmDelete(false)}
+          onConfirm={() => {
+            setConfirmDelete(false);
+            void guard(() =>
+              control!.deletePackage(organizationId, entry.package_id),
             );
           }}
         />
