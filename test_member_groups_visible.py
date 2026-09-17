@@ -122,6 +122,17 @@ class OrganizationAndGroupLevelTests(MemberGroupsTestCase):
         self.assertFalse(membership["groups_visible"])
         self.assertEqual(membership["groups"], [])
 
+    def test_hiding_also_withholds_the_historical_cohort(self):
+        with main.db() as conn:
+            conn.execute("UPDATE users SET cohort='AERO2' WHERE user_id=?", (self.member_id,))
+        response = self.client.get("/api/me", headers=self.member).json()
+        self.assertEqual(response["cohort"], "AERO2")
+        self.assertEqual([group["label"] for group in response["membership"]["groups"]], ["AERO2"])
+        self.set_organization({"member_groups_visible": False})
+        response = self.client.get("/api/me", headers=self.member).json()
+        self.assertEqual(response["cohort"], "")
+        self.assertEqual(response["membership"]["groups"], [])
+
     def test_a_group_hides_groups_for_its_members_only(self):
         self.sign_in("autre@example.com")
         exam = create_group("Examen", ["etudiant@example.com"])
