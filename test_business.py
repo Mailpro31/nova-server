@@ -614,6 +614,8 @@ class BusinessPolicyAndPackageTests(AdminTestCase):
                 "styles_enabled",
                 "generated_instructions_enabled",
                 "past_dictations_enabled",
+                # Styles desactives un par un : commun a toute organisation.
+                "disabled_style_ids",
             },
         )
 
