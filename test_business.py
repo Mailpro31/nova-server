@@ -616,6 +616,8 @@ class BusinessPolicyAndPackageTests(AdminTestCase):
                 "past_dictations_enabled",
                 # Styles desactives un par un : commun a toute organisation.
                 "disabled_style_ids",
+                # Affichage des groupes au membre : commun a toute organisation.
+                "member_groups_visible",
             },
         )
 
