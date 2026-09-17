@@ -54,7 +54,10 @@ describe("Identity model", () => {
       "google_hosted_domain",
     ]);
     expect(
-      newProviderProblems({ provider_type: "oidc", oidc_issuer: "http://idp.example" }),
+      newProviderProblems({
+        provider_type: "oidc",
+        oidc_issuer: "http://idp.example",
+      }),
     ).toEqual(["oidc_issuer", "oidc_client_id", "oidc_client_secret"]);
     expect(
       newProviderProblems({
@@ -71,7 +74,9 @@ describe("Identity page", () => {
   const page = code("src/pages/Identity.tsx");
 
   test("a provider can be added", () => {
-    expect(code("src/lib/controlPlane.ts")).toContain("createProviderConfig(body");
+    expect(code("src/lib/controlPlane.ts")).toContain(
+      "createProviderConfig(body",
+    );
     expect(page).toContain("control!.createProviderConfig(");
     expect(page).toContain("t.identity.addProvider");
   });

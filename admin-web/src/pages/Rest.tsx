@@ -406,6 +406,21 @@ function Policies() {
                 longtemps pourquoi un interrupteur ouvert ne suffit pas. */}
             <p className="policy-hint">{t.policies.modeRestricted}</p>
 
+            {mayManage && (
+              <div className="row">
+                <button
+                  data-variant="quiet"
+                  disabled={busy}
+                  onClick={() => {
+                    setSaved(false);
+                    setDraft({ ...view.defaults });
+                  }}
+                >
+                  {t.policies.restoreDefaults}
+                </button>
+                <span className="policy-hint">{t.policies.restoreDefaultsHint}</span>
+              </div>
+            )}
             {!mayManage && <p className="policy-hint">{t.policies.readOnly}</p>}
             {conflict && (
               <Notice tone="danger">

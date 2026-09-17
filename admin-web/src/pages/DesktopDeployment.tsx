@@ -68,22 +68,42 @@ function Profile({
   profile,
   command,
   mayManage,
+  busy,
   onRetire,
+  onChange,
 }: {
   profile: DeploymentProfileView;
   command: string | undefined;
   mayManage: boolean;
+  busy: boolean;
   onRetire: (profile: DeploymentProfileView) => void;
+  onChange: (
+    profile: DeploymentProfileView,
+    body: { channel?: string; update_policy?: string; status?: string },
+  ) => Promise<boolean>;
 }) {
   const active = profile.status === "active";
+  const [editing, setEditing] = useState(false);
+  const [channel, setChannel] = useState<string>(profile.channel);
+  const [policy, setPolicy] = useState<string>(profile.update_policy);
   return (
     <Panel
       title={profile.name}
       action={
-        mayManage && active ? (
-          <button data-variant="danger" onClick={() => onRetire(profile)}>
-            {t.deployment.retire}
-          </button>
+        mayManage ? (
+          active ? (
+            <button data-variant="danger" disabled={busy} onClick={() => onRetire(profile)}>
+              {t.deployment.retire}
+            </button>
+          ) : (
+            <button
+              data-variant="primary"
+              disabled={busy}
+              onClick={() => void onChange(profile, { status: "active" })}
+            >
+              {t.deployment.reactivate}
+            </button>
+          )
         ) : undefined
       }
     >
@@ -105,6 +125,48 @@ function Profile({
           [t.deployment.revision, String(profile.config_revision)],
         ]}
       />
+      {mayManage &&
+        (editing ? (
+          <div className="stack">
+            <label>
+              {t.deployment.channel}
+              <select value={channel} onChange={(event) => setChannel(event.target.value)}>
+                <option value="stable">{t.deployment.channelStable}</option>
+                <option value="preview">{t.deployment.channelPreview}</option>
+              </select>
+            </label>
+            <label>
+              {t.deployment.updatePolicy}
+              <select value={policy} onChange={(event) => setPolicy(event.target.value)}>
+                <option value="manual">{t.deployment.policyManual}</option>
+                <option value="notify">{t.deployment.policyNotify}</option>
+                <option value="automatic">{t.deployment.policyAutomatic}</option>
+              </select>
+            </label>
+            <div className="row">
+              <button
+                data-variant="primary"
+                disabled={busy}
+                onClick={() =>
+                  void onChange(profile, { channel, update_policy: policy }).then((done) => {
+                    if (done) setEditing(false);
+                  })
+                }
+              >
+                {t.deployment.save}
+              </button>
+              <button data-variant="quiet" disabled={busy} onClick={() => setEditing(false)}>
+                {t.deployment.cancel}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="row">
+            <button disabled={busy} onClick={() => setEditing(true)}>
+              {t.deployment.edit}
+            </button>
+          </div>
+        ))}
       {active && command ? (
         <>
           <h3>{t.deployment.installCommand}</h3>
@@ -149,6 +211,30 @@ export function DesktopDeployment() {
           ? errorMessage(raised.kind, raised.code)
           : errorMessage("server"),
       );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** Réactiver, changer de canal ou de politique : une écriture, puis relecture. */
+  async function change(
+    profile: DeploymentProfileView,
+    body: { channel?: string; update_policy?: string; status?: string },
+  ): Promise<boolean> {
+    if (!control || !organizationId) return false;
+    setBusy(true);
+    setFailure(null);
+    try {
+      await control.updateDeploymentProfile(organizationId, profile.profile_id, body);
+      retry();
+      return true;
+    } catch (raised) {
+      setFailure(
+        raised instanceof ApiError
+          ? errorMessage(raised.kind, raised.code)
+          : errorMessage("server"),
+      );
+      return false;
     } finally {
       setBusy(false);
     }
@@ -283,7 +369,9 @@ export function DesktopDeployment() {
                 profile={profile}
                 command={view.install_commands[profile.profile_id]}
                 mayManage={mayManage}
+                busy={busy}
                 onRetire={setRetiring}
+                onChange={change}
               />
             ))}
 

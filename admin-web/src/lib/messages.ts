@@ -132,6 +132,52 @@ export const t = {
     broken: "Configuration incomplete",
     lastActive:
       "This is the only enabled provider. Disabling it would lock every administrator out, so it is refused. Add another provider first.",
+    enable: "Enable provider",
+    edit: "Edit",
+    addProvider: "Add a provider",
+    addProviderLead:
+      "Connect an identity provider people will sign in with. It is enabled as soon as it is added.",
+    providerType: "Provider",
+    typeLabel: (type: string) =>
+      type === "microsoft_entra"
+        ? "Microsoft Entra ID"
+        : type === "google_workspace"
+          ? "Google Workspace"
+          : type === "oidc"
+            ? "Other OpenID Connect provider"
+            : type,
+    displayName: "Display name (optional)",
+    tenantId: "Microsoft Entra tenant ID",
+    hostedDomain: "Google Workspace domain",
+    issuer: "Issuer URL (https)",
+    clientId: "Client ID",
+    clientSecret: "Client secret",
+    authMethod: "Token authentication",
+    authMethodLabel: (method: string) =>
+      method === "client_secret_post"
+        ? "Client secret in the request body"
+        : method === "client_secret_basic"
+          ? "Client secret in the authorization header"
+          : method === "none"
+            ? "No client secret"
+            : method,
+    requiredClaim: "Required claim (optional)",
+    requiredClaimValue: "Required claim value (optional)",
+    secretKeptHint: "Leave the client secret empty to keep the current one.",
+    create: "Add provider",
+    creating: "Adding…",
+    problemsTitle: "Before adding",
+    problemLabel: (field: string) =>
+      (
+        ({
+          entra_tenant_id: "enter the Microsoft Entra tenant ID",
+          google_hosted_domain: "enter the Google Workspace domain",
+          oidc_issuer: "enter an issuer URL starting with https://",
+          oidc_client_id: "enter the client ID",
+          oidc_client_secret: "enter the client secret",
+          provider_type: "choose a provider",
+        }) as Record<string, string>
+      )[field] ?? field,
   },
 
   provisioning: {
@@ -339,6 +385,10 @@ export const t = {
     create: "Create profile",
     creating: "Creating…",
     retire: "Retire",
+    reactivate: "Reactivate",
+    edit: "Edit",
+    save: "Save profile",
+    cancel: "Cancel",
     retireTitle: "Retire this deployment profile?",
     retireBody:
       "New installations using it will no longer be recognized. Workstations already installed keep working on the configuration they applied.",
@@ -604,6 +654,8 @@ export const t = {
     learningTitle: "Learn",
     learningBody: "Show the Learn category, where members follow the organization's lessons.",
     // Les categories de la barre laterale de Nova, et le reste.
+    restoreDefaults: "Restore defaults",
+    restoreDefaultsHint: "Fills in Nova's default values. Nothing changes until you save.",
     groupSidebar: "Sidebar categories",
     groupOther: "Other features",
     sidebarNote: "When closed, it disappears from the member's sidebar in Nova.",
@@ -697,6 +749,7 @@ export const t = {
     save: "Save group settings",
     saving: "Saving…",
     cancel: "Cancel",
+    resetGroup: "Follow the organization for everything",
     unsaved: "You have unsaved changes.",
     readOnly: "You can view these settings, but not change them.",
     conflict: "This group's settings changed while you were editing them. Reload before saving.",

@@ -162,6 +162,8 @@ export interface PolicyView {
   updated_by_user_id: string | null;
   /** `false` tant que personne n'a rien change : ce sont les defauts. */
   configured: boolean;
+  /** Les valeurs par defaut du produit, pour « revenir aux reglages par defaut ». */
+  defaults: Record<string, boolean | number | string[]>;
 }
 
 /**
@@ -585,6 +587,14 @@ export class ControlPlane {
       `/api/admin/provider-configs/${id}`,
       { method: "POST", body },
     );
+  }
+
+  /** Ajoute un fournisseur d'identité. Le secret, s'il y en a un, ne revient jamais. */
+  createProviderConfig(body: Record<string, unknown>) {
+    return this.client.request<ProviderConfigView>("/api/admin/provider-configs", {
+      method: "POST",
+      body,
+    });
   }
 
   disableProviderConfig(id: string) {
