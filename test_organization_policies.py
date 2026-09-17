@@ -56,7 +56,12 @@ class PolicySchemaTests(unittest.TestCase):
         """
         for key, value in main.DEFAULT_ORGANIZATION_POLICY.items():
             with self.subTest(key):
-                self.assertTrue(value, f"{key} devrait etre permissif par defaut")
+                if main.POLICY_SETTINGS[key].kind is list:
+                    # Une liste de retraits (les Styles desactives) n'est
+                    # permissive que vide : rien n'est retire par defaut.
+                    self.assertEqual(value, [], f"{key} devrait etre vide par defaut")
+                else:
+                    self.assertTrue(value, f"{key} devrait etre permissif par defaut")
 
     def test_the_default_document_matches_the_schema(self):
         self.assertEqual(

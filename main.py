@@ -2196,7 +2196,8 @@ class PolicySetting:
     """
 
     def __init__(self, key: str, kind: type, default, capability: str | None,
-                 minimum: int | None = None, maximum: int | None = None):
+                 minimum: int | None = None, maximum: int | None = None,
+                 pattern: str | None = None, max_items: int | None = None):
         self.key = key
         self.kind = kind
         self.default = default
@@ -2207,8 +2208,24 @@ class PolicySetting:
         # de zero seconde, qui couperait la dictee sans que personne l'ait voulu.
         self.minimum = minimum
         self.maximum = maximum
+        # Une liste d'identifiants : chaque element doit avoir la forme
+        # attendue, et la liste reste courte. Un document de policy n'est pas un
+        # endroit ou stocker des donnees sans borne.
+        self.pattern = pattern
+        self.max_items = max_items
+
+    def normalize(self, value):
+        """La forme stockee : une liste triee, sans doublon."""
+        return sorted(set(value)) if self.kind is list else value
 
     def accepts(self, value) -> bool:
+        if self.kind is list:
+            return (
+                isinstance(value, list)
+                and len(value) <= (self.max_items or 0)
+                and all(isinstance(item, str) and re.fullmatch(self.pattern or "", item)
+                        for item in value)
+            )
         # `isinstance(True, int)` vaut vrai : sans ce controle, un booleen
         # passerait pour un entier et reciproquement.
         if isinstance(value, bool) != (self.kind is bool):
@@ -2270,6 +2287,13 @@ POLICY_SETTINGS: dict[str, PolicySetting] = {
         # la depasse, pour qu'un poste ancien ne la contourne pas.
         PolicySetting("max_dictation_seconds", int, 600, None,
                       minimum=30, maximum=7200),
+        # Des Styles retires un par un, sans fermer la categorie Styles. Des
+        # identifiants — Styles integres du poste ou Styles d'organisation —,
+        # aucun par defaut : rien n'est retire tant que personne ne l'a decide.
+        # Le poste affiche le Style comme desactive et ne l'applique plus ;
+        # `/api/reformulate` ne l'applique pas davantage.
+        PolicySetting("disabled_style_ids", list, [], None,
+                      pattern=r"[A-Za-z0-9_.:-]{1,120}", max_items=100),
     )
 }
 
@@ -2314,6 +2338,7 @@ def validate_policy_settings(candidate: dict) -> dict:
         setting = POLICY_SETTINGS[key]
         if not setting.accepts(value):
             raise ValueError(f"POLICY_VALUE_INVALID:{key}")
+        value = setting.normalize(value)
         if value != setting.default:
             overrides[key] = value
     return overrides
@@ -2351,7 +2376,10 @@ def effective_policy_settings(overrides: dict) -> dict:
     son propre `overrides.get(key, default)` finirait par produire des defauts
     divergents selon la route.
     """
-    resolved = dict(DEFAULT_ORGANIZATION_POLICY)
+    # Les listes sont recopiees : le defaut partage ne doit jamais etre modifie
+    # par un appelant qui ajouterait un element a « sa » policy.
+    resolved = {key: list(value) if isinstance(value, list) else value
+                for key, value in DEFAULT_ORGANIZATION_POLICY.items()}
     resolved.update(overrides)
     return resolved
 
@@ -2416,7 +2444,7 @@ def validate_group_policy_settings(candidate: dict) -> dict:
     for key, value in candidate.items():
         if not POLICY_SETTINGS[key].accepts(value):
             raise ValueError(f"POLICY_VALUE_INVALID:{key}")
-    return {key: candidate[key] for key in sorted(candidate)}
+    return {key: POLICY_SETTINGS[key].normalize(candidate[key]) for key in sorted(candidate)}
 
 
 def resolve_group_policy_settings(settings: dict, group_overrides: list[dict]) -> dict:
@@ -2433,7 +2461,13 @@ def resolve_group_policy_settings(settings: dict, group_overrides: list[dict]) -
         values = [overrides[key] for overrides in group_overrides if key in overrides]
         if not values:
             continue
-        resolved[key] = min(values) if setting.kind is int else all(values)
+        if setting.kind is int:
+            resolved[key] = min(values)
+        elif setting.kind is list:
+            # Deux groupes additionnent les Styles qu'ils retirent.
+            resolved[key] = sorted(set().union(*values))
+        else:
+            resolved[key] = all(values)
     return resolved
 
 
@@ -4079,6 +4113,10 @@ def public_campus_config(organization_id: str | None = None,
     # plutot que de voir son enregistrement refuse apres coup.
     config["limits"] = {
         "max_dictation_seconds": policy["settings"]["max_dictation_seconds"],
+    }
+    # Les Styles que le poste affiche comme desactives et n'applique plus.
+    config["style_policy"] = {
+        "disabled_style_ids": list(policy["settings"]["disabled_style_ids"]),
     }
     return config
 
@@ -9358,6 +9396,7 @@ def me(user: str = Depends(current_user), u=Depends(current_account)):
         # Les bornes de l'organisation du membre : le poste connecte lit cette
         # route, pas `/api/config`.
         "limits": member_config["limits"],
+        "style_policy": member_config["style_policy"],
         "closed_capabilities": closed_capabilities,
     }
 
@@ -10126,6 +10165,12 @@ async def reformulate(body: ReformulateRequest, user: str = Depends(current_user
     context, snippets = writing_context(user, organization_id)
     source_text = apply_snippets(body.text, snippets)
     style_id = (body.style_id or "").strip()
+    style_prompt = (body.style_prompt or "").strip()
+    if style_id and style_id in member_policy(account)["settings"]["disabled_style_ids"]:
+        # Un poste ancien peut encore envoyer un Style desactive. Il recoit la
+        # reformulation par defaut plutot qu'une erreur : la dictee n'est jamais
+        # perdue, et le Style retire ne s'applique pas.
+        style_id, style_prompt = "", ""
     if style_id.startswith(ORGANIZATION_STYLE_PREFIX):
         system_prompt = organization_style_instruction(
             account_organization(account), style_id
@@ -10134,7 +10179,7 @@ async def reformulate(body: ReformulateRequest, user: str = Depends(current_user
             raise auth_error(404, "STYLE_NOT_AVAILABLE")
         task_type = TaskType.STYLE_TRANSFORM
     else:
-        system_prompt = (body.style_prompt or "").strip()
+        system_prompt = style_prompt
         if not system_prompt:
             system_prompt = (
                 "Reformule le texte dicte en un texte clair et professionnel. "
