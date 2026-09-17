@@ -8889,8 +8889,20 @@ def member_read_changes(user: str = Depends(current_user),
         # La meme empreinte que `/api/organization/packages` : le poste la
         # compare a celle qu'il detient deja.
         "packages_version": effective_packages(organization_id, policy)["catalog_version"],
-        "learning_version": learning_version(organization_id),
+        "learning_version": member_learning_version(organization_id, account),
     }
+
+
+def member_learning_version(organization_id: str, account) -> str:
+    """L'empreinte d'Apprendre pour ce membre : celle de l'organisation, plus
+    ses groupes. Une lecon peut viser un groupe ; y entrer ou en sortir, par la
+    console ou par l'annuaire, doit donc faire recharger Apprendre."""
+    with db() as conn:
+        groups = sorted(member_group_ids(conn, organization_id, account))
+    if not groups:
+        return learning_version(organization_id)
+    digest = hashlib.sha256("|".join(groups).encode("utf-8")).hexdigest()[:12]
+    return f"{learning_version(organization_id)}:{digest}"
 
 
 

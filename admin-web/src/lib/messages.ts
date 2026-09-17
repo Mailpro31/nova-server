@@ -226,13 +226,24 @@ export const t = {
     noGroups: "No group has been provisioned yet.",
     entraTitle: "Configure Microsoft Entra provisioning",
     entraSteps: [
-      "Create or open the controlled Enterprise application in Microsoft Entra.",
-      "Under Provisioning, choose Automatic and paste the Tenant URL and Secret Token.",
-      "Test Connection, then scope assignment to one controlled test user or test group only.",
-      "Start provisioning and verify create, update, disable and re-enable in Nova Admin.",
+      "In Microsoft Entra, create or open the Enterprise application for Nova.",
+      "Under Provisioning, choose Automatic and paste the Tenant URL and Secret Token from this page.",
+      "Test Connection, then under Users and groups assign the groups whose members use Nova (for example each class or department).",
+      "Set the scope to assigned users and groups only, and start provisioning. Microsoft then sends accounts, groups and changes on its own, about every 40 minutes.",
     ],
     entraWarning:
       "Do not enter a Microsoft password or an Entra client secret here. Inbound SCIM uses only the Nova Secret Token.",
+    genericTitle: "Any other SCIM directory",
+    genericLead:
+      "Okta, JumpCloud, OneLogin, Keycloak and most directories can provision Nova with SCIM 2.0, the same way as Microsoft Entra.",
+    genericSteps: [
+      "Generate a credential on this page, with the generic context.",
+      "In your directory, add a SCIM 2.0 application and paste the Tenant URL and the Secret Token (Bearer).",
+      "Enable user and group provisioning, including deactivation, and assign the groups whose members use Nova.",
+      "Start the sync, then check that accounts and groups appear in Members and Groups.",
+    ],
+    departureNote:
+      "When the directory deactivates or removes someone, their Nova account is suspended and they are signed out of every device. Nothing is deleted, and reactivating them in the directory restores their access.",
   },
 
   administrators: {

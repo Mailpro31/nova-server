@@ -278,6 +278,17 @@ export function Provisioning() {
                 ))}
               </ol>
               <Facts entries={[[t.provisioning.endpoint, <span className="mono">{view.endpoint}</span>]]} />
+              <Notice>{t.provisioning.departureNote}</Notice>
+            </Panel>
+
+            <Panel title={t.provisioning.genericTitle}>
+              <p>{t.provisioning.genericLead}</p>
+              <ol>
+                {t.provisioning.genericSteps.map((step) => (
+                  <li key={step}>{step}</li>
+                ))}
+              </ol>
+              <Facts entries={[[t.provisioning.endpoint, <span className="mono">{view.endpoint}</span>]]} />
             </Panel>
 
             <Panel title={t.provisioning.groupsTitle}>
