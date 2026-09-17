@@ -538,8 +538,10 @@ def _user_view(row: Any, request: Request, backend: Backend) -> dict[str, Any]:
 
 def _group_row(conn: database.Connection, organization_id: str, group_id: str, *, include_deleted: bool = False):
     deleted = "" if include_deleted else "AND deleted_at IS NULL"
+    # Un groupe cree dans la console n'existe pas pour l'annuaire.
     return conn.execute(
-        f"SELECT * FROM organization_groups WHERE organization_id=? AND group_id=? {deleted}",
+        f"SELECT * FROM organization_groups WHERE organization_id=? AND group_id=? "
+        f"AND source != 'console' {deleted}",
         (organization_id, group_id),
     ).fetchone()
 
@@ -1224,7 +1226,7 @@ def install_routes(app: Any, backend: Backend) -> None:
     ):
         start, bounded_count = _pagination(startIndex, count)
         parsed = _parse_filter(filter, {"id", "externalId", "displayName"})
-        clauses = ["organization_id=?", "deleted_at IS NULL"]
+        clauses = ["organization_id=?", "deleted_at IS NULL", "source != 'console'"]
         values: list[Any] = [principal.organization_id]
         if parsed:
             attribute, value = parsed
@@ -1381,7 +1383,8 @@ def install_routes(app: Any, backend: Backend) -> None:
                 (organization_id,),
             ).fetchone()["c"]
             groups = conn.execute(
-                "SELECT COUNT(*) AS c FROM organization_groups WHERE organization_id=? AND deleted_at IS NULL",
+                "SELECT COUNT(*) AS c FROM organization_groups WHERE organization_id=? "
+                "AND deleted_at IS NULL AND source != 'console'",
                 (organization_id,),
             ).fetchone()["c"]
             managed_groups = conn.execute(
@@ -1389,7 +1392,7 @@ def install_routes(app: Any, backend: Backend) -> None:
                 "COUNT(gm.user_id) AS member_count FROM organization_groups g "
                 "LEFT JOIN organization_group_memberships gm "
                 "ON gm.organization_id=g.organization_id AND gm.group_id=g.group_id "
-                "WHERE g.organization_id=? AND g.deleted_at IS NULL "
+                "WHERE g.organization_id=? AND g.deleted_at IS NULL AND g.source != 'console' "
                 "GROUP BY g.organization_id, g.group_id ORDER BY g.display_name LIMIT 100",
                 (organization_id,),
             ).fetchall()

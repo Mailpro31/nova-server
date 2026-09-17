@@ -29,7 +29,7 @@ export interface NavSection {
 
 export const NAV_SECTIONS: readonly NavSection[] = [
   { id: "overview", pages: ["overview"] },
-  { id: "people", pages: ["members", "administrators", "provisioning"] },
+  { id: "people", pages: ["members", "groups", "administrators", "provisioning"] },
   { id: "features", pages: ["configuration"] },
   { id: "learn", pages: ["learn"] },
   { id: "content", pages: ["packages"] },

@@ -28,6 +28,7 @@ import { NAV_SECTIONS } from "./lib/navigation";
 import { secondsRemaining } from "./lib/session";
 import { useSession } from "./lib/useAdminSession";
 import { Administrators } from "./pages/Administrators";
+import { Groups } from "./pages/Groups";
 import { Identity } from "./pages/Identity";
 import { Learn } from "./pages/Learn";
 import { Limits } from "./pages/Limits";
@@ -47,6 +48,7 @@ const PAGES = [
     element: <Administrators />,
   },
   { path: "members", label: t.nav.members, element: <Members /> },
+  { path: "groups", label: t.nav.groups, element: <Groups /> },
   { path: "learn", label: t.nav.learn, element: <Learn /> },
   { path: "packages", label: t.nav.packages, element: <Packages /> },
   { path: "limits", label: t.nav.limits, element: <Limits /> },

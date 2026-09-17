@@ -24,7 +24,7 @@ main.init_db()
 # pour elle. Un nom d'action a la forme `domaine.verbe`.
 AUDITED_DOMAINS = (
     "admin_role", "admin_session", "admin_step_up", "ai_runtime", "cohort",
-    "connector", "discovery", "group_policy", "learning_custom_lesson",
+    "connector", "discovery", "group", "group_policy", "learning_custom_lesson",
     "learning_lesson", "member", "organization_policy", "package",
     "provider_config", "user",
 )
