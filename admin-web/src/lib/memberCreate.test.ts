@@ -31,8 +31,14 @@ describe("Adding a member", () => {
 
   test("server refusals are explained", async () => {
     const { errorMessage, t } = await import("./messages");
-    expect(errorMessage("invalid", "MEMBER_EMAIL_OUTSIDE_DOMAINS")).toBe(t.members.outsideDomains);
-    expect(errorMessage("invalid", "MEMBER_EMAIL_INVALID")).toBe(t.members.emailInvalid);
-    expect(errorMessage("conflict", "MEMBER_ALREADY_EXISTS")).toBe(t.members.alreadyExists);
+    expect(errorMessage("invalid", "MEMBER_EMAIL_OUTSIDE_DOMAINS")).toBe(
+      t.members.outsideDomains,
+    );
+    expect(errorMessage("invalid", "MEMBER_EMAIL_INVALID")).toBe(
+      t.members.emailInvalid,
+    );
+    expect(errorMessage("conflict", "MEMBER_ALREADY_EXISTS")).toBe(
+      t.members.alreadyExists,
+    );
   });
 });

@@ -8993,6 +8993,50 @@ class MemberStatusRequest(BaseModel):
     status: str
 
 
+# La meme forme d'adresse que `admin_cli.py` : trop strict serait pire que trop
+# large, une adresse valide refusee ici empecherait de preparer un compte.
+MEMBER_EMAIL_SHAPE = re.compile(r"^[^@\s,;<>\"]+@[^@\s,;<>\"]+\.[^@\s,;<>\".]{2,}$")
+
+
+class MemberCreateRequest(BaseModel):
+    email: str
+    member_role: str | None = None
+    cohort: str | None = None
+
+
+@app.post("/api/control/organizations/{organization_id}/members", status_code=201)
+def control_create_member(
+    organization_id: str,
+    body: MemberCreateRequest,
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_IDENTITY_MANAGE)),
+):
+    """Prepare le compte d'un membre avant sa premiere connexion.
+
+    Le compte est celui que la connexion reprendra : le rattachement se fait par
+    l'adresse, dans cette organisation. Il ne donne aucun privilege — les roles
+    d'administration se gerent depuis leur propre ecran — et ne prend aucun
+    siege : un siege se compte par session active, pas par compte.
+    """
+    require_organization_access(principal, organization_id)
+    email = (body.email or "").strip()
+    if not MEMBER_EMAIL_SHAPE.match(email):
+        raise auth_error(400, "MEMBER_EMAIL_INVALID")
+    if email.split("@")[-1].lower() not in ALLOWED_DOMAINS:
+        raise auth_error(400, "MEMBER_EMAIL_OUTSIDE_DOMAINS")
+    if body.member_role is not None and body.member_role not in MEMBER_ROLES:
+        raise auth_error(400, "MEMBER_ROLE_INVALID")
+    with db() as conn:
+        if user_by_email(conn, organization_id, email) is not None:
+            raise auth_error(409, "MEMBER_ALREADY_EXISTS")
+        user_id = create_user(conn, organization_id, email, role=body.member_role,
+                              cohort=(body.cohort or "").strip())
+        created = user_by_id(conn, user_id)
+        record_admin_action(
+            principal, "member.create", target_type="user", target_id=user_id,
+            metadata={"member_role": created["role"]}, conn=conn)
+    return {"member": member_view(created)}
+
+
 @app.post("/api/control/organizations/{organization_id}/members/{user_id}/status")
 def control_set_member_status(
     organization_id: str,
@@ -9251,6 +9295,7 @@ AUDIT_ACTION_LABELS = {
     "member.type_change": "Changed a member type",
     "member.group_change": "Changed a member's groups",
     "member.delete": "Deleted a member",
+    "member.create": "Added a member",
     "member.sessions_revoke": "Signed a member out of every device",
     "learning_lesson.update": "Changed a Learn lesson's settings",
     "learning_lesson.archive": "Archived a Learn lesson",

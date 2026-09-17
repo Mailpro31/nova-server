@@ -328,6 +328,15 @@ export const t = {
       "At least one organization administrator must remain. This account cannot be suspended or deleted.",
     saveProfile: "Save",
     profileSaved: "Saved.",
+    addMember: "Add a member",
+    addMemberLead:
+      "Prepare an account before the person's first sign-in: it is reused when they sign in with this address. Adding a member grants no administration access.",
+    email: "Email",
+    add: "Add member",
+    adding: "Adding…",
+    outsideDomains: "This address is not in this organization's email domains.",
+    emailInvalid: "Enter a valid email address.",
+    alreadyExists: "An account with this address already exists.",
   },
 
   deployment: {
@@ -1054,6 +1063,9 @@ export function errorMessage(kind: ApiErrorKind, code?: string | null): string {
   if (code === "USER_NOT_FOUND") return "This account no longer exists.";
   if (code === "MEMBER_STATUS_INVALID") return "That status is not recognised.";
   if (code === "MEMBER_ROLE_INVALID") return "That member type is not recognised.";
+  if (code === "MEMBER_EMAIL_OUTSIDE_DOMAINS") return t.members.outsideDomains;
+  if (code === "MEMBER_EMAIL_INVALID") return t.members.emailInvalid;
+  if (code === "MEMBER_ALREADY_EXISTS") return t.members.alreadyExists;
   if (code === "SECURITY_ROLE_INVALID") return "That role is not recognised.";
   if (code === "POLICY_REVISION_CONFLICT") return t.policies.conflict;
   if (code === "GROUP_POLICY_REVISION_CONFLICT") return t.groupPolicies.conflict;

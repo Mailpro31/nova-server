@@ -297,9 +297,115 @@ function MemberDetailView({
   );
 }
 
+function AddMember({
+  organizationId,
+  onAdded,
+}: {
+  organizationId: string;
+  onAdded: (userId: string) => void;
+}) {
+  const { control } = useSession();
+  const [open, setOpen] = useState(false);
+  const [email, setEmail] = useState("");
+  const [role, setRole] = useState<string>(MEMBER_ROLES[0]);
+  const [cohort, setCohort] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
+
+  async function add() {
+    setBusy(true);
+    setFailure(null);
+    try {
+      const created = await control!.createMember(organizationId, {
+        email: email.trim(),
+        member_role: role,
+        cohort: cohort.trim(),
+      });
+      setOpen(false);
+      setEmail("");
+      setCohort("");
+      onAdded(created.member.user_id);
+    } catch (raised) {
+      setFailure(
+        raised instanceof ApiError
+          ? errorMessage(raised.kind, raised.code)
+          : errorMessage("server"),
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!open) {
+    return (
+      <div className="row">
+        <button data-variant="primary" onClick={() => setOpen(true)}>
+          {t.members.addMember}
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <Panel title={t.members.addMember}>
+      <p style={{ color: "var(--text-muted)" }}>{t.members.addMemberLead}</p>
+      <label htmlFor="new-member-email">
+        {t.members.email}
+        <input
+          id="new-member-email"
+          type="email"
+          autoComplete="off"
+          value={email}
+          disabled={busy}
+          onChange={(event) => setEmail(event.target.value)}
+        />
+      </label>
+      <label htmlFor="new-member-role">
+        {t.members.memberType}
+        <select
+          id="new-member-role"
+          value={role}
+          disabled={busy}
+          onChange={(event) => setRole(event.target.value)}
+        >
+          {MEMBER_ROLES.map((value) => (
+            <option key={value} value={value}>
+              {value}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label htmlFor="new-member-cohort">
+        {t.members.groups}
+        <input
+          id="new-member-cohort"
+          type="text"
+          value={cohort}
+          disabled={busy}
+          onChange={(event) => setCohort(event.target.value)}
+        />
+      </label>
+      {failure && <Notice tone="danger">{failure}</Notice>}
+      <div className="row">
+        <button
+          data-variant="primary"
+          disabled={busy || email.trim() === ""}
+          onClick={() => void add()}
+        >
+          {busy ? t.members.adding : t.members.add}
+        </button>
+        <button data-variant="quiet" disabled={busy} onClick={() => setOpen(false)}>
+          {t.identity.cancel}
+        </button>
+      </div>
+    </Panel>
+  );
+}
+
 export function Members() {
   const { control, session } = useSession();
   const organizationId = session.admin?.organizationId ?? "";
+  const mayAdd = can(session, CAPABILITY.identityManage);
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
@@ -332,6 +438,15 @@ export function Members() {
         <p>{t.members.lead}</p>
       </div>
       <Notice>{t.members.boundary}</Notice>
+      {mayAdd && (
+        <AddMember
+          organizationId={organizationId}
+          onAdded={(userId) => {
+            setReload((n) => n + 1);
+            setSelected(userId);
+          }}
+        />
+      )}
 
       <Panel>
         <label htmlFor="member-query">
