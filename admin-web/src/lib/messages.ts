@@ -340,6 +340,14 @@ export const t = {
       "At least one organization administrator must remain. This account cannot be suspended or deleted.",
     saveProfile: "Save",
     profileSaved: "Saved.",
+    groupDisplayTitle: "Groups shown on Nova Desktop",
+    groupDisplayHint:
+      "This person's choice wins over their groups and the organization settings. A group hidden from members stays hidden.",
+    groupDisplayInherit: "Follow groups and organization",
+    groupDisplayShow: "Show their groups",
+    groupDisplayHide: "Hide their groups",
+    groupDisplayEffective: (visible: boolean) =>
+      visible ? "This person currently sees their groups." : "This person currently does not see their groups.",
     addMember: "Add a member",
     addMemberLead:
       "Prepare an account before the person's first sign-in: it is reused when they sign in with this address. Adding a member grants no administration access.",
@@ -382,6 +390,13 @@ export const t = {
     readOnly: "You can view groups, but not change them.",
     nameTaken: "A group with this name already exists.",
     nameInvalid: "Enter a group name of 120 characters or fewer.",
+    display: "On Nova Desktop",
+    visibleToMembers: "Shown to its members",
+    hiddenFromMembers: "Hidden from its members",
+    hideFromMembers: "Hide from members",
+    showToMembers: "Show to members",
+    visibilityHint:
+      "A hidden group still applies its lessons and settings; only its name is no longer sent to members.",
   },
 
   deployment: {
@@ -712,6 +727,10 @@ export const t = {
     restoreDefaultsHint: "Fills in Nova's default values. Nothing changes until you save.",
     groupSidebar: "Sidebar categories",
     groupOther: "Other features",
+    groupMemberView: "What members see",
+    memberGroupsTitle: "Show members their groups",
+    memberGroupsBody:
+      "Members see the groups they belong to in Nova Desktop, for example “Aero 2”. When hidden, no group name is sent to their device. You can also choose per person from their member page, or hide a single group from the Groups page.",
     sidebarNote: "When closed, it disappears from the member's sidebar in Nova.",
     stylesTitle: "Styles",
     // La question qu'un administrateur se pose en fermant Styles : les dictees

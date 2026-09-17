@@ -268,6 +268,16 @@ const POLICY_GROUPS: {
       },
     ],
   },
+  {
+    title: t.policies.groupMemberView,
+    items: [
+      {
+        key: "member_groups_visible",
+        title: t.policies.memberGroupsTitle,
+        body: t.policies.memberGroupsBody,
+      },
+    ],
+  },
 ];
 
 /**
