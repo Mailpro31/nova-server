@@ -197,6 +197,13 @@ function GroupEditor({
         />
       </div>
 
+      {editable && countOverrides(draft) > 0 && (
+        <div>
+          <button data-variant="quiet" onClick={() => setDraft({})}>
+            {t.groupPolicies.resetGroup}
+          </button>
+        </div>
+      )}
       {!mayManage && <p className="policy-hint">{t.groupPolicies.readOnly}</p>}
       {conflict && (
         <Notice tone="danger">
