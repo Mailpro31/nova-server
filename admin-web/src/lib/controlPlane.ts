@@ -875,6 +875,17 @@ export class ControlPlane {
     );
   }
 
+  /** Prépare un compte avant la première connexion. Aucun privilège n'y passe. */
+  createMember(
+    organizationId: string,
+    body: { email: string; member_role?: string; cohort?: string },
+  ) {
+    return this.client.request<{ member: MemberView }>(
+      `/api/control/organizations/${organizationId}/members`,
+      { method: "POST", body },
+    );
+  }
+
   setMemberStatus(organizationId: string, userId: string, status: string) {
     return this.client.request<{ member: MemberView; changed: boolean }>(
       `/api/control/organizations/${organizationId}/members/${userId}/status`,
