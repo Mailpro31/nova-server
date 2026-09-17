@@ -72,8 +72,12 @@ describe("Groups page", () => {
 
   test("server refusals are explained", async () => {
     const { errorMessage, t } = await import("./messages");
-    expect(errorMessage("conflict", "GROUP_NAME_TAKEN")).toBe(t.groups.nameTaken);
-    expect(errorMessage("invalid", "GROUP_NAME_INVALID")).toBe(t.groups.nameInvalid);
+    expect(errorMessage("conflict", "GROUP_NAME_TAKEN")).toBe(
+      t.groups.nameTaken,
+    );
+    expect(errorMessage("invalid", "GROUP_NAME_INVALID")).toBe(
+      t.groups.nameInvalid,
+    );
     expect(errorMessage("conflict", "GROUP_MANAGED_BY_DIRECTORY")).toBe(
       t.groups.managedByDirectory,
     );

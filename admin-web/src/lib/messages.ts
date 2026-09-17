@@ -26,6 +26,7 @@ export const t = {
     provisioning: "Provisioning",
     administrators: "Administrators",
     members: "Members",
+    groups: "Groups",
     learn: "Learn",
     packages: "Packages",
     limits: "Limits",
@@ -337,6 +338,39 @@ export const t = {
     outsideDomains: "This address is not in this organization's email domains.",
     emailInvalid: "Enter a valid email address.",
     alreadyExists: "An account with this address already exists.",
+  },
+
+  groups: {
+    title: "Groups",
+    lead: "Groups let you target lessons and change settings for part of the organization. Create your own here; groups from your directory appear too.",
+    create: "Create group",
+    creating: "Creating…",
+    name: "Group name",
+    source: "Origin",
+    sourceConsole: "Created in Nova Admin",
+    sourceDirectory: "From your directory",
+    members: "Members",
+    memberCount: (count: number) => (count === 1 ? "1 member" : `${count} members`),
+    open: "Members",
+    close: "Close",
+    rename: "Rename",
+    save: "Save",
+    cancel: "Cancel",
+    delete: "Delete group",
+    deleteTitle: "Delete this group?",
+    deleteBody:
+      "The group and its memberships are removed. The settings and lessons that targeted it no longer apply to its members. This cannot be undone.",
+    managedByDirectory: "This group comes from your directory. Change it there.",
+    empty: "No group yet.",
+    noMembers: "No member in this group yet.",
+    addMember: "Add a member",
+    searchPlaceholder: "Search by email",
+    noMatch: "No other member matches.",
+    add: "Add",
+    remove: "Remove",
+    readOnly: "You can view groups, but not change them.",
+    nameTaken: "A group with this name already exists.",
+    nameInvalid: "Enter a group name of 120 characters or fewer.",
   },
 
   deployment: {
@@ -1066,6 +1100,9 @@ export function errorMessage(kind: ApiErrorKind, code?: string | null): string {
   if (code === "MEMBER_EMAIL_OUTSIDE_DOMAINS") return t.members.outsideDomains;
   if (code === "MEMBER_EMAIL_INVALID") return t.members.emailInvalid;
   if (code === "MEMBER_ALREADY_EXISTS") return t.members.alreadyExists;
+  if (code === "GROUP_NAME_TAKEN") return t.groups.nameTaken;
+  if (code === "GROUP_NAME_INVALID") return t.groups.nameInvalid;
+  if (code === "GROUP_MANAGED_BY_DIRECTORY") return t.groups.managedByDirectory;
   if (code === "SECURITY_ROLE_INVALID") return "That role is not recognised.";
   if (code === "POLICY_REVISION_CONFLICT") return t.policies.conflict;
   if (code === "GROUP_POLICY_REVISION_CONFLICT") return t.groupPolicies.conflict;

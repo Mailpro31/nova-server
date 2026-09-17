@@ -420,6 +420,16 @@ export interface AuditEntry {
   metadata: Record<string, unknown> | null;
 }
 
+/** Un groupe, de la console ou de l'annuaire. Seuls les premiers se modifient ici. */
+export interface GroupView {
+  id: string;
+  label: string;
+  source: "console" | "scim" | string;
+  external_id: string | null;
+  member_count: number;
+  updated_at: number;
+}
+
 export interface MemberGroup {
   id: string;
   label: string;
@@ -1016,6 +1026,56 @@ export class ControlPlane {
     return this.client.request<CustomLessonView>(
       `/api/control/organization/learning/custom-lessons/${encodeURIComponent(lessonId)}/nova-update`,
       { method: "POST", body: { expected_revision: expectedRevision, decision } },
+    );
+  }
+
+  groups(organizationId: string) {
+    return this.client.request<{ groups: GroupView[] }>(
+      `/api/control/organizations/${organizationId}/groups`,
+    );
+  }
+
+  createGroup(organizationId: string, displayName: string) {
+    return this.client.request<{ group: GroupView }>(
+      `/api/control/organizations/${organizationId}/groups`,
+      { method: "POST", body: { display_name: displayName } },
+    );
+  }
+
+  renameGroup(organizationId: string, groupId: string, displayName: string) {
+    return this.client.request<{ group: GroupView }>(
+      `/api/control/organizations/${organizationId}/groups/${encodeURIComponent(groupId)}`,
+      { method: "PUT", body: { display_name: displayName } },
+    );
+  }
+
+  /** Le groupe et ses appartenances. Les réglages qui le visent cessent de s'appliquer. */
+  deleteGroup(organizationId: string, groupId: string) {
+    return this.client.request<void>(
+      `/api/control/organizations/${organizationId}/groups/${encodeURIComponent(groupId)}`,
+      { method: "DELETE" },
+    );
+  }
+
+  groupMembers(organizationId: string, groupId: string) {
+    return this.client.request<{ members: { user_id: string; email: string }[] }>(
+      `/api/control/organizations/${organizationId}/groups/${encodeURIComponent(groupId)}/members`,
+    );
+  }
+
+  addGroupMember(organizationId: string, groupId: string, userId: string) {
+    return this.client.request<{ group: GroupView }>(
+      `/api/control/organizations/${organizationId}/groups/${encodeURIComponent(groupId)}` +
+        `/members/${encodeURIComponent(userId)}`,
+      { method: "PUT", body: {} },
+    );
+  }
+
+  removeGroupMember(organizationId: string, groupId: string, userId: string) {
+    return this.client.request<{ group: GroupView }>(
+      `/api/control/organizations/${organizationId}/groups/${encodeURIComponent(groupId)}` +
+        `/members/${encodeURIComponent(userId)}`,
+      { method: "DELETE" },
     );
   }
 

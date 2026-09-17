@@ -6182,6 +6182,224 @@ def control_read_group_policies(
     }
 
 
+# ── Groupes geres dans la console ──────────────────────────────────────────────
+#
+# Une organisation sans annuaire cree ses groupes ici. Un groupe venu de
+# l'annuaire (`source = 'scim'`) reste en lecture seule : l'annuaire en est le
+# seul auteur, et deux auteurs finiraient par se contredire.
+
+GROUP_SOURCE_CONSOLE = "console"
+MAX_GROUP_NAME = 120
+
+
+class GroupNameRequest(BaseModel):
+    display_name: str
+
+
+def console_group_view(conn, row) -> dict:
+    count = conn.execute(
+        "SELECT COUNT(*) AS n FROM organization_group_memberships "
+        "WHERE organization_id=? AND group_id=?",
+        (row["organization_id"], row["group_id"]),
+    ).fetchone()["n"]
+    return {
+        "id": row["group_id"],
+        "label": row["display_name"],
+        "source": row["source"],
+        "external_id": row["external_id"],
+        "member_count": count,
+        "updated_at": row["updated_at"],
+    }
+
+
+def console_group_row(conn, organization_id: str, group_id: str):
+    return conn.execute(
+        "SELECT * FROM organization_groups WHERE organization_id=? AND group_id=? "
+        "AND deleted_at IS NULL",
+        (organization_id, group_id),
+    ).fetchone()
+
+
+def editable_group_or_error(conn, organization_id: str, group_id: str):
+    row = console_group_row(conn, organization_id, group_id)
+    if row is None:
+        raise auth_error(404, "GROUP_NOT_FOUND")
+    if row["source"] != GROUP_SOURCE_CONSOLE:
+        raise auth_error(409, "GROUP_MANAGED_BY_DIRECTORY")
+    return row
+
+
+def valid_group_name(conn, organization_id: str, name: str,
+                     except_group_id: str | None = None) -> str:
+    cleaned = (name or "").strip()
+    if not cleaned or len(cleaned) > MAX_GROUP_NAME:
+        raise auth_error(400, "GROUP_NAME_INVALID")
+    taken = conn.execute(
+        "SELECT group_id FROM organization_groups WHERE organization_id=? "
+        "AND deleted_at IS NULL AND LOWER(display_name)=LOWER(?)",
+        (organization_id, cleaned),
+    ).fetchall()
+    if any(row["group_id"] != except_group_id for row in taken):
+        raise auth_error(409, "GROUP_NAME_TAKEN")
+    return cleaned
+
+
+@app.get("/api/control/organizations/{organization_id}/groups")
+def control_list_groups(
+    organization_id: str,
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_ORGANIZATION_READ)),
+):
+    """Tous les groupes, de la console et de l'annuaire, avec leur origine."""
+    require_organization_access(principal, organization_id)
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM organization_groups WHERE organization_id=? AND deleted_at IS NULL "
+            "ORDER BY display_name",
+            (organization_id,),
+        ).fetchall()
+        return {"groups": [console_group_view(conn, row) for row in rows]}
+
+
+@app.post("/api/control/organizations/{organization_id}/groups", status_code=201)
+def control_create_group(
+    organization_id: str,
+    body: GroupNameRequest,
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_IDENTITY_MANAGE)),
+):
+    require_organization_access(principal, organization_id)
+    now = time.time()
+    with db() as conn:
+        name = valid_group_name(conn, organization_id, body.display_name)
+        group_id = str(uuid.uuid4())
+        conn.execute(
+            "INSERT INTO organization_groups(organization_id, group_id, external_id, "
+            "display_name, created_at, updated_at, source) VALUES (?,?,?,?,?,?,?)",
+            (organization_id, group_id, None, name, now, now, GROUP_SOURCE_CONSOLE),
+        )
+        record_admin_action(principal, "group.create", target_type="group",
+                            target_id=group_id, metadata={"name": name}, conn=conn)
+        return {"group": console_group_view(conn, console_group_row(conn, organization_id, group_id))}
+
+
+@app.put("/api/control/organizations/{organization_id}/groups/{group_id}")
+def control_rename_group(
+    organization_id: str,
+    group_id: str,
+    body: GroupNameRequest,
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_IDENTITY_MANAGE)),
+):
+    require_organization_access(principal, organization_id)
+    with db() as conn:
+        row = editable_group_or_error(conn, organization_id, group_id)
+        name = valid_group_name(conn, organization_id, body.display_name, except_group_id=group_id)
+        if name != row["display_name"]:
+            conn.execute(
+                "UPDATE organization_groups SET display_name=?, updated_at=? "
+                "WHERE organization_id=? AND group_id=?",
+                (name, time.time(), organization_id, group_id),
+            )
+            record_admin_action(
+                principal, "group.rename", target_type="group", target_id=group_id,
+                metadata={"before": {"name": row["display_name"]}, "after": {"name": name}},
+                conn=conn)
+        return {"group": console_group_view(conn, console_group_row(conn, organization_id, group_id))}
+
+
+@app.delete("/api/control/organizations/{organization_id}/groups/{group_id}",
+            status_code=204)
+def control_delete_group(
+    organization_id: str,
+    group_id: str,
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_IDENTITY_MANAGE)),
+):
+    """Retire le groupe et ses appartenances. Ses reglages cessent de s'appliquer."""
+    require_organization_access(principal, organization_id)
+    with db() as conn:
+        row = editable_group_or_error(conn, organization_id, group_id)
+        conn.execute(
+            "DELETE FROM organization_group_memberships WHERE organization_id=? AND group_id=?",
+            (organization_id, group_id),
+        )
+        conn.execute(
+            "UPDATE organization_groups SET deleted_at=?, updated_at=? "
+            "WHERE organization_id=? AND group_id=?",
+            (time.time(), time.time(), organization_id, group_id),
+        )
+        record_admin_action(principal, "group.delete", target_type="group",
+                            target_id=group_id, metadata={"name": row["display_name"]},
+                            conn=conn)
+    return Response(status_code=204)
+
+
+@app.get("/api/control/organizations/{organization_id}/groups/{group_id}/members")
+def control_group_members(
+    organization_id: str,
+    group_id: str,
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_ORGANIZATION_READ)),
+):
+    require_organization_access(principal, organization_id)
+    with db() as conn:
+        if console_group_row(conn, organization_id, group_id) is None:
+            raise auth_error(404, "GROUP_NOT_FOUND")
+        rows = conn.execute(
+            "SELECT u.user_id, u.email FROM organization_group_memberships gm "
+            "JOIN users u ON u.user_id=gm.user_id AND u.organization_id=gm.organization_id "
+            "WHERE gm.organization_id=? AND gm.group_id=? ORDER BY u.normalized_email",
+            (organization_id, group_id),
+        ).fetchall()
+    return {"members": [{"user_id": row["user_id"], "email": row["email"]} for row in rows]}
+
+
+@app.put("/api/control/organizations/{organization_id}/groups/{group_id}/members/{user_id}")
+def control_add_group_member(
+    organization_id: str,
+    group_id: str,
+    user_id: str,
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_IDENTITY_MANAGE)),
+):
+    require_organization_access(principal, organization_id)
+    with db() as conn:
+        editable_group_or_error(conn, organization_id, group_id)
+        member = user_by_id(conn, user_id)
+        if member is None or member["organization_id"] != organization_id:
+            raise auth_error(404, "USER_NOT_FOUND")
+        existing = conn.execute(
+            "SELECT 1 FROM organization_group_memberships "
+            "WHERE organization_id=? AND group_id=? AND user_id=?",
+            (organization_id, group_id, user_id),
+        ).fetchone()
+        if existing is None:
+            conn.execute(
+                "INSERT INTO organization_group_memberships(organization_id, group_id, "
+                "user_id, created_at) VALUES (?,?,?,?)",
+                (organization_id, group_id, user_id, time.time()),
+            )
+            record_admin_action(principal, "group.member_add", target_type="group",
+                                target_id=group_id, metadata={"user_id": user_id}, conn=conn)
+        return {"group": console_group_view(conn, console_group_row(conn, organization_id, group_id))}
+
+
+@app.delete("/api/control/organizations/{organization_id}/groups/{group_id}/members/{user_id}")
+def control_remove_group_member(
+    organization_id: str,
+    group_id: str,
+    user_id: str,
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_IDENTITY_MANAGE)),
+):
+    require_organization_access(principal, organization_id)
+    with db() as conn:
+        editable_group_or_error(conn, organization_id, group_id)
+        removed = conn.execute(
+            "DELETE FROM organization_group_memberships "
+            "WHERE organization_id=? AND group_id=? AND user_id=?",
+            (organization_id, group_id, user_id),
+        ).rowcount
+        if removed:
+            record_admin_action(principal, "group.member_remove", target_type="group",
+                                target_id=group_id, metadata={"user_id": user_id}, conn=conn)
+        return {"group": console_group_view(conn, console_group_row(conn, organization_id, group_id))}
+
+
 @app.put("/api/control/organization/policy/groups/{group_id}")
 def control_update_group_policy(
     group_id: str,
@@ -9269,6 +9487,11 @@ AUDIT_ACTION_LABELS = {
     # action enregistree a sa phrase.
     "organization_policy.update": "Changed the organization settings",
     "group_policy.update": "Changed a group's settings",
+    "group.create": "Created a group",
+    "group.rename": "Renamed a group",
+    "group.delete": "Deleted a group",
+    "group.member_add": "Added a member to a group",
+    "group.member_remove": "Removed a member from a group",
     "ai_runtime.desired_config.update": "Changed the AI runtime configuration",
     "connector.enrollment.create": "Created a Connector enrollment",
     "connector.enrolled": "Enrolled a Connector",
