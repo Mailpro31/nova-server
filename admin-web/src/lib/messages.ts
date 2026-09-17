@@ -811,6 +811,11 @@ export const t = {
     archiveBody:
       "Members stop receiving this content. Nothing is deleted — every version is kept, and you can restore the package later.",
     restore: "Restore",
+    delete: "Delete package",
+    deleteTitle: "Delete this package permanently?",
+    deleteBody:
+      "The package and every one of its versions are removed. This cannot be undone. To keep it without distributing it, leave it archived.",
+    notArchived: "Archive this package before deleting it.",
     archivedNote:
       "This package is archived. Members no longer receive it. Restore it to work on it again.",
     save: "Save draft",
@@ -1057,6 +1062,7 @@ export function errorMessage(kind: ApiErrorKind, code?: string | null): string {
   if (code === "LEARNING_CUSTOM_LESSON_INVALID") return t.learn.invalid;
   if (code === "LEARNING_CUSTOM_LESSON_LIMIT") return t.learn.limit;
   if (code === "LESSON_NOT_FOUND") return t.learn.notFound;
+  if (code === "PACKAGE_NOT_ARCHIVED") return t.packages.notArchived;
   if (code === "LEARNING_LESSON_NOT_CUSTOMIZABLE") return t.learn.notCustomizable;
   if (code === "LEARNING_UPDATE_NOT_AVAILABLE") return t.learn.updateNotAvailable;
   if (code === "AI_RUNTIME_REVISION_CONFLICT") return t.aiRuntime.conflict;
