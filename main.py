@@ -30,7 +30,7 @@ from typing import Literal
 from fastapi import Depends, FastAPI, Header, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, StrictBool
 
 import connector_release
 import database
@@ -2294,6 +2294,12 @@ POLICY_SETTINGS: dict[str, PolicySetting] = {
         # `/api/reformulate` ne l'applique pas davantage.
         PolicySetting("disabled_style_ids", list, [], None,
                       pattern=r"[A-Za-z0-9_.:-]{1,120}", max_items=100),
+        # Le membre voit-il ses groupes sur son poste ? Un affichage, pas une
+        # capacite : il ne ferme rien. Masque, `/api/me` n'envoie aucun nom de
+        # groupe. Une personne peut en etre exceptee depuis sa fiche, et un
+        # groupe precis peut etre retire de l'affichage — voir
+        # `member_group_display`.
+        PolicySetting("member_groups_visible", bool, True, None),
     )
 }
 
@@ -2500,6 +2506,71 @@ def member_policy(account) -> dict:
         "revision": policy["revision"] + sum(row["revision"] for row in rows),
         "settings": resolve_group_policy_settings(policy["settings"], group_overrides),
     }
+
+
+def member_group_display(account, policy_document: dict | None = None) -> dict:
+    """Ce que le membre voit de ses groupes, et s'il le voit.
+
+    Du plus fort au plus faible : le choix fait pour la personne, puis ses
+    groupes (le masquage l'emporte entre deux groupes), puis l'organisation —
+    deja resolus ensemble dans la policy du membre. Un groupe retire de
+    l'affichage n'apparait chez aucun de ses membres, meme montre.
+
+    Masque, aucun nom ne part : le poste ne peut pas afficher ce qu'il n'a pas
+    recu. La cohorte historique suit la meme regle.
+    """
+    if account is None:
+        return {"visible": True, "groups": []}
+    organization_id = account_organization(account)
+    settings = (policy_document or member_policy(account))["settings"]
+    visible = bool(settings.get("member_groups_visible", True))
+    with db() as conn:
+        override = member_group_display_override(conn, organization_id, account["user_id"])
+        if override is not None:
+            visible = override
+        if not visible:
+            return {"visible": False, "groups": []}
+        rows = conn.execute(
+            "SELECT g.group_id, g.display_name, g.source FROM organization_group_memberships m "
+            "JOIN organization_groups g ON g.organization_id=m.organization_id "
+            "AND g.group_id=m.group_id "
+            "WHERE m.organization_id=? AND m.user_id=? AND g.deleted_at IS NULL "
+            "AND g.visible_to_members=1 ORDER BY g.display_name, g.group_id",
+            (organization_id, account["user_id"]),
+        ).fetchall()
+    groups = groups_for(account) + [
+        {
+            "id": row["group_id"],
+            "label": row["display_name"],
+            # Des sources que le poste connait deja : une valeur inconnue
+            # ferait rejeter toute la reponse par un poste installe.
+            "source": "manual" if row["source"] == GROUP_SOURCE_CONSOLE else "scim",
+            "external_group_id": None,
+        }
+        for row in rows
+    ]
+    return {"visible": True, "groups": groups}
+
+
+def member_group_display_override(conn, organization_id: str, user_id: str) -> bool | None:
+    row = conn.execute(
+        "SELECT visible FROM organization_member_group_display "
+        "WHERE organization_id=? AND user_id=?",
+        (organization_id, user_id),
+    ).fetchone()
+    return None if row is None else bool(row["visible"])
+
+
+def member_profile_version(account) -> str:
+    """L'empreinte de ce que `/api/me` montre des groupes du membre.
+
+    Elle bouge quand il entre dans un groupe ou en sort, quand un groupe est
+    renomme ou retire de l'affichage, et quand l'affichage est masque ou
+    rouvert : le poste relit alors `/api/me`.
+    """
+    display = member_group_display(account)
+    payload = json.dumps(display, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
 def resolve_effective_product_capabilities(
@@ -6208,6 +6279,7 @@ def console_group_view(conn, row) -> dict:
         "source": row["source"],
         "external_id": row["external_id"],
         "member_count": count,
+        "visible_to_members": bool(row["visible_to_members"]),
         "updated_at": row["updated_at"],
     }
 
@@ -6329,6 +6401,42 @@ def control_delete_group(
                             target_id=group_id, metadata={"name": row["display_name"]},
                             conn=conn)
     return Response(status_code=204)
+
+
+class GroupVisibilityRequest(BaseModel):
+    visible_to_members: StrictBool
+
+
+@app.put("/api/control/organizations/{organization_id}/groups/{group_id}/visibility")
+def control_group_visibility(
+    organization_id: str,
+    group_id: str,
+    body: GroupVisibilityRequest,
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_IDENTITY_MANAGE)),
+):
+    """Montre ou retire un groupe de l'affichage chez ses membres.
+
+    Permis pour un groupe de l'annuaire : c'est un choix d'affichage de Nova,
+    l'annuaire reste l'auteur du groupe lui-meme.
+    """
+    require_organization_access(principal, organization_id)
+    with db() as conn:
+        row = console_group_row(conn, organization_id, group_id)
+        if row is None:
+            raise auth_error(404, "GROUP_NOT_FOUND")
+        wanted = 1 if body.visible_to_members else 0
+        if row["visible_to_members"] != wanted:
+            conn.execute(
+                "UPDATE organization_groups SET visible_to_members=?, updated_at=? "
+                "WHERE organization_id=? AND group_id=?",
+                (wanted, time.time(), organization_id, group_id),
+            )
+            record_admin_action(
+                principal, "group.visibility", target_type="group", target_id=group_id,
+                metadata={"before": {"visible_to_members": bool(row["visible_to_members"])},
+                          "after": {"visible_to_members": bool(wanted)}},
+                conn=conn)
+        return {"group": console_group_view(conn, console_group_row(conn, organization_id, group_id))}
 
 
 @app.get("/api/control/organizations/{organization_id}/groups/{group_id}/members")
@@ -8873,7 +8981,7 @@ def learning_version(organization_id: str) -> str:
 @app.get("/api/organization/changes")
 def member_read_changes(user: str = Depends(current_user),
                         account=Depends(current_account)):
-    """Trois reperes pour savoir ce qui a change, sans rien telecharger.
+    """Quatre reperes pour savoir ce qui a change, sans rien telecharger.
 
     Le poste interroge cette route souvent — c'est ce qui fait arriver un
     changement de la console en moins d'une minute — et ne recharge la policy,
@@ -8890,6 +8998,8 @@ def member_read_changes(user: str = Depends(current_user),
         # compare a celle qu'il detient deja.
         "packages_version": effective_packages(organization_id, policy)["catalog_version"],
         "learning_version": member_learning_version(organization_id, account),
+        # Ce que `/api/me` montre de ses groupes : le poste le relit s'il bouge.
+        "profile_version": member_profile_version(account),
     }
 
 
@@ -9228,6 +9338,64 @@ class MemberStatusRequest(BaseModel):
 MEMBER_EMAIL_SHAPE = re.compile(r"^[^@\s,;<>\"]+@[^@\s,;<>\"]+\.[^@\s,;<>\".]{2,}$")
 
 
+class MemberGroupDisplayRequest(BaseModel):
+    # `null` : la personne suit ses groupes et l'organisation.
+    visible: StrictBool | None
+
+
+def member_group_display_answer(organization_id: str, user_id: str) -> dict:
+    with db() as conn:
+        row = member_or_404(conn, organization_id, user_id)
+        override = member_group_display_override(conn, organization_id, user_id)
+    return {"visible": override, "effective": member_group_display(row)["visible"]}
+
+
+@app.get("/api/control/organizations/{organization_id}/members/{user_id}/group-display")
+def control_member_group_display(
+    organization_id: str,
+    user_id: str,
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_IDENTITY_MANAGE)),
+):
+    """Le choix d'affichage des groupes fait pour cette personne, et son effet."""
+    require_organization_access(principal, organization_id)
+    return member_group_display_answer(organization_id, user_id)
+
+
+@app.put("/api/control/organizations/{organization_id}/members/{user_id}/group-display")
+def control_set_member_group_display(
+    organization_id: str,
+    user_id: str,
+    body: MemberGroupDisplayRequest,
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_IDENTITY_MANAGE)),
+):
+    """Montre ou masque ses groupes a une personne, ou la rend a ses reglages.
+
+    Ce choix l'emporte sur ses groupes et sur l'organisation.
+    """
+    require_organization_access(principal, organization_id)
+    with db() as conn:
+        member_or_404(conn, organization_id, user_id)
+        before = member_group_display_override(conn, organization_id, user_id)
+        if before != body.visible:
+            conn.execute(
+                "DELETE FROM organization_member_group_display "
+                "WHERE organization_id=? AND user_id=?",
+                (organization_id, user_id),
+            )
+            if body.visible is not None:
+                conn.execute(
+                    "INSERT INTO organization_member_group_display(organization_id, user_id, "
+                    "visible, updated_at, updated_by_user_id) VALUES (?,?,?,?,?)",
+                    (organization_id, user_id, 1 if body.visible else 0, time.time(),
+                     principal.user_id),
+                )
+            record_admin_action(
+                principal, "member.group_display", target_type="user", target_id=user_id,
+                metadata={"before": {"visible": before}, "after": {"visible": body.visible}},
+                conn=conn)
+    return member_group_display_answer(organization_id, user_id)
+
+
 class MemberCreateRequest(BaseModel):
     email: str
     member_role: str | None = None
@@ -9502,6 +9670,7 @@ AUDIT_ACTION_LABELS = {
     "group.create": "Created a group",
     "group.rename": "Renamed a group",
     "group.delete": "Deleted a group",
+    "group.visibility": "Changed whether members see a group",
     "group.member_add": "Added a member to a group",
     "group.member_remove": "Removed a member from a group",
     "ai_runtime.desired_config.update": "Changed the AI runtime configuration",
@@ -9531,6 +9700,7 @@ AUDIT_ACTION_LABELS = {
     "member.group_change": "Changed a member's groups",
     "member.delete": "Deleted a member",
     "member.create": "Added a member",
+    "member.group_display": "Changed whether a member sees their groups",
     "member.sessions_revoke": "Signed a member out of every device",
     "learning_lesson.update": "Changed a Learn lesson's settings",
     "learning_lesson.archive": "Archived a Learn lesson",
@@ -9662,6 +9832,7 @@ def me(user: str = Depends(current_user), u=Depends(current_account)):
     # La policy du membre, pas celle de l'organisation active : en multi-tenant
     # ce ne serait pas la meme, et `/api/me` repondrait pour le voisin.
     member_policy_document = member_policy(u)
+    group_display = member_group_display(u, member_policy_document)
     member_config = public_campus_config(organization_id, member_policy_document)
     capabilities = member_config["capabilities"]
     # Les categories du Nova Core que l'organisation a fermees, nommees
@@ -9682,7 +9853,9 @@ def me(user: str = Depends(current_user), u=Depends(current_account)):
         # — contrat historique, inchangé —
         "email": u["email"],
         "role": u["role"],
-        "cohort": u["cohort"],
+        # La cohorte est un nom de groupe : masquee avec les groupes. Toujours
+        # une chaine, comme le contrat historique le declare.
+        "cohort": (u["cohort"] or "") if group_display["visible"] else "",
         "organization": organization["display_name"] if organization else ORGANIZATION_NAME,
         # — contrat v2, additif —
         "contract_version": 2,
@@ -9696,7 +9869,8 @@ def me(user: str = Depends(current_user), u=Depends(current_account)):
         "membership": {
             "member_type": member_type_for(u["role"]),
             "security_role": security_role_for(u),
-            "groups": groups_for(u),
+            "groups": group_display["groups"],
+            "groups_visible": group_display["visible"],
             "status": account_status(u),
         },
         "identity": {

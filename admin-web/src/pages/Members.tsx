@@ -35,6 +35,69 @@ function timestamp(value: number | null): string {
 }
 
 /** Fiche d'un membre : identité, appartenance, appareils, actions. */
+/** Ce que cette personne voit de ses groupes. Son choix l'emporte sur le reste. */
+function MemberGroupDisplayPanel({
+  organizationId,
+  userId,
+}: {
+  organizationId: string;
+  userId: string;
+}) {
+  const { control } = useSession();
+  const [state, retry] = useResource(
+    control ? () => control.memberGroupDisplay(organizationId, userId) : null,
+    [control, organizationId, userId],
+  );
+  const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
+
+  async function choose(value: string) {
+    const visible = value === "show" ? true : value === "hide" ? false : null;
+    setBusy(true);
+    setFailure(null);
+    try {
+      await control!.setMemberGroupDisplay(organizationId, userId, visible);
+      retry();
+    } catch (raised) {
+      setFailure(
+        raised instanceof ApiError
+          ? errorMessage(raised.kind, raised.code)
+          : errorMessage("server"),
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Panel title={t.members.groupDisplayTitle}>
+      <AsyncSection state={state} onRetry={retry}>
+        {(view) => (
+          <>
+            <label htmlFor="member-group-display">
+              {t.members.groupDisplayTitle}
+              <select
+                id="member-group-display"
+                disabled={busy}
+                value={view.visible === null ? "inherit" : view.visible ? "show" : "hide"}
+                onChange={(event) => void choose(event.target.value)}
+              >
+                <option value="inherit">{t.members.groupDisplayInherit}</option>
+                <option value="show">{t.members.groupDisplayShow}</option>
+                <option value="hide">{t.members.groupDisplayHide}</option>
+              </select>
+            </label>
+            <p className="policy-hint">
+              {t.members.groupDisplayEffective(view.effective)} {t.members.groupDisplayHint}
+            </p>
+          </>
+        )}
+      </AsyncSection>
+      {failure && <Notice tone="danger">{failure}</Notice>}
+    </Panel>
+  );
+}
+
 function MemberDetailView({
   userId,
   onClose,
@@ -224,6 +287,10 @@ function MemberDetailView({
                     </button>
                   </div>
                 </Panel>
+              )}
+
+              {mayManage && (
+                <MemberGroupDisplayPanel organizationId={organizationId} userId={userId} />
               )}
 
               <Panel title={t.members.devices}>

@@ -427,7 +427,15 @@ export interface GroupView {
   source: "console" | "scim" | string;
   external_id: string | null;
   member_count: number;
+  /** Faux : le groupe n'apparaît chez aucun de ses membres sur Nova Desktop. */
+  visible_to_members: boolean;
   updated_at: number;
+}
+
+/** Le choix fait pour une personne (`null` : elle suit ses réglages) et son effet. */
+export interface MemberGroupDisplay {
+  visible: boolean | null;
+  effective: boolean;
 }
 
 export interface MemberGroup {
@@ -885,6 +893,20 @@ export class ControlPlane {
     );
   }
 
+  memberGroupDisplay(organizationId: string, userId: string) {
+    return this.client.request<MemberGroupDisplay>(
+      `/api/control/organizations/${organizationId}/members/${encodeURIComponent(userId)}/group-display`,
+    );
+  }
+
+  /** `null` rend la personne aux réglages de ses groupes et de l'organisation. */
+  setMemberGroupDisplay(organizationId: string, userId: string, visible: boolean | null) {
+    return this.client.request<MemberGroupDisplay>(
+      `/api/control/organizations/${organizationId}/members/${encodeURIComponent(userId)}/group-display`,
+      { method: "PUT", body: { visible } },
+    );
+  }
+
   /** Prépare un compte avant la première connexion. Aucun privilège n'y passe. */
   createMember(
     organizationId: string,
@@ -1054,6 +1076,14 @@ export class ControlPlane {
     return this.client.request<void>(
       `/api/control/organizations/${organizationId}/groups/${encodeURIComponent(groupId)}`,
       { method: "DELETE" },
+    );
+  }
+
+  /** Montre ou retire le groupe de l'affichage chez ses membres, annuaire compris. */
+  setGroupVisibility(organizationId: string, groupId: string, visibleToMembers: boolean) {
+    return this.client.request<{ group: GroupView }>(
+      `/api/control/organizations/${organizationId}/groups/${encodeURIComponent(groupId)}/visibility`,
+      { method: "PUT", body: { visible_to_members: visibleToMembers } },
     );
   }
 

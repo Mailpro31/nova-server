@@ -39,12 +39,14 @@ class OrganizationChangesTests(AdminTestCase):
         self.assertEqual(response.status_code, 200, response.text)
         return response.json()
 
-    def test_the_answer_carries_only_the_three_markers(self):
+    def test_the_answer_carries_only_the_four_markers(self):
         body = self.changes()
-        self.assertEqual(set(body), {"policy_revision", "packages_version", "learning_version"})
+        self.assertEqual(set(body), {"policy_revision", "packages_version", "learning_version",
+                                     "profile_version"})
         self.assertIsInstance(body["policy_revision"], int)
         self.assertIsInstance(body["packages_version"], str)
         self.assertIsInstance(body["learning_version"], str)
+        self.assertIsInstance(body["profile_version"], str)
 
     def test_nothing_changed_means_the_same_markers(self):
         self.assertEqual(self.changes(), self.changes())

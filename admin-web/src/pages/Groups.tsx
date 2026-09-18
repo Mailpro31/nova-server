@@ -238,10 +238,41 @@ function GroupCard({
             ),
           ],
           [t.groups.members, t.groups.memberCount(group.member_count)],
+          [
+            t.groups.display,
+            group.visible_to_members ? (
+              <Tag tone="ok">{t.groups.visibleToMembers}</Tag>
+            ) : (
+              <Tag tone="warn">{t.groups.hiddenFromMembers}</Tag>
+            ),
+          ],
         ]}
       />
       {group.source !== "console" && (
         <p className="policy-hint">{t.groups.managedByDirectory}</p>
+      )}
+      {/* Un choix d'affichage de Nova : permis aussi pour un groupe de
+          l'annuaire, qui reste l'auteur du groupe lui-même. */}
+      {mayManage && (
+        <div className="row">
+          <button
+            disabled={busy}
+            onClick={() =>
+              void run(() =>
+                control!.setGroupVisibility(
+                  organizationId,
+                  group.id,
+                  !group.visible_to_members,
+                ),
+              )
+            }
+          >
+            {group.visible_to_members
+              ? t.groups.hideFromMembers
+              : t.groups.showToMembers}
+          </button>
+          <span className="policy-hint">{t.groups.visibilityHint}</span>
+        </div>
       )}
 
       {editable &&
