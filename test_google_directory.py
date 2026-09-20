@@ -320,6 +320,11 @@ class ConfigurationTests(AdminTestCase):
 
 
 class WorkerTests(unittest.TestCase):
+    def test_the_hourly_service_is_declared_and_runs_the_worker(self):
+        compose = open("docker-compose.yml", encoding="utf-8").read()
+        self.assertIn("directory-sync:", compose)
+        self.assertIn('["python", "directory_worker.py"]', compose)
+
     def test_only_an_enabled_organization_that_waited_long_enough_is_due(self):
         rows = [
             {"organization_id": "a", "enabled": 1, "last_sync_at": None},
