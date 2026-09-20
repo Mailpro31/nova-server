@@ -10867,6 +10867,63 @@ def organization_style_instruction(organization_id: str, style_id: str) -> str |
             return instruction if isinstance(instruction, str) and instruction.strip() else None
     return None
 
+# Le marqueur que le poste remplace avant d'appeler son moteur local. Il n'a
+# aucun sens ici : le serveur met la dictee dans le message, pas dans
+# l'instruction.
+TRANSCRIPT_MARKER = "${output}"
+TRANSCRIPT_BLOCK = re.compile(r"<transcript>\s*\$\{output\}\s*</transcript>", re.IGNORECASE)
+# En dessous, une phrase ne prouve rien : « Merci. » se retrouve dans beaucoup
+# d'instructions sans que la reponse soit un gabarit.
+MIN_ECHO_CHARS = 24
+# Une phrase recopiee telle quelle, pas un mot commun.
+MIN_QUOTE_CHARS = 12
+
+
+def style_instruction(raw: str) -> str:
+    """L'instruction d'un Style, sans le gabarit de transcription.
+
+    Le poste persiste ses Styles avec `<transcript>${output}</transcript>` : sur
+    son moteur local, il y insere la dictee. Le serveur, lui, passe la dictee en
+    message. Laisser le marqueur dans l'instruction donne au modele un gabarit
+    avec un emplacement vide — et il le continue, exemple compris, au lieu de
+    reformuler. C'est le bug signale le 2026-09-20 : le Style entier est ressorti
+    dans Word a la place de la dictee.
+    """
+    cleaned = TRANSCRIPT_BLOCK.sub(" ", raw or "")
+    cleaned = cleaned.replace(TRANSCRIPT_MARKER, " ")
+    # Les lignes vides laissees par le retrait ne disent rien au modele.
+    return "\n".join(line.rstrip() for line in cleaned.splitlines() if line.strip()).strip()
+
+
+def answer_repeats_instruction(instruction: str, answer: str) -> bool:
+    """Le modele a-t-il rendu son instruction plutot que la dictee ?
+
+    Compare a l'instruction reellement envoyee, jamais a une liste de phrases
+    connues : un Style ecrit demain n'aurait aucune chance d'y figurer.
+    """
+    text = (answer or "").strip()
+    if not text:
+        return False
+    if TRANSCRIPT_MARKER in text or "<transcript>" in text.lower():
+        return True
+    reference = (instruction or "").strip()
+    if not reference:
+        return False
+    # Une reponse entierement contenue dans l'instruction : le modele a recopie,
+    # il n'a pas reformule. Quelques mots ne prouvent rien, une phrase si.
+    if len(text) >= MIN_QUOTE_CHARS and text in reference:
+        return True
+    if len(text) < MIN_ECHO_CHARS:
+        return False
+    # Une reponse largement faite des lignes de l'instruction : le modele a
+    # recopie le gabarit, meme s'il en a saute des morceaux.
+    lines = [line.strip() for line in text.splitlines() if len(line.strip()) >= MIN_ECHO_CHARS]
+    if not lines:
+        return False
+    repeated = sum(1 for line in lines if line in reference)
+    return repeated * 2 >= len(lines)
+
+
 # --- reformulation (proxy vers LLM, API OpenAI-compatible)
 @app.post("/api/reformulate")
 async def reformulate(body: ReformulateRequest, user: str = Depends(current_user),
@@ -10892,9 +10949,10 @@ async def reformulate(body: ReformulateRequest, user: str = Depends(current_user
         )
         if not system_prompt:
             raise auth_error(404, "STYLE_NOT_AVAILABLE")
+        system_prompt = style_instruction(system_prompt)
         task_type = TaskType.STYLE_TRANSFORM
     else:
-        system_prompt = style_prompt
+        system_prompt = style_instruction(style_prompt)
         if not system_prompt:
             system_prompt = (
                 "Reformule le texte dicte en un texte clair et professionnel. "
@@ -10905,6 +10963,11 @@ async def reformulate(body: ReformulateRequest, user: str = Depends(current_user
         system_prompt = f"{system_prompt}\n\n{context}"
     result = await execute_text(task_type, system_prompt, source_text)
     count_usage(user, "reformulation")
+    if answer_repeats_instruction(system_prompt, result):
+        # Le modele a rendu le gabarit. Une dictee brute vaut mieux qu'un prompt
+        # colle dans le document de quelqu'un.
+        observability.log("reformulation.template_echo", level="warning", style=style_id or "")
+        return {"text": body.text}
     return {"text": result}
 
 @app.post("/api/command", dependencies=[Depends(product_capability("commands", "voice_commands"))])
