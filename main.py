@@ -35,6 +35,7 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, StrictBool
 import connector_release
 import database
 import deployment
+import group_rules
 import migrations
 import observability
 import production_config
@@ -6392,6 +6393,11 @@ def control_delete_group(
             "DELETE FROM organization_group_memberships WHERE organization_id=? AND group_id=?",
             (organization_id, group_id),
         )
+        # Une regle sans groupe ne rangerait plus rien et resterait affichee.
+        conn.execute(
+            "DELETE FROM organization_group_rules WHERE organization_id=? AND group_id=?",
+            (organization_id, group_id),
+        )
         conn.execute(
             "UPDATE organization_groups SET deleted_at=?, updated_at=? "
             "WHERE organization_id=? AND group_id=?",
@@ -6450,12 +6456,15 @@ def control_group_members(
         if console_group_row(conn, organization_id, group_id) is None:
             raise auth_error(404, "GROUP_NOT_FOUND")
         rows = conn.execute(
-            "SELECT u.user_id, u.email FROM organization_group_memberships gm "
+            "SELECT u.user_id, u.email, gm.origin FROM organization_group_memberships gm "
             "JOIN users u ON u.user_id=gm.user_id AND u.organization_id=gm.organization_id "
             "WHERE gm.organization_id=? AND gm.group_id=? ORDER BY u.normalized_email",
             (organization_id, group_id),
         ).fetchall()
-    return {"members": [{"user_id": row["user_id"], "email": row["email"]} for row in rows]}
+    # `origin` dit ce qu'un administrateur peut retirer : une appartenance posee
+    # par une regle reviendrait au prochain tri.
+    return {"members": [{"user_id": row["user_id"], "email": row["email"],
+                         "origin": row["origin"]} for row in rows]}
 
 
 @app.put("/api/control/organizations/{organization_id}/groups/{group_id}/members/{user_id}")
@@ -6472,15 +6481,26 @@ def control_add_group_member(
         if member is None or member["organization_id"] != organization_id:
             raise auth_error(404, "USER_NOT_FOUND")
         existing = conn.execute(
-            "SELECT 1 FROM organization_group_memberships "
+            "SELECT origin FROM organization_group_memberships "
             "WHERE organization_id=? AND group_id=? AND user_id=?",
             (organization_id, group_id, user_id),
         ).fetchone()
+        # Ajoute a la main ce qu'une regle avait range : l'appartenance devient
+        # manuelle, et aucune regle ne la retirera plus.
+        if existing is not None and existing["origin"] == group_rules.ORIGIN_RULE:
+            conn.execute(
+                "UPDATE organization_group_memberships SET origin=? "
+                "WHERE organization_id=? AND group_id=? AND user_id=?",
+                (group_rules.ORIGIN_MANUAL, organization_id, group_id, user_id),
+            )
+            record_admin_action(principal, "group.member_add", target_type="group",
+                                target_id=group_id,
+                                metadata={"user_id": user_id, "was": "rule"}, conn=conn)
         if existing is None:
             conn.execute(
                 "INSERT INTO organization_group_memberships(organization_id, group_id, "
-                "user_id, created_at) VALUES (?,?,?,?)",
-                (organization_id, group_id, user_id, time.time()),
+                "user_id, created_at, origin) VALUES (?,?,?,?,?)",
+                (organization_id, group_id, user_id, time.time(), group_rules.ORIGIN_MANUAL),
             )
             record_admin_action(principal, "group.member_add", target_type="group",
                                 target_id=group_id, metadata={"user_id": user_id}, conn=conn)
@@ -6497,6 +6517,16 @@ def control_remove_group_member(
     require_organization_access(principal, organization_id)
     with db() as conn:
         editable_group_or_error(conn, organization_id, group_id)
+        # Retirer a la main ce qu'une regle a range ne tiendrait pas : le
+        # prochain tri le remettrait. On le dit plutot que de le laisser
+        # revenir sans explication.
+        by_rule = conn.execute(
+            "SELECT 1 FROM organization_group_memberships WHERE organization_id=? "
+            "AND group_id=? AND user_id=? AND origin=?",
+            (organization_id, group_id, user_id, group_rules.ORIGIN_RULE),
+        ).fetchone()
+        if by_rule is not None:
+            raise auth_error(409, "GROUP_MEMBER_ADDED_BY_RULE")
         removed = conn.execute(
             "DELETE FROM organization_group_memberships "
             "WHERE organization_id=? AND group_id=? AND user_id=?",
@@ -9338,6 +9368,199 @@ class MemberStatusRequest(BaseModel):
 MEMBER_EMAIL_SHAPE = re.compile(r"^[^@\s,;<>\"]+@[^@\s,;<>\"]+\.[^@\s,;<>\".]{2,}$")
 
 
+class GroupRuleRequest(BaseModel):
+    group_id: str = ""
+    field: str
+    operator: str
+    value: str
+    enabled: bool = True
+
+
+def group_rule_view(row, label: str) -> dict:
+    return {
+        "id": row["rule_id"],
+        "group_id": row["group_id"],
+        "group_label": label,
+        "field": row["field"],
+        "operator": row["operator"],
+        "value": row["value"],
+        "enabled": bool(row["enabled"]),
+        "updated_at": row["updated_at"],
+    }
+
+
+def valid_rule(conn, organization_id: str, body: GroupRuleRequest) -> tuple[str, str]:
+    """Le groupe vise et la valeur nettoyee, ou une erreur qui dit laquelle.
+
+    Une regle ne remplit qu'un groupe de la console : l'annuaire reste le seul
+    auteur des siens, et deux auteurs finiraient par se contredire.
+    """
+    if body.field not in group_rules.FIELDS:
+        raise auth_error(400, "RULE_FIELD_INVALID")
+    if body.operator not in group_rules.OPERATORS:
+        raise auth_error(400, "RULE_OPERATOR_INVALID")
+    value = (body.value or "").strip()
+    if not value or len(value) > group_rules.MAX_VALUE:
+        raise auth_error(400, "RULE_VALUE_INVALID")
+    group = editable_group_or_error(conn, organization_id, body.group_id)
+    return group["display_name"], value
+
+
+def rule_or_404(conn, organization_id: str, rule_id: str):
+    row = conn.execute(
+        "SELECT * FROM organization_group_rules WHERE organization_id=? AND rule_id=?",
+        (organization_id, rule_id),
+    ).fetchone()
+    if row is None:
+        raise auth_error(404, "RULE_NOT_FOUND")
+    return row
+
+
+@app.get("/api/control/organizations/{organization_id}/group-rules")
+def control_list_group_rules(
+    organization_id: str,
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_ORGANIZATION_READ)),
+):
+    """Les regles de tri, avec les champs et operateurs que le serveur accepte."""
+    require_organization_access(principal, organization_id)
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT r.*, g.display_name FROM organization_group_rules r "
+            "JOIN organization_groups g ON g.organization_id=r.organization_id "
+            "AND g.group_id=r.group_id AND g.deleted_at IS NULL "
+            "WHERE r.organization_id=? ORDER BY g.display_name, r.created_at",
+            (organization_id,),
+        ).fetchall()
+    return {
+        "rules": [group_rule_view(row, row["display_name"]) for row in rows],
+        "fields": list(group_rules.FIELDS),
+        "operators": list(group_rules.OPERATORS),
+    }
+
+
+@app.post("/api/control/organizations/{organization_id}/group-rules", status_code=201)
+def control_create_group_rule(
+    organization_id: str,
+    body: GroupRuleRequest,
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_IDENTITY_MANAGE)),
+):
+    """Cree une regle, puis range tout de suite ceux qu'elle vise."""
+    require_organization_access(principal, organization_id)
+    now = time.time()
+    with db() as conn:
+        label, value = valid_rule(conn, organization_id, body)
+        count = conn.execute(
+            "SELECT COUNT(*) AS n FROM organization_group_rules WHERE organization_id=?",
+            (organization_id,),
+        ).fetchone()["n"]
+        if count >= group_rules.MAX_RULES:
+            raise auth_error(409, "RULE_LIMIT_REACHED")
+        rule_id = str(uuid.uuid4())
+        conn.execute(
+            "INSERT INTO organization_group_rules(organization_id, rule_id, group_id, field, "
+            "operator, value, enabled, created_at, updated_at, updated_by_user_id) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (organization_id, rule_id, body.group_id, body.field, body.operator, value,
+             1 if body.enabled else 0, now, now, principal.user_id),
+        )
+        applied = group_rules.apply_rules(conn, organization_id, now=now)
+        record_admin_action(
+            principal, "group_rule.create", target_type="group", target_id=body.group_id,
+            metadata={"field": body.field, "operator": body.operator, "enabled": body.enabled,
+                      "applied": applied},
+            conn=conn)
+        row = rule_or_404(conn, organization_id, rule_id)
+    return {"rule": group_rule_view(row, label), "applied": applied}
+
+
+@app.put("/api/control/organizations/{organization_id}/group-rules/{rule_id}")
+def control_update_group_rule(
+    organization_id: str,
+    rule_id: str,
+    body: GroupRuleRequest,
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_IDENTITY_MANAGE)),
+):
+    """Modifie une regle, puis retrie : ce qu'elle rangeait et ne range plus en sort."""
+    require_organization_access(principal, organization_id)
+    now = time.time()
+    with db() as conn:
+        before = rule_or_404(conn, organization_id, rule_id)
+        label, value = valid_rule(conn, organization_id, body)
+        conn.execute(
+            "UPDATE organization_group_rules SET group_id=?, field=?, operator=?, value=?, "
+            "enabled=?, updated_at=?, updated_by_user_id=? WHERE organization_id=? AND rule_id=?",
+            (body.group_id, body.field, body.operator, value, 1 if body.enabled else 0, now,
+             principal.user_id, organization_id, rule_id),
+        )
+        applied = group_rules.apply_rules(conn, organization_id, now=now)
+        record_admin_action(
+            principal, "group_rule.update", target_type="group", target_id=body.group_id,
+            metadata={"before": {"field": before["field"], "operator": before["operator"],
+                                 "value": before["value"], "enabled": bool(before["enabled"])},
+                      "after": {"field": body.field, "operator": body.operator,
+                                "value": value, "enabled": body.enabled},
+                      "applied": applied},
+            conn=conn)
+        row = rule_or_404(conn, organization_id, rule_id)
+    return {"rule": group_rule_view(row, label), "applied": applied}
+
+
+@app.delete("/api/control/organizations/{organization_id}/group-rules/{rule_id}")
+def control_delete_group_rule(
+    organization_id: str,
+    rule_id: str,
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_IDENTITY_MANAGE)),
+):
+    """Retire la regle et ce qu'elle avait range — jamais un ajout manuel."""
+    require_organization_access(principal, organization_id)
+    with db() as conn:
+        row = rule_or_404(conn, organization_id, rule_id)
+        conn.execute(
+            "DELETE FROM organization_group_rules WHERE organization_id=? AND rule_id=?",
+            (organization_id, rule_id),
+        )
+        applied = group_rules.apply_rules(conn, organization_id)
+        record_admin_action(
+            principal, "group_rule.delete", target_type="group", target_id=row["group_id"],
+            metadata={"field": row["field"], "operator": row["operator"],
+                      "value": row["value"], "applied": applied},
+            conn=conn)
+    return {"applied": applied}
+
+
+@app.post("/api/control/organizations/{organization_id}/group-rules/preview")
+def control_preview_group_rule(
+    organization_id: str,
+    body: GroupRuleRequest,
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_ORGANIZATION_READ)),
+):
+    """Qui serait range, sans rien ecrire. Le groupe vise n'est pas exige ici."""
+    require_organization_access(principal, organization_id)
+    if body.field not in group_rules.FIELDS:
+        raise auth_error(400, "RULE_FIELD_INVALID")
+    if body.operator not in group_rules.OPERATORS:
+        raise auth_error(400, "RULE_OPERATOR_INVALID")
+    value = (body.value or "").strip()
+    if not value or len(value) > group_rules.MAX_VALUE:
+        raise auth_error(400, "RULE_VALUE_INVALID")
+    with db() as conn:
+        return group_rules.preview(conn, organization_id, body.field, body.operator, value)
+
+
+@app.post("/api/control/organizations/{organization_id}/group-rules/apply")
+def control_apply_group_rules(
+    organization_id: str,
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_IDENTITY_MANAGE)),
+):
+    """Retrie toute l'organisation maintenant, sans attendre la prochaine synchronisation."""
+    require_organization_access(principal, organization_id)
+    with db() as conn:
+        applied = group_rules.apply_rules(conn, organization_id)
+        record_admin_action(principal, "group_rule.apply", target_type="organization",
+                            target_id=organization_id, metadata={"applied": applied}, conn=conn)
+    return {"applied": applied}
+
+
 class MemberGroupDisplayRequest(BaseModel):
     # `null` : la personne suit ses groupes et l'organisation.
     visible: StrictBool | None
@@ -9429,6 +9652,7 @@ def control_create_member(
         user_id = create_user(conn, organization_id, email, role=body.member_role,
                               cohort=(body.cohort or "").strip())
         created = user_by_id(conn, user_id)
+        group_rules.apply_rules(conn, organization_id, user_id=user_id)
         record_admin_action(
             principal, "member.create", target_type="user", target_id=user_id,
             metadata={"member_role": created["role"]}, conn=conn)
@@ -9671,6 +9895,10 @@ AUDIT_ACTION_LABELS = {
     "group.rename": "Renamed a group",
     "group.delete": "Deleted a group",
     "group.visibility": "Changed whether members see a group",
+    "group_rule.create": "Created a sorting rule",
+    "group_rule.update": "Changed a sorting rule",
+    "group_rule.delete": "Deleted a sorting rule",
+    "group_rule.apply": "Sorted members with the rules",
     "group.member_add": "Added a member to a group",
     "group.member_remove": "Removed a member from a group",
     "ai_runtime.desired_config.update": "Changed the AI runtime configuration",
@@ -11886,6 +12114,7 @@ scim.install_routes(
         admin_read_guard=require_admin_capability(CAPABILITY_ORGANIZATION_READ),
         admin_manage_guard=require_admin_capability(CAPABILITY_PROVISIONING_MANAGE),
         rate_limit=enforce_rate_limit,
+        apply_group_rules=group_rules.apply_rules,
     ),
 )
 

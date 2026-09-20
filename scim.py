@@ -196,6 +196,10 @@ class Backend:
     # fail-closed. Injectee plutot qu'importee : ce module ne connait ni Redis
     # ni FastAPI, et n'a pas a les connaitre.
     rate_limit: Callable[[str, str, Any], None]
+    # Range la personne dans les groupes que les regles de la console visent.
+    # Injectee avec une valeur neutre par defaut : ce module ne connait pas les
+    # regles, et un backend qui n'en a pas continue de fonctionner.
+    apply_group_rules: Callable[..., Any] = lambda conn, organization_id, user_id=None: None
 
 
 class CredentialCreate(BaseModel):
@@ -730,6 +734,9 @@ def _apply_user_fields(
             else:
                 status_action = "scim_user_suspended"
             changed.add("active")
+    # L'annuaire vient de dire ce qu'est cette personne : les regles de tri la
+    # rangent tout de suite, sans attendre une synchronisation suivante.
+    backend.apply_group_rules(conn, principal.organization_id, user_id=user_id)
     return _managed_user(conn, principal.organization_id, user_id, include_deleted=True), changed, status_action
 
 
@@ -973,6 +980,7 @@ def install_routes(app: Any, backend: Backend) -> None:
                 )
             except database.IntegrityError:
                 raise ScimError(409, "externalId or userName already exists.", "uniqueness", "IDENTITY_CONFLICT")
+            backend.apply_group_rules(conn, principal.organization_id, user_id=user_id)
             row = _managed_user(conn, principal.organization_id, user_id)
             # Invariant asserted at the trust boundary, including reconciliation.
             if created and backend.security_role_for(row) != "member":

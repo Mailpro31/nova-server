@@ -10,7 +10,7 @@
 
 import { useState } from "react";
 import { ApiError } from "../lib/api";
-import type { GroupView } from "../lib/controlPlane";
+import type { GroupRuleBody, GroupRuleView, GroupView } from "../lib/controlPlane";
 import { errorMessage, t } from "../lib/messages";
 import { CAPABILITY, can } from "../lib/session";
 import { useResource } from "../lib/useResource";
@@ -87,22 +87,26 @@ function GroupMembers({
               {view.members.map((member) => (
                 <div className="policy-setting" key={member.user_id}>
                   <span>{member.email}</span>
-                  {editable && (
-                    <button
-                      data-variant="quiet"
-                      disabled={busy}
-                      onClick={() =>
-                        void run(() =>
-                          control!.removeGroupMember(
-                            organizationId,
-                            group.id,
-                            member.user_id,
-                          ),
-                        )
-                      }
-                    >
-                      {t.groups.remove}
-                    </button>
+                  {member.origin === "rule" ? (
+                    <span className="policy-hint">{t.rules.memberByRule}</span>
+                  ) : (
+                    editable && (
+                      <button
+                        data-variant="quiet"
+                        disabled={busy}
+                        onClick={() =>
+                          void run(() =>
+                            control!.removeGroupMember(
+                              organizationId,
+                              group.id,
+                              member.user_id,
+                            ),
+                          )
+                        }
+                      >
+                        {t.groups.remove}
+                      </button>
+                    )
                   )}
                 </div>
               ))}
@@ -335,6 +339,331 @@ function GroupCard({
   );
 }
 
+/**
+ * Les règles de tri : écrire, voir qui serait rangé, enregistrer.
+ *
+ * Les champs et les opérateurs viennent du serveur : une liste écrite ici
+ * proposerait tôt ou tard un choix qu'il refuse.
+ */
+function GroupRules({
+  organizationId,
+  groups,
+  mayManage,
+  onSorted,
+}: {
+  organizationId: string;
+  groups: GroupView[];
+  mayManage: boolean;
+  onSorted: () => void;
+}) {
+  const { control } = useSession();
+  const [state, retry] = useResource(
+    control && organizationId ? () => control.groupRules(organizationId) : null,
+    [control, organizationId],
+  );
+  const consoleGroups = groups.filter((group) => group.source === "console");
+  const [draft, setDraft] = useState<(GroupRuleBody & { id?: string }) | null>(
+    null,
+  );
+  const [previewText, setPreviewText] = useState<string | null>(null);
+  const [outcome, setOutcome] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<GroupRuleView | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
+
+  async function run(action: () => Promise<unknown>, after?: () => void) {
+    setBusy(true);
+    setFailure(null);
+    try {
+      await action();
+      after?.();
+      retry();
+      onSorted();
+    } catch (raised) {
+      setFailure(failureText(raised));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function start(rule?: GroupRuleView) {
+    setPreviewText(null);
+    setOutcome(null);
+    setFailure(null);
+    setDraft(
+      rule
+        ? {
+            id: rule.id,
+            group_id: rule.group_id,
+            field: rule.field,
+            operator: rule.operator,
+            value: rule.value,
+            enabled: rule.enabled,
+          }
+        : {
+            group_id: consoleGroups[0]?.id ?? "",
+            field: "department",
+            operator: "equals",
+            value: "",
+            enabled: true,
+          },
+    );
+  }
+
+  async function preview() {
+    if (!draft) return;
+    setBusy(true);
+    setFailure(null);
+    setPreviewText(t.rules.previewing);
+    try {
+      const view = await control!.previewGroupRule(organizationId, {
+        field: draft.field,
+        operator: draft.operator,
+        value: draft.value,
+      });
+      setPreviewText(t.rules.previewResult(view.count, view.sample));
+    } catch (raised) {
+      setPreviewText(null);
+      setFailure(failureText(raised));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function save() {
+    if (!draft) return;
+    const body: GroupRuleBody = {
+      group_id: draft.group_id,
+      field: draft.field,
+      operator: draft.operator,
+      value: draft.value,
+      enabled: draft.enabled ?? true,
+    };
+    await run(
+      async () => {
+        const result = draft.id
+          ? await control!.updateGroupRule(organizationId, draft.id, body)
+          : await control!.createGroupRule(organizationId, body);
+        setOutcome(
+          t.rules.applied(result.applied.added, result.applied.removed),
+        );
+      },
+      () => {
+        setDraft(null);
+        setPreviewText(null);
+      },
+    );
+  }
+
+  if (confirmDelete) {
+    return (
+      <ConfirmDialog
+        title={t.rules.deleteTitle}
+        body={t.rules.deleteBody}
+        confirmLabel={t.rules.delete}
+        tone="danger"
+        busy={busy}
+        error={failure}
+        onConfirm={() =>
+          void run(
+            async () => {
+              const result = await control!.deleteGroupRule(
+                organizationId,
+                confirmDelete.id,
+              );
+              setOutcome(
+                t.rules.applied(result.applied.added, result.applied.removed),
+              );
+            },
+            () => setConfirmDelete(null),
+          )
+        }
+        onCancel={() => {
+          setConfirmDelete(null);
+          setFailure(null);
+        }}
+      />
+    );
+  }
+
+  return (
+    <Panel
+      title={t.rules.title}
+      action={
+        mayManage ? (
+          <button
+            data-variant="quiet"
+            disabled={busy || consoleGroups.length === 0}
+            onClick={() =>
+              void run(async () => {
+                const result = await control!.applyGroupRules(organizationId);
+                setOutcome(
+                  t.rules.applied(result.applied.added, result.applied.removed),
+                );
+              })
+            }
+          >
+            {t.rules.applyNow}
+          </button>
+        ) : undefined
+      }
+    >
+      <p>{t.rules.lead}</p>
+      <p className="policy-hint">{t.rules.consoleGroupsOnly}</p>
+
+      <AsyncSection state={state} onRetry={retry}>
+        {(view) => (
+          <>
+            {view.rules.length === 0 ? (
+              <p className="policy-hint">{t.rules.empty}</p>
+            ) : (
+              view.rules.map((rule) => (
+                <div className="policy-setting" key={rule.id}>
+                  <span>
+                    {t.rules.ifField} {t.rules.fieldLabels[rule.field] ?? rule.field}{" "}
+                    {t.rules.operatorLabels[rule.operator] ?? rule.operator}{" "}
+                    <span className="mono">{rule.value}</span> {t.rules.thenGroup}{" "}
+                    {rule.group_label}
+                  </span>
+                  <span className="row">
+                    <Tag tone={rule.enabled ? "ok" : "warn"}>
+                      {rule.enabled ? t.rules.enabled : t.rules.disabled}
+                    </Tag>
+                    {mayManage && (
+                      <>
+                        <button data-variant="quiet" disabled={busy} onClick={() => start(rule)}>
+                          {t.rules.edit}
+                        </button>
+                        <button
+                          data-variant="danger"
+                          disabled={busy}
+                          onClick={() => setConfirmDelete(rule)}
+                        >
+                          {t.rules.delete}
+                        </button>
+                      </>
+                    )}
+                  </span>
+                </div>
+              ))
+            )}
+
+            {mayManage &&
+              (draft === null ? (
+                <div className="row">
+                  <button
+                    disabled={busy || consoleGroups.length === 0}
+                    onClick={() => start()}
+                  >
+                    {t.rules.add}
+                  </button>
+                </div>
+              ) : (
+                <div className="stack">
+                  <label className="field">
+                    <span>{t.rules.ifField}</span>
+                    <select
+                      value={draft.field}
+                      disabled={busy}
+                      onChange={(event) =>
+                        setDraft({ ...draft, field: event.target.value })
+                      }
+                    >
+                      {view.fields.map((field) => (
+                        <option key={field} value={field}>
+                          {t.rules.fieldLabels[field] ?? field}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="field">
+                    <span>{t.rules.operator}</span>
+                    <select
+                      value={draft.operator}
+                      disabled={busy}
+                      onChange={(event) =>
+                        setDraft({ ...draft, operator: event.target.value })
+                      }
+                    >
+                      {view.operators.map((operator) => (
+                        <option key={operator} value={operator}>
+                          {t.rules.operatorLabels[operator] ?? operator}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="field">
+                    <span>{t.rules.value}</span>
+                    <input
+                      type="text"
+                      value={draft.value}
+                      disabled={busy}
+                      onChange={(event) =>
+                        setDraft({ ...draft, value: event.target.value })
+                      }
+                    />
+                  </label>
+                  <label className="field">
+                    <span>{t.rules.thenGroup}</span>
+                    <select
+                      value={draft.group_id}
+                      disabled={busy}
+                      onChange={(event) =>
+                        setDraft({ ...draft, group_id: event.target.value })
+                      }
+                    >
+                      {consoleGroups.map((group) => (
+                        <option key={group.id} value={group.id}>
+                          {group.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="policy-setting">
+                    <span>{t.rules.enabled}</span>
+                    <input
+                      type="checkbox"
+                      checked={draft.enabled ?? true}
+                      disabled={busy}
+                      onChange={(event) =>
+                        setDraft({ ...draft, enabled: event.target.checked })
+                      }
+                    />
+                  </label>
+                  {previewText && <Notice>{previewText}</Notice>}
+                  <div className="row">
+                    <button disabled={busy || draft.value.trim() === ""} onClick={() => void preview()}>
+                      {t.rules.preview}
+                    </button>
+                    <button
+                      data-variant="primary"
+                      disabled={busy || draft.value.trim() === "" || !draft.group_id}
+                      onClick={() => void save()}
+                    >
+                      {t.rules.save}
+                    </button>
+                    <button
+                      data-variant="quiet"
+                      disabled={busy}
+                      onClick={() => {
+                        setDraft(null);
+                        setPreviewText(null);
+                      }}
+                    >
+                      {t.rules.cancel}
+                    </button>
+                  </div>
+                </div>
+              ))}
+          </>
+        )}
+      </AsyncSection>
+      {outcome && <Notice>{outcome}</Notice>}
+      {failure && <Notice tone="danger">{failure}</Notice>}
+    </Panel>
+  );
+}
+
 export function Groups() {
   const { control, session } = useSession();
   const organizationId = session.admin?.organizationId ?? "";
@@ -391,6 +720,17 @@ export function Groups() {
       ) : (
         <p className="policy-hint">{t.groups.readOnly}</p>
       )}
+
+      <AsyncSection state={state} onRetry={retry}>
+        {(view) => (
+          <GroupRules
+            organizationId={organizationId}
+            groups={view.groups}
+            mayManage={mayManage}
+            onSorted={retry}
+          />
+        )}
+      </AsyncSection>
 
       <AsyncSection state={state} onRetry={retry}>
         {(view) =>
