@@ -473,6 +473,28 @@ export const t = {
     disabled: "Turn this synchronization on before running it.",
   },
 
+  dns: {
+    title: "Find this organization by email address",
+    lead: "Publish one DNS record and your members sign in with their email address alone, from any network. They never type a server address.",
+    howItWorks:
+      "Nova takes the domain of the address, reads this record, and only trusts what it finds when the address is HTTPS, its host belongs to that domain, and this server confirms it serves it.",
+    record: "Record to publish",
+    name: "Name",
+    type: "Type",
+    value: "Value",
+    check: "Check",
+    checking: "Reading DNS…",
+    statusMatch: "Published and pointing here.",
+    statusMissing: "Not published yet. DNS changes can take a few hours to appear.",
+    statusMismatch: "Published, but pointing to another address:",
+    unavailable: "Could not read DNS. Nothing was changed; try again in a moment.",
+    domainNotServed: "This organization does not serve that email domain.",
+    endpointMissing:
+      "Set the service endpoint first: without the HTTPS address of this server, there is no record to publish.",
+    guide:
+      "The deployment guide covers the outbound tunnel, the HTTPS address and the settings that go with them.",
+  },
+
   rules: {
     title: "Sorting rules",
     lead: "Sort members into groups from what your directory says about them, without touching each person.",
@@ -1267,6 +1289,9 @@ export function errorMessage(kind: ApiErrorKind, code?: string | null): string {
   if (code === "GOOGLE_UNAVAILABLE" || code === "GOOGLE_NOT_FOUND")
     return t.googleSync.unavailable;
   if (code === "DIRECTORY_SYNC_DISABLED") return t.googleSync.disabled;
+  if (code === "DNS_UNAVAILABLE") return t.dns.unavailable;
+  if (code === "DOMAIN_NOT_SERVED") return t.dns.domainNotServed;
+  if (code === "DOMAIN_INVALID") return t.dns.domainNotServed;
   if (code === "GROUP_MEMBER_ADDED_BY_RULE") return t.rules.memberByRule;
   if (code === "RULE_FIELD_INVALID") return t.rules.fieldInvalid;
   if (code === "RULE_OPERATOR_INVALID") return t.rules.operatorInvalid;
