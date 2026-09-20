@@ -24,6 +24,15 @@ COPY main.py ai_runtime.py local_channel.py serve.py connector.py ./
 COPY admin_cli.py ./
 COPY connector_release.py database.py deployment.py migrations.py ./
 COPY observability.py production_config.py ratelimit.py scim.py secrets_provider.py ./
+# Les regles de tri, l'annuaire Google, et le processus qui le lit chaque heure.
+# `main.py` importe les deux premiers au chargement : sans eux l'image se
+# construit sans erreur, puis meurt au premier `import main` sur
+# `ModuleNotFoundError: google_directory` -- y compris dans `prepare`, donc
+# avant meme que la pile demarre. Le troisieme est le `command` du service
+# `directory-sync`. `test_dockerfile_closure.py` compare desormais cette liste
+# a la fermeture reelle des imports : le prochain oubli echoue en CI, pas au
+# deploiement.
+COPY google_directory.py group_rules.py directory_worker.py ./
 COPY learning/ ./learning/
 # Les fichiers SQL que `migrations.py` decouvre au runtime dans `migrations/`.
 COPY migrations/ ./migrations/
