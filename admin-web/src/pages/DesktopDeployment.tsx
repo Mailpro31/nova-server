@@ -13,7 +13,11 @@
 
 import { useState } from "react";
 import { ApiError } from "../lib/api";
-import type { DeploymentProfileView, DeploymentView } from "../lib/controlPlane";
+import type {
+  DeploymentProfileView,
+  DeploymentView,
+  DiscoveryDnsCheck,
+} from "../lib/controlPlane";
 import { errorMessage, t } from "../lib/messages";
 import { CAPABILITY, can } from "../lib/session";
 import { useResource } from "../lib/useResource";
@@ -178,6 +182,92 @@ function Profile({
   );
 }
 
+/**
+ * L'enregistrement DNS qui permet de trouver l'organisation par e-mail.
+ *
+ * La console le compose et sait le relire dans le DNS public. Elle n'y écrit
+ * rien : la zone appartient à l'organisation, et Nova n'a pas à y toucher.
+ */
+function EmailDiscovery({ organizationId }: { organizationId: string }) {
+  const { control } = useSession();
+  const [state, retry] = useResource(
+    control && organizationId ? () => control.discoveryDns(organizationId) : null,
+    [control, organizationId],
+  );
+  const [checks, setChecks] = useState<Record<string, DiscoveryDnsCheck>>({});
+  const [busy, setBusy] = useState<string | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
+
+  async function check(domain: string) {
+    setBusy(domain);
+    setFailure(null);
+    try {
+      const result = await control!.checkDiscoveryDns(organizationId, domain);
+      setChecks((previous) => ({ ...previous, [domain]: result }));
+    } catch (raised) {
+      setFailure(
+        raised instanceof ApiError
+          ? errorMessage(raised.kind, raised.code)
+          : errorMessage("server"),
+      );
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <Panel title={t.dns.title}>
+      <p>{t.dns.lead}</p>
+      <p className="policy-hint">{t.dns.howItWorks}</p>
+
+      <AsyncSection state={state} onRetry={retry}>
+        {(view) =>
+          view.service_endpoint === "" ? (
+            <Notice>{t.dns.endpointMissing}</Notice>
+          ) : (
+            <>
+              {view.records.map((record) => {
+                const domain = record.name.replace("_nova.", "");
+                const outcome = checks[domain];
+                return (
+                  <div className="stack" key={record.name}>
+                    <h3 className="policy-group">{domain}</h3>
+                    <Facts
+                      entries={[
+                        [t.dns.name, <span className="mono">{record.name}</span>],
+                        [t.dns.type, <span className="mono">{record.type}</span>],
+                        [t.dns.value, <span className="mono">{record.value}</span>],
+                      ]}
+                    />
+                    <div className="row">
+                      <button disabled={busy !== null} onClick={() => void check(domain)}>
+                        {busy === domain ? t.dns.checking : t.dns.check}
+                      </button>
+                      {outcome?.status === "match" && (
+                        <Tag tone="ok">{t.dns.statusMatch}</Tag>
+                      )}
+                      {outcome?.status === "missing" && (
+                        <Tag tone="warn">{t.dns.statusMissing}</Tag>
+                      )}
+                      {outcome?.status === "mismatch" && (
+                        <Tag tone="warn">
+                          {t.dns.statusMismatch} {outcome.found_endpoint}
+                        </Tag>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+              <p className="policy-hint">{t.dns.guide}</p>
+            </>
+          )
+        }
+      </AsyncSection>
+      {failure && <Notice tone="danger">{failure}</Notice>}
+    </Panel>
+  );
+}
+
 export function DesktopDeployment() {
   const { control, session } = useSession();
   const organizationId = session.admin?.organizationId ?? "";
@@ -267,6 +357,8 @@ export function DesktopDeployment() {
         const release = view.release.channels.stable ?? null;
         return (
           <>
+            <EmailDiscovery organizationId={organizationId} />
+
             <Panel title={t.deployment.desktopTitle}>
               <p>{t.deployment.desktopLead}</p>
               <Facts

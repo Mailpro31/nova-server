@@ -1782,6 +1782,95 @@ def service_endpoint_is_allowed(endpoint: str, allow_insecure: bool) -> tuple[bo
     return True, "ok"
 
 
+# ───────────────── Decouverte par domaine d'adresse e-mail ────────────────
+#
+# Un etudiant tape « prenom.nom@example.com ». Le poste prend le domaine et lit
+# `_nova.example.com` dans le DNS, qui lui donne l'adresse du serveur. C'est le
+# meme mecanisme que SPF ou DMARC : ce qui autorise a parler au nom d'un
+# domaine se publie dans le domaine lui-meme.
+#
+# ## Pourquoi le DNS ne suffit pas
+#
+# Un enregistrement DNS dit ou aller, pas a qui l'on parle. Le poste recoupe
+# donc : l'adresse doit etre en HTTPS, son hote doit appartenir au domaine de
+# l'adresse e-mail, et le serveur atteint doit confirmer qu'il sert bien ce
+# domaine. Les trois ensemble ferment la porte qu'un seul laisserait ouverte.
+DISCOVERY_RECORD_PREFIX = "_nova."
+DISCOVERY_RECORD_VERSION = "v=nova1"
+DOH_ENDPOINT = "https://cloudflare-dns.com/dns-query"
+DOMAIN_SHAPE = re.compile(r"^(?=.{1,253}$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?"
+                          r"(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$")
+
+
+class DiscoveryLookupError(Exception):
+    """Le DNS n'a pas repondu. Distinct d'une absence d'enregistrement : dire
+    « rien publie » quand on n'a pas pu regarder enverrait republier ce qui
+    existe deja."""
+
+    def __init__(self, code: str = "DNS_UNAVAILABLE") -> None:
+        super().__init__(code)
+        self.code = code
+
+
+def valid_email_domain(value: str) -> str | None:
+    domain = (value or "").strip().strip(".").lower()
+    return domain if DOMAIN_SHAPE.match(domain) else None
+
+
+def discovery_dns_record(domain: str, endpoint: str) -> dict | None:
+    """L'enregistrement a publier, pret a coller dans la zone DNS."""
+    if not endpoint:
+        return None
+    return {
+        "name": f"{DISCOVERY_RECORD_PREFIX}{domain}",
+        "type": "TXT",
+        "value": f"{DISCOVERY_RECORD_VERSION}; endpoint={endpoint}",
+    }
+
+
+def read_discovery_record(values: list[str]) -> str | None:
+    """L'adresse annoncee par un enregistrement Nova, s'il y en a un.
+
+    Un nom DNS porte souvent plusieurs TXT — SPF, verifications diverses : on
+    lit celui de Nova et on ignore les autres, sans jamais se tromper de
+    voisin.
+    """
+    for raw in values:
+        value = (raw or "").strip().strip('"').strip()
+        if not value.lower().startswith(DISCOVERY_RECORD_VERSION):
+            continue
+        for part in value.split(";")[1:]:
+            key, separator, candidate = part.strip().partition("=")
+            if separator and key.strip().lower() == "endpoint" and candidate.strip():
+                return candidate.strip()
+    return None
+
+
+def resolve_txt_record(name: str) -> list[str]:
+    """Les TXT d'un nom, lus en DNS-over-HTTPS.
+
+    Sur le serveur, la resolution passe par HTTPS plutot que par le resolveur
+    de la machine : un serveur d'organisation vit derriere un resolveur interne
+    qui ne voit pas toujours la zone publique — celle que les postes liront.
+    """
+    try:
+        with httpx.Client(timeout=8) as client:
+            response = client.get(
+                DOH_ENDPOINT,
+                params={"name": name, "type": "TXT"},
+                headers={"accept": "application/dns-json"},
+            )
+    except httpx.HTTPError:
+        raise DiscoveryLookupError() from None
+    if response.status_code != 200:
+        raise DiscoveryLookupError()
+    try:
+        payload = response.json()
+    except ValueError:
+        raise DiscoveryLookupError() from None
+    return [str(answer.get("data", "")) for answer in payload.get("Answer") or []]
+
+
 class OrganizationDiscoveryResolver:
     """Contrat de résolution.
 
@@ -5600,6 +5689,99 @@ def admin_disable_provider_config(
         target_id=config_id,
     )
     return admin_provider_view(provider_config_by_id(config_id, organization_id))
+
+
+@app.get("/api/discovery/email-domain")
+def discovery_email_domain(domain: str):
+    """Ce serveur sert-il ce domaine d'adresses ?
+
+    Repond a la question posee, et a elle seule : la liste des domaines n'est
+    jamais renvoyee. Celui qui pose la question connait deja l'adresse du
+    serveur — le DNS la lui a donnee — et le domaine qu'il teste est celui
+    qu'il vient de taper.
+    """
+    cleaned = valid_email_domain(domain)
+    if cleaned is None:
+        raise auth_error(400, "DOMAIN_INVALID")
+    if cleaned not in ALLOWED_DOMAINS:
+        return {"domain": cleaned, "serves": False}
+    with db() as conn:
+        row = conn.execute(
+            "SELECT display_name, org_type, service_endpoint FROM organizations WHERE id=?",
+            (nova_organization_id(),),
+        ).fetchone()
+    organization = dict(row) if row else {}
+    return {
+        "domain": cleaned,
+        "serves": True,
+        "organization": {
+            "name": organization.get("display_name") or ORGANIZATION_NAME,
+            "type": normalize_organization_type(organization.get("org_type")),
+        },
+        # Le poste recoupe avec l'adresse lue dans le DNS : deux sources qui
+        # divergent signalent une configuration a corriger, pas un serveur a
+        # croire sur parole.
+        "service_endpoint": organization.get("service_endpoint") or "",
+    }
+
+
+class DiscoveryDomainRequest(BaseModel):
+    domain: str
+
+
+@app.get("/api/control/organizations/{organization_id}/discovery/dns")
+def control_read_discovery_dns(
+    organization_id: str,
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_ORGANIZATION_READ)),
+):
+    """Les enregistrements a publier, un par domaine d'adresses servi."""
+    require_organization_access(principal, organization_id)
+    with db() as conn:
+        row = conn.execute(
+            "SELECT service_endpoint FROM organizations WHERE id=?", (organization_id,)
+        ).fetchone()
+    endpoint = (dict(row).get("service_endpoint") if row else "") or ""
+    records = [
+        record for record in (discovery_dns_record(domain, endpoint)
+                              for domain in ALLOWED_DOMAINS)
+        if record is not None
+    ]
+    return {"service_endpoint": endpoint, "domains": list(ALLOWED_DOMAINS),
+            "records": records}
+
+
+@app.post("/api/control/organizations/{organization_id}/discovery/dns")
+def control_check_discovery_dns(
+    organization_id: str,
+    body: DiscoveryDomainRequest,
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_ORGANIZATION_READ)),
+):
+    """Lit le DNS public et dit ce qui y est publie, sans rien y ecrire."""
+    require_organization_access(principal, organization_id)
+    domain = valid_email_domain(body.domain)
+    if domain is None:
+        raise auth_error(400, "DOMAIN_INVALID")
+    if domain not in ALLOWED_DOMAINS:
+        raise auth_error(400, "DOMAIN_NOT_SERVED")
+    with db() as conn:
+        row = conn.execute(
+            "SELECT service_endpoint FROM organizations WHERE id=?", (organization_id,)
+        ).fetchone()
+    endpoint = (dict(row).get("service_endpoint") if row else "") or ""
+    try:
+        values = resolve_txt_record(f"{DISCOVERY_RECORD_PREFIX}{domain}")
+    except DiscoveryLookupError as error:
+        raise auth_error(502, error.code) from None
+    found = read_discovery_record(values)
+    if found is None:
+        status = "missing"
+    elif endpoint and found.rstrip("/") == endpoint.rstrip("/"):
+        status = "match"
+    else:
+        status = "mismatch"
+    return {"domain": domain, "status": status, "found_endpoint": found,
+            "service_endpoint": endpoint,
+            "record": discovery_dns_record(domain, endpoint)}
 
 
 @app.post("/api/discovery/organization")

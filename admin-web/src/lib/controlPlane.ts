@@ -512,6 +512,27 @@ export interface MemberImportResult {
   mode: ImportMode;
 }
 
+export interface DiscoveryDnsRecord {
+  name: string;
+  type: string;
+  value: string;
+}
+
+export interface DiscoveryDnsView {
+  service_endpoint: string;
+  domains: string[];
+  records: DiscoveryDnsRecord[];
+}
+
+export interface DiscoveryDnsCheck {
+  domain: string;
+  /** `match`, `missing` ou `mismatch` — jamais une panne, qui est une erreur. */
+  status: string;
+  found_endpoint: string | null;
+  service_endpoint: string;
+  record: DiscoveryDnsRecord | null;
+}
+
 /** Le choix fait pour une personne (`null` : elle suit ses réglages) et son effet. */
 export interface MemberGroupDisplay {
   visible: boolean | null;
@@ -1046,6 +1067,20 @@ export class ControlPlane {
     return this.client.request<MemberImportResult>(
       `/api/control/organizations/${organizationId}/members/import`,
       { method: "POST", body: form },
+    );
+  }
+
+  discoveryDns(organizationId: string) {
+    return this.client.request<DiscoveryDnsView>(
+      `/api/control/organizations/${organizationId}/discovery/dns`,
+    );
+  }
+
+  /** Lit le DNS public. Rien n'y est écrit : la zone appartient à l'organisation. */
+  checkDiscoveryDns(organizationId: string, domain: string) {
+    return this.client.request<DiscoveryDnsCheck>(
+      `/api/control/organizations/${organizationId}/discovery/dns`,
+      { method: "POST", body: { domain } },
     );
   }
 
