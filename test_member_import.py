@@ -133,17 +133,19 @@ class ModeTests(ImportTestCase):
         self.send("email,groupe\na@example.com,Aero 2\n", mode="sync", apply=True)
         self.assertEqual(self.group_members("Aero 3"), {"c@example.com"})
 
-    def test_sync_never_removes_what_a_rule_put_there(self):
+    def test_sync_never_removes_what_the_directory_put_there(self):
         with main.db() as conn:
             group_id = conn.execute(
                 "SELECT group_id FROM organization_groups WHERE organization_id=? "
                 "AND display_name=?", (self.organization, "Aero 2")).fetchone()["group_id"]
             conn.execute(
-                "UPDATE organization_group_memberships SET origin='rule' "
+                "UPDATE organization_group_memberships SET origin='directory' "
                 "WHERE organization_id=? AND group_id=? AND user_id=("
                 "SELECT user_id FROM users WHERE organization_id=? AND normalized_email=?)",
                 (self.organization, group_id, self.organization, "b@example.com"))
         self.send("email,groupe\na@example.com,Aero 2\n", mode="sync", apply=True)
+        # L'annuaire le remettrait au tour suivant : le retirer ici ne ferait
+        # que mentir sur le resultat de l'import.
         self.assertEqual(self.group_members("Aero 2"), {"a@example.com", "b@example.com"})
 
 

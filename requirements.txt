@@ -12,3 +12,4 @@ pyjwt[crypto]==2.13.0
 # test. En production, les deux sont requis.
 psycopg[binary]==3.3.4
 redis==8.1.0
+openpyxl==3.1.5

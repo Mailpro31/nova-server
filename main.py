@@ -27,7 +27,7 @@ from urllib.parse import urlencode, urlparse
 import httpx
 import jwt
 from typing import Literal
-from fastapi import Depends, FastAPI, Header, HTTPException, Response, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, StrictBool
@@ -9561,6 +9561,285 @@ def control_apply_group_rules(
     return {"applied": applied}
 
 
+# Une promo, pas un annuaire entier. Au-dela, c'est un export complet qu'on
+# essaie de faire passer par un formulaire, et la reponse HTTP n'est plus le
+# bon outil.
+MAX_IMPORT_ROWS = 5000
+MAX_IMPORT_BYTES = 4 * 1024 * 1024
+IMPORT_ORIGIN = "import"
+
+# Les en-tetes qu'un tableur d'ecole ou d'entreprise porte reellement, en
+# francais comme en anglais. Reconnaitre la colonne evite de demander a
+# l'administrateur de reformater son fichier avant de s'en servir.
+IMPORT_EMAIL_HEADERS = {"email", "e-mail", "mail", "adresse", "adresse e-mail",
+                        "adresse email", "address", "email address", "courriel"}
+IMPORT_GROUP_HEADERS = {"groupe", "groupes", "group", "groups", "promo", "promotion",
+                        "classe", "class", "cohorte", "cohort", "departement", "department"}
+IMPORT_ROLE_HEADERS = {"type", "role", "member type", "type de membre", "membre",
+                       "member_role", "metier"}
+# Un tableur ecrit rarement une seule valeur par cellule.
+IMPORT_GROUP_SEPARATORS = (";", "|", ",")
+
+
+def _import_header(value: str) -> str:
+    return " ".join((value or "").strip().lower().split())
+
+
+def read_member_rows(content: bytes, filename: str) -> list[dict]:
+    """Les lignes d'un CSV ou d'un XLSX, ramenees a une seule forme.
+
+    Le serveur lit le fichier plutot que le navigateur : un seul analyseur,
+    teste, pour tous les clients — et la console n'a pas a embarquer un lecteur
+    de tableur.
+    """
+    name = (filename or "").lower()
+    if name.endswith(".xlsx"):
+        table = _read_workbook(content)
+    elif name.endswith(".csv") or name.endswith(".txt"):
+        table = _read_csv(content)
+    else:
+        raise auth_error(400, "IMPORT_FILE_UNSUPPORTED")
+    if not table:
+        raise auth_error(400, "IMPORT_EMAIL_COLUMN_MISSING")
+
+    header = [_import_header(cell) for cell in table[0]]
+    try:
+        email_at = next(index for index, cell in enumerate(header)
+                        if cell in IMPORT_EMAIL_HEADERS)
+    except StopIteration:
+        raise auth_error(400, "IMPORT_EMAIL_COLUMN_MISSING") from None
+    group_at = next((index for index, cell in enumerate(header)
+                     if cell in IMPORT_GROUP_HEADERS), None)
+    role_at = next((index for index, cell in enumerate(header)
+                    if cell in IMPORT_ROLE_HEADERS), None)
+
+    rows = []
+    for number, raw_row in enumerate(table[1:], start=2):
+        cells = [str(cell or "").strip() for cell in raw_row]
+        if not any(cells):
+            continue
+        email = cells[email_at] if email_at < len(cells) else ""
+        if not email:
+            continue
+        groups: list[str] = []
+        if group_at is not None and group_at < len(cells):
+            groups = _split_groups(cells[group_at])
+        role = cells[role_at] if role_at is not None and role_at < len(cells) else ""
+        rows.append({"line": number, "email": email, "groups": groups, "member_role": role})
+        if len(rows) > MAX_IMPORT_ROWS:
+            raise auth_error(400, "IMPORT_TOO_MANY_ROWS")
+    return rows
+
+
+def _split_groups(cell: str) -> list[str]:
+    values = [cell]
+    for separator in IMPORT_GROUP_SEPARATORS:
+        if separator in cell:
+            values = cell.split(separator)
+            break
+    return [name.strip() for name in values if name.strip()]
+
+
+def _read_csv(content: bytes) -> list[list[str]]:
+    try:
+        text = content.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        # Un tableur francais enregistre encore volontiers en Latin-1.
+        try:
+            text = content.decode("latin-1")
+        except UnicodeDecodeError:
+            raise auth_error(400, "IMPORT_FILE_UNSUPPORTED") from None
+    sample = text[:4096]
+    delimiter = ";" if sample.count(";") > sample.count(",") else ","
+    return [row for row in csv.reader(io.StringIO(text), delimiter=delimiter)]
+
+
+def _read_workbook(content: bytes) -> list[list[str]]:
+    try:
+        import openpyxl
+    except ImportError:  # pragma: no cover - dependance declaree dans requirements
+        raise auth_error(400, "IMPORT_FILE_UNSUPPORTED") from None
+    try:
+        book = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+    except Exception:
+        raise auth_error(400, "IMPORT_FILE_UNSUPPORTED") from None
+    sheet = book.active
+    table = [[("" if cell is None else str(cell)) for cell in row]
+             for row in sheet.iter_rows(values_only=True)]
+    book.close()
+    return table
+
+
+def plan_member_import(conn, organization_id: str, rows: list[dict], mode: str) -> dict:
+    """Ce que l'import ferait : lu avant d'etre fait, puis fait tel quel.
+
+    Le meme calcul sert a l'apercu et a l'ecriture : deux calculs finiraient par
+    diverger, et l'apercu promettrait autre chose que ce qui arrive.
+    """
+    groups = {
+        row["display_name"].casefold(): row
+        for row in conn.execute(
+            "SELECT group_id, display_name, source FROM organization_groups "
+            "WHERE organization_id=? AND deleted_at IS NULL",
+            (organization_id,),
+        ).fetchall()
+    }
+    invalid: list[dict] = []
+    wanted: dict[str, set[str]] = {}
+    accounts: dict[str, dict] = {}
+    to_create: list[str] = []
+
+    for row in rows:
+        email = row["email"]
+        if not MEMBER_EMAIL_SHAPE.match(email):
+            invalid.append({"line": row["line"], "code": "MEMBER_EMAIL_INVALID"})
+            continue
+        if email.split("@")[-1].lower() not in ALLOWED_DOMAINS:
+            invalid.append({"line": row["line"], "code": "MEMBER_EMAIL_OUTSIDE_DOMAINS"})
+            continue
+        role = (row["member_role"] or "").strip()
+        if role and role not in MEMBER_ROLES:
+            invalid.append({"line": row["line"], "code": "MEMBER_ROLE_INVALID"})
+            continue
+        refused = False
+        for name in row["groups"]:
+            existing = groups.get(name.casefold())
+            if existing is not None and existing["source"] != GROUP_SOURCE_CONSOLE:
+                invalid.append({"line": row["line"], "code": "GROUP_MANAGED_BY_DIRECTORY"})
+                refused = True
+                break
+            if existing is None and name not in to_create:
+                to_create.append(name)
+        if refused:
+            continue
+        accounts[normalize_email(email)] = {"email": email, "member_role": role}
+        for name in row["groups"]:
+            wanted.setdefault(name, set()).add(normalize_email(email))
+
+    known = {
+        row["normalized_email"]: row["user_id"]
+        for row in conn.execute(
+            "SELECT user_id, normalized_email FROM users WHERE organization_id=?",
+            (organization_id,),
+        ).fetchall()
+    }
+    accounts_to_create = [entry for key, entry in accounts.items() if key not in known]
+
+    adds: list[tuple[str, str]] = []
+    removes: list[tuple[str, str]] = []
+    for name, members in wanted.items():
+        existing = groups.get(name.casefold())
+        held: dict[str, str] = {}
+        if existing is not None:
+            for membership in conn.execute(
+                "SELECT m.user_id, m.origin, u.normalized_email "
+                "FROM organization_group_memberships m JOIN users u ON u.user_id=m.user_id "
+                "WHERE m.organization_id=? AND m.group_id=?",
+                (organization_id, existing["group_id"]),
+            ).fetchall():
+                held[membership["normalized_email"]] = membership["origin"]
+        for key in sorted(members):
+            if key not in held:
+                adds.append((name, key))
+        if mode == "sync":
+            for key, origin in sorted(held.items()):
+                # Ce qu'une regle ou l'annuaire a range revient au tour suivant :
+                # le retirer ici ne ferait que mentir sur le resultat.
+                if key not in members and origin in {IMPORT_ORIGIN, "manual"}:
+                    removes.append((name, key))
+
+    return {
+        "rows": len(rows),
+        "invalid": invalid,
+        "groups_to_create": to_create,
+        "accounts_to_create": len(accounts_to_create),
+        "memberships_to_add": len(adds),
+        "memberships_to_remove": len(removes),
+        "_accounts": accounts,
+        "_new_accounts": accounts_to_create,
+        "_adds": adds,
+        "_removes": removes,
+        "_groups": groups,
+    }
+
+
+def apply_member_import(conn, organization_id: str, plan: dict, now: float) -> None:
+    groups = plan["_groups"]
+    for name in plan["groups_to_create"]:
+        group_id = str(uuid.uuid4())
+        conn.execute(
+            "INSERT INTO organization_groups(organization_id, group_id, external_id, "
+            "display_name, created_at, updated_at, source) VALUES (?,?,?,?,?,?,?)",
+            (organization_id, group_id, None, name, now, now, GROUP_SOURCE_CONSOLE),
+        )
+        groups[name.casefold()] = {"group_id": group_id, "display_name": name,
+                                   "source": GROUP_SOURCE_CONSOLE}
+    for entry in plan["_new_accounts"]:
+        create_user(conn, organization_id, entry["email"],
+                    role=entry["member_role"] or None)
+    identifiers = {
+        row["normalized_email"]: row["user_id"]
+        for row in conn.execute(
+            "SELECT user_id, normalized_email FROM users WHERE organization_id=?",
+            (organization_id,),
+        ).fetchall()
+    }
+    for name, key in plan["_adds"]:
+        conn.execute(
+            "INSERT INTO organization_group_memberships(organization_id, group_id, user_id, "
+            "created_at, origin) VALUES (?,?,?,?,?)",
+            (organization_id, groups[name.casefold()]["group_id"], identifiers[key], now,
+             IMPORT_ORIGIN),
+        )
+    for name, key in plan["_removes"]:
+        conn.execute(
+            "DELETE FROM organization_group_memberships "
+            "WHERE organization_id=? AND group_id=? AND user_id=?",
+            (organization_id, groups[name.casefold()]["group_id"], identifiers[key]),
+        )
+
+
+@app.post("/api/control/organizations/{organization_id}/members/import")
+async def control_import_members(
+    organization_id: str,
+    file: UploadFile = File(...),
+    mode: str = Form("add"),
+    apply: str = Form("false"),
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_IDENTITY_MANAGE)),
+):
+    """Importe une liste de membres, apres l'avoir montree.
+
+    Sans `apply`, rien n'est ecrit et rien n'est journalise : un apercu qui
+    laisserait une trace ferait croire a une action qui n'a pas eu lieu.
+    """
+    require_organization_access(principal, organization_id)
+    if mode not in {"add", "sync"}:
+        raise auth_error(400, "IMPORT_MODE_INVALID")
+    content = await file.read(MAX_IMPORT_BYTES + 1)
+    if len(content) > MAX_IMPORT_BYTES:
+        raise auth_error(400, "IMPORT_FILE_TOO_LARGE")
+    rows = read_member_rows(content, file.filename or "")
+    writing = apply.lower() in {"true", "1", "yes"}
+    now = time.time()
+    with db() as conn:
+        plan = plan_member_import(conn, organization_id, rows, mode)
+        if writing:
+            apply_member_import(conn, organization_id, plan, now)
+            group_rules.apply_rules(conn, organization_id, now=now)
+            record_admin_action(
+                principal, "member.import", target_type="organization",
+                target_id=organization_id,
+                # Ni adresses ni noms : des comptes, pas leur liste.
+                metadata={"mode": mode, "rows": plan["rows"],
+                          "accounts": plan["accounts_to_create"],
+                          "added": plan["memberships_to_add"],
+                          "removed": plan["memberships_to_remove"],
+                          "refused": len(plan["invalid"])},
+                conn=conn)
+    preview = {key: value for key, value in plan.items() if not key.startswith("_")}
+    return {"preview": preview, "applied": writing, "mode": mode}
+
+
 class MemberGroupDisplayRequest(BaseModel):
     # `null` : la personne suit ses groupes et l'organisation.
     visible: StrictBool | None
@@ -9929,6 +10208,7 @@ AUDIT_ACTION_LABELS = {
     "member.delete": "Deleted a member",
     "member.create": "Added a member",
     "member.group_display": "Changed whether a member sees their groups",
+    "member.import": "Imported a list of members",
     "member.sessions_revoke": "Signed a member out of every device",
     "learning_lesson.update": "Changed a Learn lesson's settings",
     "learning_lesson.archive": "Archived a Learn lesson",
