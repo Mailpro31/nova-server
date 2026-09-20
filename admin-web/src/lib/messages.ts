@@ -399,6 +399,55 @@ export const t = {
       "A hidden group still applies its lessons and settings; only its name is no longer sent to members.",
   },
 
+  rules: {
+    title: "Sorting rules",
+    lead: "Sort members into groups from what your directory says about them, without touching each person.",
+    consoleGroupsOnly:
+      "Rules only fill groups created in Nova Admin. A group from your directory stays with your directory.",
+    add: "Add a rule",
+    ifField: "If",
+    operator: "matches",
+    value: "this value",
+    thenGroup: "then add to",
+    enabled: "Active",
+    disabled: "Paused",
+    save: "Save rule",
+    cancel: "Cancel",
+    edit: "Edit",
+    delete: "Delete rule",
+    deleteTitle: "Delete this rule?",
+    deleteBody:
+      "The people this rule added leave the group. Members you added by hand stay. This cannot be undone.",
+    preview: "Preview",
+    previewing: "Counting…",
+    previewResult: (count: number, sample: string[]) =>
+      count === 0
+        ? "No member matches this rule yet."
+        : `${count} member${count === 1 ? "" : "s"} match, for example ${sample.join(", ")}.`,
+    applyNow: "Sort everyone now",
+    applied: (added: number, removed: number) =>
+      `${added} added, ${removed} removed.`,
+    empty: "No rule yet.",
+    memberByRule:
+      "A rule added this member. Change or delete the rule to remove them, otherwise the next sort adds them back.",
+    fieldInvalid: "That field is not recognised.",
+    operatorInvalid: "That comparison is not recognised.",
+    valueInvalid: "Enter a value of 200 characters or fewer.",
+    limitReached: "This organization already has the maximum number of rules.",
+    notFound: "This rule no longer exists.",
+    fieldLabels: {
+      department: "Department",
+      organization: "Organization",
+      email_domain: "Email domain",
+      member_type: "Member type",
+    } as Record<string, string>,
+    operatorLabels: {
+      equals: "is exactly",
+      contains: "contains",
+      starts_with: "starts with",
+    } as Record<string, string>,
+  },
+
   deployment: {
     title: "Deployment",
     lead: "Where this organization's Nova service runs.",
@@ -1130,6 +1179,12 @@ export function errorMessage(kind: ApiErrorKind, code?: string | null): string {
   if (code === "MEMBER_EMAIL_OUTSIDE_DOMAINS") return t.members.outsideDomains;
   if (code === "MEMBER_EMAIL_INVALID") return t.members.emailInvalid;
   if (code === "MEMBER_ALREADY_EXISTS") return t.members.alreadyExists;
+  if (code === "GROUP_MEMBER_ADDED_BY_RULE") return t.rules.memberByRule;
+  if (code === "RULE_FIELD_INVALID") return t.rules.fieldInvalid;
+  if (code === "RULE_OPERATOR_INVALID") return t.rules.operatorInvalid;
+  if (code === "RULE_VALUE_INVALID") return t.rules.valueInvalid;
+  if (code === "RULE_LIMIT_REACHED") return t.rules.limitReached;
+  if (code === "RULE_NOT_FOUND") return t.rules.notFound;
   if (code === "GROUP_NAME_TAKEN") return t.groups.nameTaken;
   if (code === "GROUP_NAME_INVALID") return t.groups.nameInvalid;
   if (code === "GROUP_MANAGED_BY_DIRECTORY") return t.groups.managedByDirectory;

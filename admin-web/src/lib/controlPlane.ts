@@ -432,6 +432,38 @@ export interface GroupView {
   updated_at: number;
 }
 
+export interface GroupRuleView {
+  id: string;
+  group_id: string;
+  group_label: string;
+  field: string;
+  operator: string;
+  value: string;
+  enabled: boolean;
+  updated_at: number;
+}
+
+/** Les règles, et ce que le serveur accepte comme champ et comme opérateur. */
+export interface GroupRulesView {
+  rules: GroupRuleView[];
+  fields: string[];
+  operators: string[];
+}
+
+export interface GroupRuleBody {
+  group_id?: string;
+  field: string;
+  operator: string;
+  value: string;
+  enabled?: boolean;
+}
+
+/** Ce qu'un tri a changé : personne n'a à deviner. */
+export interface RuleOutcome {
+  added: number;
+  removed: number;
+}
+
 /** Le choix fait pour une personne (`null` : elle suit ses réglages) et son effet. */
 export interface MemberGroupDisplay {
   visible: boolean | null;
@@ -893,6 +925,49 @@ export class ControlPlane {
     );
   }
 
+  groupRules(organizationId: string) {
+    return this.client.request<GroupRulesView>(
+      `/api/control/organizations/${organizationId}/group-rules`,
+    );
+  }
+
+  createGroupRule(organizationId: string, body: GroupRuleBody) {
+    return this.client.request<{ rule: GroupRuleView; applied: RuleOutcome }>(
+      `/api/control/organizations/${organizationId}/group-rules`,
+      { method: "POST", body },
+    );
+  }
+
+  updateGroupRule(organizationId: string, ruleId: string, body: GroupRuleBody) {
+    return this.client.request<{ rule: GroupRuleView; applied: RuleOutcome }>(
+      `/api/control/organizations/${organizationId}/group-rules/${encodeURIComponent(ruleId)}`,
+      { method: "PUT", body },
+    );
+  }
+
+  /** La règle part, et ce qu'elle avait rangé aussi — jamais un ajout manuel. */
+  deleteGroupRule(organizationId: string, ruleId: string) {
+    return this.client.request<{ applied: RuleOutcome }>(
+      `/api/control/organizations/${organizationId}/group-rules/${encodeURIComponent(ruleId)}`,
+      { method: "DELETE" },
+    );
+  }
+
+  /** Qui serait rangé, sans rien écrire. */
+  previewGroupRule(organizationId: string, body: GroupRuleBody) {
+    return this.client.request<{ count: number; sample: string[] }>(
+      `/api/control/organizations/${organizationId}/group-rules/preview`,
+      { method: "POST", body },
+    );
+  }
+
+  applyGroupRules(organizationId: string) {
+    return this.client.request<{ applied: RuleOutcome }>(
+      `/api/control/organizations/${organizationId}/group-rules/apply`,
+      { method: "POST", body: {} },
+    );
+  }
+
   memberGroupDisplay(organizationId: string, userId: string) {
     return this.client.request<MemberGroupDisplay>(
       `/api/control/organizations/${organizationId}/members/${encodeURIComponent(userId)}/group-display`,
@@ -1088,7 +1163,9 @@ export class ControlPlane {
   }
 
   groupMembers(organizationId: string, groupId: string) {
-    return this.client.request<{ members: { user_id: string; email: string }[] }>(
+    return this.client.request<{
+      members: { user_id: string; email: string; origin: "manual" | "rule" }[];
+    }>(
       `/api/control/organizations/${organizationId}/groups/${encodeURIComponent(groupId)}/members`,
     );
   }
