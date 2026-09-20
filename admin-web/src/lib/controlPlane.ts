@@ -432,6 +432,36 @@ export interface GroupView {
   updated_at: number;
 }
 
+/** Ce qu'une synchronisation a changé. */
+export interface DirectorySyncOutcome {
+  groups: number;
+  accounts_created: number;
+  added: number;
+  removed: number;
+}
+
+export interface DirectorySyncView {
+  provider: string;
+  enabled: boolean;
+  admin_subject: string;
+  customer_id: string;
+  group_filter: string[];
+  /** La forme de la référence de secret, jamais la clé. */
+  credentials: { configured: boolean; scheme: string | null };
+  last_sync_at: number | null;
+  last_status: string | null;
+  last_error: string | null;
+  last_outcome: DirectorySyncOutcome | null;
+}
+
+export interface DirectorySyncBody {
+  enabled: boolean;
+  admin_subject: string;
+  customer_id: string;
+  credentials_ref: string;
+  group_filter: string[];
+}
+
 export interface GroupRuleView {
   id: string;
   group_id: string;
@@ -940,6 +970,27 @@ export class ControlPlane {
   member(organizationId: string, userId: string) {
     return this.client.request<MemberDetail>(
       `/api/control/organizations/${organizationId}/members/${userId}`,
+    );
+  }
+
+  directorySync(organizationId: string) {
+    return this.client.request<{ sync: DirectorySyncView }>(
+      `/api/control/organizations/${organizationId}/directory-sync`,
+    );
+  }
+
+  /** La clé n'est jamais envoyée : `credentials_ref` est une référence. */
+  setDirectorySync(organizationId: string, body: DirectorySyncBody) {
+    return this.client.request<{ sync: DirectorySyncView }>(
+      `/api/control/organizations/${organizationId}/directory-sync`,
+      { method: "PUT", body },
+    );
+  }
+
+  runDirectorySync(organizationId: string) {
+    return this.client.request<{ sync: DirectorySyncView; outcome: DirectorySyncOutcome }>(
+      `/api/control/organizations/${organizationId}/directory-sync/run`,
+      { method: "POST", body: {} },
     );
   }
 

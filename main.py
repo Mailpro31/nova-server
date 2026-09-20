@@ -35,6 +35,7 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, StrictBool
 import connector_release
 import database
 import deployment
+import google_directory
 import group_rules
 import migrations
 import observability
@@ -2545,7 +2546,11 @@ def member_group_display(account, policy_document: dict | None = None) -> dict:
             "label": row["display_name"],
             # Des sources que le poste connait deja : une valeur inconnue
             # ferait rejeter toute la reponse par un poste installe.
-            "source": "manual" if row["source"] == GROUP_SOURCE_CONSOLE else "scim",
+            "source": (
+                "manual" if row["source"] == GROUP_SOURCE_CONSOLE
+                else "google_workspace" if row["source"] == google_directory.SOURCE
+                else "scim"
+            ),
             "external_group_id": None,
         }
         for row in rows
@@ -9368,6 +9373,192 @@ class MemberStatusRequest(BaseModel):
 MEMBER_EMAIL_SHAPE = re.compile(r"^[^@\s,;<>\"]+@[^@\s,;<>\"]+\.[^@\s,;<>\".]{2,}$")
 
 
+class DirectorySyncRequest(BaseModel):
+    enabled: bool = False
+    admin_subject: str = ""
+    customer_id: str = "my_customer"
+    credentials_ref: str = ""
+    group_filter: list[str] = Field(default_factory=list)
+
+
+def credentials_shape(reference: str | None) -> dict:
+    """La forme d'une reference de secret, jamais sa valeur ni son chemin.
+
+    `secrets_provider.describe` resout la reference ; ici la question est
+    differente : la configuration a-t-elle ete ecrite sous une forme acceptee ?
+    Une variable d'environnement pas encore posee sur la machine reste une
+    configuration valable.
+    """
+    raw = (reference or "").strip()
+    scheme, separator, _ = raw.partition("://")
+    if not separator or scheme not in {secrets_provider.ENV, secrets_provider.FILE}:
+        return {"configured": bool(raw), "scheme": None}
+    return {"configured": True, "scheme": scheme}
+
+
+def directory_sync_row(conn, organization_id: str):
+    return conn.execute(
+        "SELECT * FROM organization_directory_sync WHERE organization_id=? AND provider=?",
+        (organization_id, google_directory.SOURCE),
+    ).fetchone()
+
+
+def directory_sync_view(row) -> dict:
+    """L'etat de la synchronisation, **sans jamais la cle** : seule la forme de
+    la reference est montree, ce qui suffit pour verifier une configuration."""
+    if row is None:
+        return {
+            "provider": google_directory.SOURCE,
+            "enabled": False,
+            "admin_subject": "",
+            "customer_id": "my_customer",
+            "group_filter": [],
+            "credentials": credentials_shape(None),
+            "last_sync_at": None,
+            "last_status": None,
+            "last_error": None,
+            "last_outcome": None,
+        }
+    return {
+        "provider": row["provider"],
+        "enabled": bool(row["enabled"]),
+        "admin_subject": row["admin_subject"],
+        "customer_id": row["customer_id"],
+        "group_filter": json.loads(row["group_filter"] or "[]"),
+        "credentials": credentials_shape(row["credentials_ref"] or None),
+        "last_sync_at": row["last_sync_at"],
+        "last_status": row["last_status"],
+        "last_error": row["last_error"],
+        "last_outcome": json.loads(row["last_outcome"]) if row["last_outcome"] else None,
+    }
+
+
+def google_transport(method: str, url: str, *, headers=None, data=None, params=None):
+    with httpx.Client(timeout=20) as client:
+        response = client.request(method, url, headers=headers, data=data, params=params)
+    try:
+        return response.status_code, response.json()
+    except ValueError:
+        return response.status_code, {}
+
+
+def run_directory_sync(organization_id: str, transport=google_transport) -> dict:
+    """Lit l'annuaire, puis reporte. Une lecture qui echoue n'ecrit rien.
+
+    L'ordre compte : tant que Google n'a pas repondu entierement, la base n'est
+    pas touchee. Un reseau coupe au milieu d'une pagination viderait sinon les
+    groupes qu'il n'a pas eu le temps de lire.
+    """
+    with db() as conn:
+        row = directory_sync_row(conn, organization_id)
+    if row is None or not row["enabled"]:
+        raise auth_error(409, "DIRECTORY_SYNC_DISABLED")
+    config = {
+        "admin_subject": row["admin_subject"],
+        "customer_id": row["customer_id"],
+        "group_filter": json.loads(row["group_filter"] or "[]"),
+    }
+    try:
+        account = google_directory.load_service_account(row["credentials_ref"] or None)
+        directory = google_directory.fetch_directory(account, config, transport)
+    except google_directory.DirectoryError as error:
+        with db() as conn:
+            conn.execute(
+                "UPDATE organization_directory_sync SET last_status='error', last_error=?, "
+                "updated_at=? WHERE organization_id=? AND provider=?",
+                (error.code, time.time(), organization_id, google_directory.SOURCE),
+            )
+        raise auth_error(502, error.code) from None
+    with db() as conn:
+        outcome = google_directory.reconcile(
+            conn, organization_id, directory,
+            create_user=create_user, normalize_email=normalize_email)
+        conn.execute(
+            "UPDATE organization_directory_sync SET last_status='ok', last_error=NULL, "
+            "last_sync_at=?, last_outcome=?, updated_at=? WHERE organization_id=? AND provider=?",
+            (time.time(), json.dumps(outcome), time.time(), organization_id,
+             google_directory.SOURCE),
+        )
+    return outcome
+
+
+@app.get("/api/control/organizations/{organization_id}/directory-sync")
+def control_read_directory_sync(
+    organization_id: str,
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_ORGANIZATION_READ)),
+):
+    """Ce que Nova lit chez Google, et ce que la derniere lecture a donne."""
+    require_organization_access(principal, organization_id)
+    with db() as conn:
+        return {"sync": directory_sync_view(directory_sync_row(conn, organization_id))}
+
+
+@app.put("/api/control/organizations/{organization_id}/directory-sync")
+def control_write_directory_sync(
+    organization_id: str,
+    body: DirectorySyncRequest,
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_IDENTITY_MANAGE)),
+):
+    """Configure la lecture de l'annuaire. La cle reste hors de la base."""
+    require_organization_access(principal, organization_id)
+    subject = (body.admin_subject or "").strip()
+    reference = (body.credentials_ref or "").strip()
+    if body.enabled and not subject:
+        raise auth_error(400, "GOOGLE_ADMIN_SUBJECT_REQUIRED")
+    if reference and credentials_shape(reference)["scheme"] is None:
+        # Une cle collee en clair finirait en base, puis dans une sauvegarde.
+        raise auth_error(400, "GOOGLE_KEY_REFERENCE_REQUIRED")
+    if body.enabled and not reference:
+        raise auth_error(400, "GOOGLE_KEY_REFERENCE_REQUIRED")
+    groups = sorted({str(email).strip() for email in body.group_filter if str(email).strip()})
+    if len(groups) > 200:
+        raise auth_error(400, "GOOGLE_GROUP_FILTER_TOO_LONG")
+    now = time.time()
+    with db() as conn:
+        existing = directory_sync_row(conn, organization_id)
+        if existing is None:
+            conn.execute(
+                "INSERT INTO organization_directory_sync(organization_id, provider, enabled, "
+                "admin_subject, customer_id, credentials_ref, group_filter, updated_at, "
+                "updated_by_user_id) VALUES (?,?,?,?,?,?,?,?,?)",
+                (organization_id, google_directory.SOURCE, 1 if body.enabled else 0, subject,
+                 (body.customer_id or "my_customer").strip(), reference, json.dumps(groups),
+                 now, principal.user_id),
+            )
+        else:
+            conn.execute(
+                "UPDATE organization_directory_sync SET enabled=?, admin_subject=?, "
+                "customer_id=?, credentials_ref=?, group_filter=?, updated_at=?, "
+                "updated_by_user_id=? WHERE organization_id=? AND provider=?",
+                (1 if body.enabled else 0, subject, (body.customer_id or "my_customer").strip(),
+                 reference, json.dumps(groups), now, principal.user_id, organization_id,
+                 google_directory.SOURCE),
+            )
+        record_admin_action(
+            principal, "directory_sync.update", target_type="organization",
+            target_id=organization_id,
+            # Ni la cle ni sa valeur : seulement la forme de la reference.
+            metadata={"enabled": body.enabled, "groups": len(groups),
+                      "credentials": credentials_shape(reference or None)},
+            conn=conn)
+        return {"sync": directory_sync_view(directory_sync_row(conn, organization_id))}
+
+
+@app.post("/api/control/organizations/{organization_id}/directory-sync/run")
+def control_run_directory_sync(
+    organization_id: str,
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_IDENTITY_MANAGE)),
+):
+    """Synchronise maintenant, sans attendre le tour horaire."""
+    require_organization_access(principal, organization_id)
+    outcome = run_directory_sync(organization_id)
+    with db() as conn:
+        record_admin_action(principal, "directory_sync.run", target_type="organization",
+                            target_id=organization_id, metadata={"outcome": outcome}, conn=conn)
+        return {"outcome": outcome,
+                "sync": directory_sync_view(directory_sync_row(conn, organization_id))}
+
+
 class GroupRuleRequest(BaseModel):
     group_id: str = ""
     field: str
@@ -10178,6 +10369,8 @@ AUDIT_ACTION_LABELS = {
     "group_rule.update": "Changed a sorting rule",
     "group_rule.delete": "Deleted a sorting rule",
     "group_rule.apply": "Sorted members with the rules",
+    "directory_sync.update": "Changed the directory synchronization",
+    "directory_sync.run": "Synchronized the directory",
     "group.member_add": "Added a member to a group",
     "group.member_remove": "Removed a member from a group",
     "ai_runtime.desired_config.update": "Changed the AI runtime configuration",
@@ -11147,6 +11340,63 @@ def organization_style_instruction(organization_id: str, style_id: str) -> str |
             return instruction if isinstance(instruction, str) and instruction.strip() else None
     return None
 
+# Le marqueur que le poste remplace avant d'appeler son moteur local. Il n'a
+# aucun sens ici : le serveur met la dictee dans le message, pas dans
+# l'instruction.
+TRANSCRIPT_MARKER = "${output}"
+TRANSCRIPT_BLOCK = re.compile(r"<transcript>\s*\$\{output\}\s*</transcript>", re.IGNORECASE)
+# En dessous, une phrase ne prouve rien : « Merci. » se retrouve dans beaucoup
+# d'instructions sans que la reponse soit un gabarit.
+MIN_ECHO_CHARS = 24
+# Une phrase recopiee telle quelle, pas un mot commun.
+MIN_QUOTE_CHARS = 12
+
+
+def style_instruction(raw: str) -> str:
+    """L'instruction d'un Style, sans le gabarit de transcription.
+
+    Le poste persiste ses Styles avec `<transcript>${output}</transcript>` : sur
+    son moteur local, il y insere la dictee. Le serveur, lui, passe la dictee en
+    message. Laisser le marqueur dans l'instruction donne au modele un gabarit
+    avec un emplacement vide — et il le continue, exemple compris, au lieu de
+    reformuler. C'est le bug signale le 2026-09-20 : le Style entier est ressorti
+    dans Word a la place de la dictee.
+    """
+    cleaned = TRANSCRIPT_BLOCK.sub(" ", raw or "")
+    cleaned = cleaned.replace(TRANSCRIPT_MARKER, " ")
+    # Les lignes vides laissees par le retrait ne disent rien au modele.
+    return "\n".join(line.rstrip() for line in cleaned.splitlines() if line.strip()).strip()
+
+
+def answer_repeats_instruction(instruction: str, answer: str) -> bool:
+    """Le modele a-t-il rendu son instruction plutot que la dictee ?
+
+    Compare a l'instruction reellement envoyee, jamais a une liste de phrases
+    connues : un Style ecrit demain n'aurait aucune chance d'y figurer.
+    """
+    text = (answer or "").strip()
+    if not text:
+        return False
+    if TRANSCRIPT_MARKER in text or "<transcript>" in text.lower():
+        return True
+    reference = (instruction or "").strip()
+    if not reference:
+        return False
+    # Une reponse entierement contenue dans l'instruction : le modele a recopie,
+    # il n'a pas reformule. Quelques mots ne prouvent rien, une phrase si.
+    if len(text) >= MIN_QUOTE_CHARS and text in reference:
+        return True
+    if len(text) < MIN_ECHO_CHARS:
+        return False
+    # Une reponse largement faite des lignes de l'instruction : le modele a
+    # recopie le gabarit, meme s'il en a saute des morceaux.
+    lines = [line.strip() for line in text.splitlines() if len(line.strip()) >= MIN_ECHO_CHARS]
+    if not lines:
+        return False
+    repeated = sum(1 for line in lines if line in reference)
+    return repeated * 2 >= len(lines)
+
+
 # --- reformulation (proxy vers LLM, API OpenAI-compatible)
 @app.post("/api/reformulate")
 async def reformulate(body: ReformulateRequest, user: str = Depends(current_user),
@@ -11172,9 +11422,10 @@ async def reformulate(body: ReformulateRequest, user: str = Depends(current_user
         )
         if not system_prompt:
             raise auth_error(404, "STYLE_NOT_AVAILABLE")
+        system_prompt = style_instruction(system_prompt)
         task_type = TaskType.STYLE_TRANSFORM
     else:
-        system_prompt = style_prompt
+        system_prompt = style_instruction(style_prompt)
         if not system_prompt:
             system_prompt = (
                 "Reformule le texte dicte en un texte clair et professionnel. "
@@ -11185,6 +11436,11 @@ async def reformulate(body: ReformulateRequest, user: str = Depends(current_user
         system_prompt = f"{system_prompt}\n\n{context}"
     result = await execute_text(task_type, system_prompt, source_text)
     count_usage(user, "reformulation")
+    if answer_repeats_instruction(system_prompt, result):
+        # Le modele a rendu le gabarit. Une dictee brute vaut mieux qu'un prompt
+        # colle dans le document de quelqu'un.
+        observability.log("reformulation.template_echo", level="warning", style=style_id or "")
+        return {"text": body.text}
     return {"text": result}
 
 @app.post("/api/command", dependencies=[Depends(product_capability("commands", "voice_commands"))])

@@ -429,6 +429,50 @@ export const t = {
     modeInvalid: "Choose add or mirror.",
   },
 
+  googleSync: {
+    title: "Google Workspace directory",
+    lead: "Nova reads your Google groups and their members, and keeps its own groups in step. Read-only: Nova never writes to your directory.",
+    steps: [
+      "In Google Cloud, create a service account for Nova and generate a JSON key.",
+      "In the Google Admin console, under Security then API controls, add domain-wide delegation for that service account's client ID.",
+      "Grant only the two read-only scopes: admin.directory.group.readonly and admin.directory.group.member.readonly.",
+      "Put the JSON key on the server as an environment variable or a mounted file, then paste its reference below with the address of an administrator Nova acts for.",
+    ],
+    enabled: "Synchronize this directory",
+    adminSubject: "Administrator to act for",
+    adminSubjectHint:
+      "A Google administrator of your domain. Google only grants directory access on behalf of a person.",
+    customerId: "Customer ID",
+    keyReference: "Service account key",
+    keyHint:
+      "A reference only, such as env://NOVA_GOOGLE_SERVICE_ACCOUNT_KEY or file:///run/secrets/google-key.json. The key itself is never sent to Nova and never stored in the database.",
+    groupFilter: "Groups to synchronize",
+    groupFilterHint:
+      "One group address per line, for example aero2@example.com. Leave empty to synchronize every group.",
+    save: "Save",
+    saved: "Saved.",
+    runNow: "Synchronize now",
+    running: "Synchronizing…",
+    hourly: "Nova also synchronizes on its own, about once an hour.",
+    never: "Never synchronized.",
+    lastRun: "Last synchronization",
+    statusOk: "Succeeded",
+    statusError: "Failed",
+    outcome: (groups: number, added: number, removed: number) =>
+      `${groups} group${groups === 1 ? "" : "s"}, ${added} added, ${removed} removed.`,
+    readOnlyGroups:
+      "Groups from Google are read-only in Nova Admin: rename or delete them in Google.",
+    keyReferenceRequired:
+      "Enter a reference such as env://NAME or file:///path, not the key itself.",
+    adminSubjectRequired: "Enter the administrator Nova should act for.",
+    unauthorized:
+      "Google refused the credentials. Check the domain-wide delegation and the administrator address.",
+    forbidden:
+      "Google refused the request. Check that the two read-only directory scopes are granted.",
+    unavailable: "Google did not answer. Nothing was changed.",
+    disabled: "Turn this synchronization on before running it.",
+  },
+
   rules: {
     title: "Sorting rules",
     lead: "Sort members into groups from what your directory says about them, without touching each person.",
@@ -1214,6 +1258,15 @@ export function errorMessage(kind: ApiErrorKind, code?: string | null): string {
   if (code === "IMPORT_TOO_MANY_ROWS") return t.import.tooManyRows;
   if (code === "IMPORT_FILE_TOO_LARGE") return t.import.fileTooLarge;
   if (code === "IMPORT_MODE_INVALID") return t.import.modeInvalid;
+  if (code === "GOOGLE_KEY_REFERENCE_REQUIRED") return t.googleSync.keyReferenceRequired;
+  if (code === "GOOGLE_ADMIN_SUBJECT_REQUIRED") return t.googleSync.adminSubjectRequired;
+  if (code === "GOOGLE_KEY_MISSING" || code === "GOOGLE_KEY_INVALID")
+    return t.googleSync.keyReferenceRequired;
+  if (code === "GOOGLE_UNAUTHORIZED") return t.googleSync.unauthorized;
+  if (code === "GOOGLE_FORBIDDEN") return t.googleSync.forbidden;
+  if (code === "GOOGLE_UNAVAILABLE" || code === "GOOGLE_NOT_FOUND")
+    return t.googleSync.unavailable;
+  if (code === "DIRECTORY_SYNC_DISABLED") return t.googleSync.disabled;
   if (code === "GROUP_MEMBER_ADDED_BY_RULE") return t.rules.memberByRule;
   if (code === "RULE_FIELD_INVALID") return t.rules.fieldInvalid;
   if (code === "RULE_OPERATOR_INVALID") return t.rules.operatorInvalid;
