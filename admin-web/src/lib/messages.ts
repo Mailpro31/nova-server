@@ -399,6 +399,36 @@ export const t = {
       "A hidden group still applies its lessons and settings; only its name is no longer sent to members.",
   },
 
+  import: {
+    title: "Import a list of members",
+    lead: "Bring a spreadsheet of members in, with their group. Nothing is written until you confirm what the file would do.",
+    columns:
+      "Expected columns: email (required), group (optional, several separated by ;) and type (optional: student, teacher, staff, employee, manager, partner).",
+    formats: "CSV or XLSX, up to 5000 rows.",
+    chooseFile: "Choose a file",
+    mode: "Mode",
+    modeAdd: "Add only: nobody is ever removed from a group.",
+    modeSync:
+      "Mirror the file: in the groups it names, members missing from it are removed from the group.",
+    nothingDeleted: "No account is ever deleted, in either mode.",
+    preview: "Preview",
+    apply: "Import",
+    previewing: "Reading…",
+    applying: "Importing…",
+    previewResult: (rows: number, accounts: number, added: number, removed: number) =>
+      `${rows} rows read: ${accounts} accounts to create, ${added} memberships to add, ${removed} to remove.`,
+    appliedResult: (accounts: number, added: number, removed: number) =>
+      `Done: ${accounts} accounts created, ${added} memberships added, ${removed} removed.`,
+    groupsToCreate: (groups: string[]) => `Groups to create: ${groups.join(", ")}.`,
+    refused: "Refused lines",
+    invalidLine: (line: number, reason: string) => `Line ${line}: ${reason}`,
+    emailColumnMissing: "No email column was found. Name a column email or adresse.",
+    fileUnsupported: "Only CSV and XLSX files can be imported.",
+    tooManyRows: "This file has more than 5000 rows. Split it and import each part.",
+    fileTooLarge: "This file is too large to import.",
+    modeInvalid: "Choose add or mirror.",
+  },
+
   googleSync: {
     title: "Google Workspace directory",
     lead: "Nova reads your Google groups and their members, and keeps its own groups in step. Read-only: Nova never writes to your directory.",
@@ -1223,6 +1253,11 @@ export function errorMessage(kind: ApiErrorKind, code?: string | null): string {
   if (code === "MEMBER_EMAIL_OUTSIDE_DOMAINS") return t.members.outsideDomains;
   if (code === "MEMBER_EMAIL_INVALID") return t.members.emailInvalid;
   if (code === "MEMBER_ALREADY_EXISTS") return t.members.alreadyExists;
+  if (code === "IMPORT_EMAIL_COLUMN_MISSING") return t.import.emailColumnMissing;
+  if (code === "IMPORT_FILE_UNSUPPORTED") return t.import.fileUnsupported;
+  if (code === "IMPORT_TOO_MANY_ROWS") return t.import.tooManyRows;
+  if (code === "IMPORT_FILE_TOO_LARGE") return t.import.fileTooLarge;
+  if (code === "IMPORT_MODE_INVALID") return t.import.modeInvalid;
   if (code === "GOOGLE_KEY_REFERENCE_REQUIRED") return t.googleSync.keyReferenceRequired;
   if (code === "GOOGLE_ADMIN_SUBJECT_REQUIRED") return t.googleSync.adminSubjectRequired;
   if (code === "GOOGLE_KEY_MISSING" || code === "GOOGLE_KEY_INVALID")

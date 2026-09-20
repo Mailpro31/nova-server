@@ -494,6 +494,24 @@ export interface RuleOutcome {
   removed: number;
 }
 
+/** `add` n'ajoute que ce qui manque ; `sync` fait du fichier la liste de référence. */
+export type ImportMode = "add" | "sync";
+
+export interface MemberImportPreview {
+  rows: number;
+  invalid: { line: number; code: string }[];
+  groups_to_create: string[];
+  accounts_to_create: number;
+  memberships_to_add: number;
+  memberships_to_remove: number;
+}
+
+export interface MemberImportResult {
+  preview: MemberImportPreview;
+  applied: boolean;
+  mode: ImportMode;
+}
+
 /** Le choix fait pour une personne (`null` : elle suit ses réglages) et son effet. */
 export interface MemberGroupDisplay {
   visible: boolean | null;
@@ -1016,6 +1034,18 @@ export class ControlPlane {
     return this.client.request<{ applied: RuleOutcome }>(
       `/api/control/organizations/${organizationId}/group-rules/apply`,
       { method: "POST", body: {} },
+    );
+  }
+
+  /** Envoie le fichier ; `apply` faux ne fait que montrer ce qui se passerait. */
+  importMembers(organizationId: string, file: File, mode: ImportMode, apply: boolean) {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("mode", mode);
+    form.append("apply", apply ? "true" : "false");
+    return this.client.request<MemberImportResult>(
+      `/api/control/organizations/${organizationId}/members/import`,
+      { method: "POST", body: form },
     );
   }
 

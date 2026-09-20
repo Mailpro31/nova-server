@@ -106,14 +106,24 @@ export class ApiClient {
     // d'administration n'existe pas encore.
     const token = init.token !== undefined ? init.token : this.getToken();
     if (token) headers.Authorization = `Bearer ${token}`;
-    if (init.body !== undefined) headers["Content-Type"] = "application/json";
+    // Un envoi de fichier porte ses propres frontières multipart : fixer le
+    // type ici les effacerait, et le serveur ne saurait plus découper.
+    const multipart = init.body instanceof FormData;
+    if (init.body !== undefined && !multipart) {
+      headers["Content-Type"] = "application/json";
+    }
 
     let response: Response;
     try {
       response = await fetch(`${this.baseUrl}${path}`, {
         method: init.method ?? "GET",
         headers,
-        body: init.body === undefined ? undefined : JSON.stringify(init.body),
+        body:
+          init.body === undefined
+            ? undefined
+            : multipart
+              ? (init.body as FormData)
+              : JSON.stringify(init.body),
         // Aucun cookie : le jeton voyage dans un en-tête, et rien n'est envoyé
         // automatiquement par le navigateur.
         credentials: "omit",

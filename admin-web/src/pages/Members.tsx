@@ -14,7 +14,12 @@
 
 import { useState } from "react";
 import { ApiError } from "../lib/api";
-import type { MemberDetail, MemberView } from "../lib/controlPlane";
+import type {
+  ImportMode,
+  MemberDetail,
+  MemberImportPreview,
+  MemberView,
+} from "../lib/controlPlane";
 import { errorMessage, t } from "../lib/messages";
 import { CAPABILITY, can } from "../lib/session";
 import { useResource } from "../lib/useResource";
@@ -364,6 +369,135 @@ function MemberDetailView({
   );
 }
 
+/**
+ * Import d'une liste de membres.
+ *
+ * Deux temps, toujours : le fichier part d'abord en aperçu, et l'écriture ne
+ * se déclenche qu'après. Un import qui écrirait dès le choix du fichier ferait
+ * découvrir ses effets après coup.
+ */
+function ImportMembers({
+  organizationId,
+  onImported,
+}: {
+  organizationId: string;
+  onImported: () => void;
+}) {
+  const { control } = useSession();
+  const [file, setFile] = useState<File | null>(null);
+  const [mode, setMode] = useState<ImportMode>("add");
+  const [preview, setPreview] = useState<MemberImportPreview | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
+
+  async function send(apply: boolean) {
+    if (!file) return;
+    setBusy(true);
+    setFailure(null);
+    try {
+      const result = await control!.importMembers(organizationId, file, mode, apply);
+      setPreview(result.preview);
+      setNotice(
+        apply
+          ? t.import.appliedResult(
+              result.preview.accounts_to_create,
+              result.preview.memberships_to_add,
+              result.preview.memberships_to_remove,
+            )
+          : t.import.previewResult(
+              result.preview.rows,
+              result.preview.accounts_to_create,
+              result.preview.memberships_to_add,
+              result.preview.memberships_to_remove,
+            ),
+      );
+      if (apply) {
+        setPreview(null);
+        setFile(null);
+        onImported();
+      }
+    } catch (raised) {
+      setPreview(null);
+      setFailure(
+        raised instanceof ApiError
+          ? errorMessage(raised.kind, raised.code)
+          : errorMessage("server"),
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Panel title={t.import.title}>
+      <p>{t.import.lead}</p>
+      <p className="policy-hint">{t.import.columns}</p>
+      <p className="policy-hint">{t.import.formats}</p>
+
+      <label className="field">
+        <span>{t.import.chooseFile}</span>
+        <input
+          type="file"
+          accept=".csv,.xlsx"
+          disabled={busy}
+          onChange={(event) => {
+            setPreview(null);
+            setNotice(null);
+            setFailure(null);
+            setFile(event.target.files?.[0] ?? null);
+          }}
+        />
+      </label>
+
+      <label className="field">
+        <span>{t.import.mode}</span>
+        <select
+          value={mode}
+          disabled={busy}
+          onChange={(event) => {
+            setPreview(null);
+            setMode(event.target.value as ImportMode);
+          }}
+        >
+          <option value="add">{t.import.modeAdd}</option>
+          <option value="sync">{t.import.modeSync}</option>
+        </select>
+      </label>
+      <p className="policy-hint">{t.import.nothingDeleted}</p>
+
+      {notice && <Notice>{notice}</Notice>}
+      {preview && preview.groups_to_create.length > 0 && (
+        <p className="policy-hint">{t.import.groupsToCreate(preview.groups_to_create)}</p>
+      )}
+      {preview && preview.invalid.length > 0 && (
+        <>
+          <h3 className="policy-group">{t.import.refused}</h3>
+          {preview.invalid.map((entry) => (
+            <p className="policy-hint" key={`${entry.line}-${entry.code}`}>
+              {t.import.invalidLine(entry.line, errorMessage("invalid", entry.code))}
+            </p>
+          ))}
+        </>
+      )}
+
+      <div className="row">
+        <button disabled={busy || !file} onClick={() => void send(false)}>
+          {busy ? t.import.previewing : t.import.preview}
+        </button>
+        <button
+          data-variant="primary"
+          disabled={busy || !file || preview === null}
+          onClick={() => void send(true)}
+        >
+          {busy ? t.import.applying : t.import.apply}
+        </button>
+      </div>
+      {failure && <Notice tone="danger">{failure}</Notice>}
+    </Panel>
+  );
+}
+
 function AddMember({
   organizationId,
   onAdded,
@@ -512,6 +646,12 @@ export function Members() {
             setReload((n) => n + 1);
             setSelected(userId);
           }}
+        />
+      )}
+      {mayAdd && (
+        <ImportMembers
+          organizationId={organizationId}
+          onImported={() => setReload((n) => n + 1)}
         />
       )}
 
