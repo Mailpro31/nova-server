@@ -131,6 +131,28 @@ services:
       llm:
         condition: service_started
 
+  # La lecture horaire de l'annuaire de l'organisation (Google Workspace).
+  #
+  # Processus separe de `api` : un tour lit un annuaire entier et ecrit des
+  # centaines de lignes, ce qu'une personne en train de dicter n'a pas a payer.
+  #
+  # Sortant uniquement, et en lecture seule chez Google. La cle du compte de
+  # service arrive par le mecanisme de secrets du deploiement : elle n'est ni
+  # en base, ni dans ce fichier.
+  directory-sync:
+    build: .
+    command: ["python", "directory_worker.py"]
+    environment:
+      <<: *nova-environment
+      NOVA_GOOGLE_SERVICE_ACCOUNT_KEY: "${NOVA_GOOGLE_SERVICE_ACCOUNT_KEY:-}"
+    volumes:
+      - nova-data:/data
+    depends_on:
+      prepare:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    profiles: ["directory-sync"]
+
   # Le pont vers le plan de controle Nova. Processus separe : une boucle
   # reseau qui tourne indefiniment n'a pas sa place dans un serveur d'API.
   #

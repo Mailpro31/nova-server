@@ -7,8 +7,11 @@
 
 import { useState } from "react";
 import { ApiError } from "../lib/api";
-import type { ScimCredentialView } from "../lib/controlPlane";
+import type { DirectorySyncBody, ScimCredentialView } from "../lib/controlPlane";
 import { errorMessage, t } from "../lib/messages";
+
+/** Une adresse de groupe par ligne. */
+const LINE_BREAK = "\n";
 import { CAPABILITY, can } from "../lib/session";
 import { useResource } from "../lib/useResource";
 import { useSession } from "../lib/useAdminSession";
@@ -62,6 +65,213 @@ function Credential({
           ],
         ]}
       />
+    </Panel>
+  );
+}
+
+/**
+ * Google Workspace : ce que Nova lit, et quand.
+ *
+ * Le formulaire ne demande jamais la clé du compte de service — seulement la
+ * référence sous laquelle le serveur la trouve. Un champ « collez votre clé »
+ * l'enverrait droit en base, puis dans la prochaine sauvegarde.
+ */
+function GoogleDirectorySync({
+  organizationId,
+  mayManage,
+}: {
+  organizationId: string;
+  mayManage: boolean;
+}) {
+  const { control, session } = useSession();
+  const mayConfigure = mayManage && can(session, CAPABILITY.identityManage);
+  const [state, retry] = useResource(
+    control && organizationId ? () => control.directorySync(organizationId) : null,
+    [control, organizationId],
+  );
+  const [draft, setDraft] = useState<DirectorySyncBody | null>(null);
+  const [groupsText, setGroupsText] = useState("");
+  const [notice, setNotice] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
+
+  async function run(action: () => Promise<unknown>) {
+    setBusy(true);
+    setFailure(null);
+    try {
+      await action();
+      retry();
+    } catch (raised) {
+      setFailure(
+        raised instanceof ApiError
+          ? errorMessage(raised.kind, raised.code)
+          : errorMessage("server"),
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Panel title={t.googleSync.title}>
+      <p>{t.googleSync.lead}</p>
+      <ol>
+        {t.googleSync.steps.map((step) => (
+          <li key={step}>{step}</li>
+        ))}
+      </ol>
+
+      <AsyncSection state={state} onRetry={retry}>
+        {(view) => {
+          const current: DirectorySyncBody = draft ?? {
+            enabled: view.sync.enabled,
+            admin_subject: view.sync.admin_subject,
+            customer_id: view.sync.customer_id || "my_customer",
+            credentials_ref: "",
+            group_filter: view.sync.group_filter,
+          };
+          const groups =
+            draft === null ? view.sync.group_filter.join(LINE_BREAK) : groupsText;
+          return (
+            <>
+              <Facts
+                entries={[
+                  [
+                    t.googleSync.lastRun,
+                    view.sync.last_sync_at
+                      ? new Date(view.sync.last_sync_at * 1000).toLocaleString()
+                      : t.googleSync.never,
+                  ],
+                  [
+                    t.googleSync.statusOk,
+                    view.sync.last_status === "ok" ? (
+                      <Tag tone="ok">{t.googleSync.statusOk}</Tag>
+                    ) : view.sync.last_status === "error" ? (
+                      <Tag tone="warn">
+                        {view.sync.last_error
+                          ? errorMessage("server", view.sync.last_error)
+                          : t.googleSync.statusError}
+                      </Tag>
+                    ) : (
+                      "\u2014"
+                    ),
+                  ],
+                ]}
+              />
+              {view.sync.last_outcome && (
+                <p className="policy-hint">
+                  {t.googleSync.outcome(
+                    view.sync.last_outcome.groups,
+                    view.sync.last_outcome.added,
+                    view.sync.last_outcome.removed,
+                  )}
+                </p>
+              )}
+              <p className="policy-hint">{t.googleSync.readOnlyGroups}</p>
+              <p className="policy-hint">{t.googleSync.hourly}</p>
+
+              {mayConfigure && (
+                <div className="stack">
+                  <label className="policy-setting">
+                    <span>{t.googleSync.enabled}</span>
+                    <input
+                      type="checkbox"
+                      checked={current.enabled}
+                      disabled={busy}
+                      onChange={(event) => {
+                        setGroupsText(groups);
+                        setDraft({ ...current, enabled: event.target.checked });
+                      }}
+                    />
+                  </label>
+                  <label className="field">
+                    <span>{t.googleSync.adminSubject}</span>
+                    <input
+                      type="email"
+                      value={current.admin_subject}
+                      disabled={busy}
+                      placeholder="admin@example.com"
+                      onChange={(event) => {
+                        setGroupsText(groups);
+                        setDraft({ ...current, admin_subject: event.target.value });
+                      }}
+                    />
+                  </label>
+                  <p className="policy-hint">{t.googleSync.adminSubjectHint}</p>
+                  <label className="field">
+                    <span>{t.googleSync.keyReference}</span>
+                    <input
+                      type="text"
+                      value={current.credentials_ref}
+                      disabled={busy}
+                      placeholder="env://NOVA_GOOGLE_SERVICE_ACCOUNT_KEY"
+                      onChange={(event) => {
+                        setGroupsText(groups);
+                        setDraft({ ...current, credentials_ref: event.target.value });
+                      }}
+                    />
+                  </label>
+                  <p className="policy-hint">{t.googleSync.keyHint}</p>
+                  <label className="field">
+                    <span>{t.googleSync.groupFilter}</span>
+                    <textarea
+                      rows={4}
+                      value={groups}
+                      disabled={busy}
+                      onChange={(event) => {
+                        setGroupsText(event.target.value);
+                        setDraft({ ...current });
+                      }}
+                    />
+                  </label>
+                  <p className="policy-hint">{t.googleSync.groupFilterHint}</p>
+                  {notice && <Notice>{notice}</Notice>}
+                  <div className="row">
+                    <button
+                      data-variant="primary"
+                      disabled={busy}
+                      onClick={() =>
+                        void run(async () => {
+                          const body: DirectorySyncBody = {
+                            ...current,
+                            group_filter: groups
+                              .split(LINE_BREAK)
+                              .map((line) => line.trim())
+                              .filter((line) => line.length > 0),
+                          };
+                          await control!.setDirectorySync(organizationId, body);
+                          setDraft(null);
+                          setNotice(t.googleSync.saved);
+                        })
+                      }
+                    >
+                      {t.googleSync.save}
+                    </button>
+                    <button
+                      disabled={busy || !view.sync.enabled}
+                      onClick={() =>
+                        void run(async () => {
+                          const result = await control!.runDirectorySync(organizationId);
+                          setNotice(
+                            t.googleSync.outcome(
+                              result.outcome.groups,
+                              result.outcome.added,
+                              result.outcome.removed,
+                            ),
+                          );
+                        })
+                      }
+                    >
+                      {busy ? t.googleSync.running : t.googleSync.runNow}
+                    </button>
+                  </div>
+                </div>
+              )}
+              {failure && <Notice tone="danger">{failure}</Notice>}
+            </>
+          );
+        }}
+      </AsyncSection>
     </Panel>
   );
 }
@@ -290,6 +500,8 @@ export function Provisioning() {
               </ol>
               <Facts entries={[[t.provisioning.endpoint, <span className="mono">{view.endpoint}</span>]]} />
             </Panel>
+
+            <GoogleDirectorySync organizationId={organizationId} mayManage={mayManage} />
 
             <Panel title={t.provisioning.groupsTitle}>
               {view.managed_groups.length === 0 ? (
