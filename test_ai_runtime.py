@@ -690,9 +690,9 @@ class StyleResolutionTests(AdminTestCase):
         )
         self.assertEqual(response.status_code, 200)
         request = router.text_backend.requests[0]
-        # Telle qu'envoyee, apres le contrat commun a toute reformulation.
+        # Telle qu'envoyee, suivie du contrat commun a toute reformulation.
         self.assertEqual(
-            request.instruction, f"{main.REWRITE_CONTRACT}\n\nAmeliore la transcription."
+            request.instruction, f"Ameliore la transcription.\n\n{main.REWRITE_CONTRACT}"
         )
         self.assertEqual(request.task_type, TaskType.STYLE_TRANSFORM)
 
@@ -706,7 +706,7 @@ class StyleResolutionTests(AdminTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
             router.text_backend.requests[0].instruction,
-            f"{main.REWRITE_CONTRACT}\n\nEcris en vers.",
+            f"Ecris en vers.\n\n{main.REWRITE_CONTRACT}",
         )
 
     def test_no_style_at_all_stays_plain_reformulation(self):
