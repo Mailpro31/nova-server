@@ -6065,7 +6065,9 @@ def test_a_skill_may_ask_for_a_prefix_without_the_server_forbidding_it():
     # formulation distinguee des faits.
     assert "Preserve facts and the original language" not in prompt, (
         "cette formulation est lue comme une interdiction de reecrire")
-    assert "Rewrite the wording as the instruction asks" in prompt
+    # Et ne pas se contenter de recopier : c'est ce que faisait le modele
+    # quand la consigne ne disait que « preserver ».
+    assert "do not merely repeat or rephrase the text" in prompt
     # Et l'instruction de la skill est toujours transmise telle quelle.
     assert "Commence par [DIFFUSION OK]" in prompt
 
