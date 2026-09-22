@@ -690,7 +690,10 @@ class StyleResolutionTests(AdminTestCase):
         )
         self.assertEqual(response.status_code, 200)
         request = router.text_backend.requests[0]
-        self.assertEqual(request.instruction, "Ameliore la transcription.")
+        # Telle qu'envoyee, suivie du contrat commun a toute reformulation.
+        self.assertEqual(
+            request.instruction, f"Ameliore la transcription.\n\n{main.REWRITE_CONTRACT}"
+        )
         self.assertEqual(request.task_type, TaskType.STYLE_TRANSFORM)
 
     def test_a_personal_style_is_applied_as_the_client_sent_it(self):
@@ -702,7 +705,8 @@ class StyleResolutionTests(AdminTestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
-            router.text_backend.requests[0].instruction, "Ecris en vers."
+            router.text_backend.requests[0].instruction,
+            f"Ecris en vers.\n\n{main.REWRITE_CONTRACT}",
         )
 
     def test_no_style_at_all_stays_plain_reformulation(self):

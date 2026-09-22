@@ -59,7 +59,8 @@ class StylePromptPlaceholderTests(AdminTestCase):
         self.assertNotIn("<transcript>", seen["instruction"])
         # Le reste du Style est conserve : c'est lui qui fait le travail.
         self.assertIn("degage l'intention reelle", seen["instruction"])
-        self.assertEqual(seen["text"], "bonjour")
+        # La dictee va dans le message, delimitee -- jamais dans l'instruction.
+        self.assertEqual(seen["text"], main.transcript_message("bonjour"))
 
     def test_a_style_made_only_of_the_marker_falls_back_to_the_default(self):
         response, seen = self.reformulate(
@@ -81,7 +82,8 @@ class StylePromptPlaceholderTests(AdminTestCase):
     def test_a_normal_answer_is_returned_untouched(self):
         response, _ = self.reformulate(
             {"style_id": "nova_style_notes", "style_prompt": TEMPLATE},
-            answer="Voici mon IBAN FR76 3000 4000 5000.")
+            answer="Voici mon IBAN FR76 3000 4000 5000.",
+            text="voici mon iban FR76 3000 4000 5000")
         self.assertEqual(response.json()["text"], "Voici mon IBAN FR76 3000 4000 5000.")
 
     def test_the_guard_reads_the_instruction_not_a_fixed_list(self):
