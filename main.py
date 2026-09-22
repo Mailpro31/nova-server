@@ -11714,6 +11714,19 @@ def kept_word_ratio(dictated: str, written: str) -> float | None:
     return len(source & content_words(written)) / len(source)
 
 
+PUNCTUATED_NUMBER = re.compile(r"\d{1,3}(?:[,.]\d{3})+")
+
+
+def grouped_number_reformatted(dictated: str, written: str) -> bool:
+    """« 76 300 » reecrit « 76,300 » -- qui, en francais, se lit 76 virgule 3.
+
+    Un nombre simplement absent ne compte pas : un compte rendu resume.
+    """
+    digits = lambda value: re.sub(r"\D", "", value)  # noqa: E731
+    grouped = {digits(number) for number in GROUPED_NUMBER.findall(dictated)}
+    return any(digits(number) in grouped for number in PUNCTUATED_NUMBER.findall(written))
+
+
 def rewrite_refusal(dictated: str, answer: str, style_id: str) -> str | None:
     """Pourquoi cette sortie ne doit pas remplacer la dictee, ou `None`.
 
@@ -11727,23 +11740,24 @@ def rewrite_refusal(dictated: str, answer: str, style_id: str) -> str | None:
     lowered = text.lower()
     if lowered.startswith(CHATBOT_OPENINGS) and not dictated.strip().lower().startswith(CHATBOT_OPENINGS):
         return "chatbot-answer"
+    # « Reunion » resume : il ne reprend pas chaque heure ni chaque montant cite.
+    # Exiger tous les nombres faisait refuser presque chaque compte rendu, et le
+    # membre recevait le dialogue brut. Seul un nombre reecrit lui est refuse.
+    if style_id == "nova_style_meeting":
+        return "number-format-changed" if grouped_number_reformatted(dictated, text) else None
     if any(number not in text for number in EXPLICIT_NUMBER.findall(dictated)):
         return "explicit-number-lost"
     if len(text) > max(1, len(dictated)) * 6 + 160:
         return "output-expanded-excessively"
-    # « Reunion » resume, mais ne reecrit pas un nombre : lui seul echappe aux
-    # controles de langue et de mots repris, pas a celui des nombres groupes.
-    guarded = style_id in GUARDED_STYLE_IDS
-    if not guarded and style_id != "nova_style_meeting":
+    if style_id not in GUARDED_STYLE_IDS:
         return None
-    if guarded:
-        source_language = dictation_language(dictated)
-        written_language = dictation_language(text)
-        if source_language and written_language and source_language != written_language:
-            return "language-changed"
-        ratio = kept_word_ratio(dictated, text)
-        if ratio is not None and ratio < MIN_KEPT_WORDS:
-            return "dictation-not-kept"
+    source_language = dictation_language(dictated)
+    written_language = dictation_language(text)
+    if source_language and written_language and source_language != written_language:
+        return "language-changed"
+    ratio = kept_word_ratio(dictated, text)
+    if ratio is not None and ratio < MIN_KEPT_WORDS:
+        return "dictation-not-kept"
     compact = lambda value: re.sub(r"[ \u00a0\u202f]", "", value)  # noqa: E731
     if any(compact(number) not in compact(text) for number in GROUPED_NUMBER.findall(dictated)):
         return "number-format-changed"
