@@ -534,9 +534,11 @@ class CommandContextTests(unittest.TestCase):
 
         self.assertIn("IPSA", context)
         self.assertIn("Always use vous", context)
+        # Les mots dictes restent, la valeur est annoncee : « Voici 7 impasse
+        # des Bons Voisins Jeremy. » ne voulait rien dire.
         self.assertEqual(
             main.apply_snippets("Voici mon adresse", snippets),
-            "Voici 12 rue des Lilas",
+            "Voici mon adresse : 12 rue des Lilas",
         )
 
 

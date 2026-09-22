@@ -46,9 +46,12 @@ class SnippetProtectionTests(unittest.TestCase):
         self.assertNotIn("Blagnac", protected)
         self.assertNotIn("FR76", protected)
         self.assertEqual(len(restores), 2)
+        # Les mots dictes restent : « mon adresse pro » n'est pas coupe en deux
+        # par « mon adresse », et la phrase garde son sens.
         self.assertEqual(
             main.restore_snippets(protected, restores),
-            "envoie 3 avenue Aeroport, 31700 Blagnac et FR76 3000 6000 0112 3456 7890 189")
+            "envoie mon adresse pro : 3 avenue Aeroport, 31700 Blagnac et "
+            "Mon IBAN : FR76 3000 6000 0112 3456 7890 189")
 
     def test_a_lost_marker_cannot_be_restored(self):
         protected, restores = main.protect_snippets("voici mon iban", self.ROWS)
@@ -56,7 +59,24 @@ class SnippetProtectionTests(unittest.TestCase):
 
     def test_expansion_is_longest_first(self):
         self.assertEqual(main.expand_snippets("mon adresse pro", self.ROWS),
-                         "3 avenue Aeroport, 31700 Blagnac")
+                         "mon adresse pro : 3 avenue Aeroport, 31700 Blagnac")
+
+    def test_the_value_is_placed_where_the_sentence_needs_it(self):
+        _, restores = main.protect_snippets("Voici mon adresse.", self.ROWS)
+        marker = next(iter(restores))
+        address = restores[marker]
+        # Apres des mots : la valeur est annoncee par « : ».
+        self.assertEqual(
+            main.restore_snippets(f"Voici mon adresse {marker} Jeremy.", restores),
+            f"Voici mon adresse : {address} Jeremy.")
+        # Deja annoncee : rien n'est ajoute.
+        self.assertEqual(
+            main.restore_snippets(f"Voici mon adresse : {marker}", restores),
+            f"Voici mon adresse : {address}")
+        # Mise en evidence sur sa propre ligne par le modele : elle y reste.
+        self.assertEqual(
+            main.restore_snippets(f"Viens a 17h.\n\nMon adresse\n{marker}", restores),
+            f"Viens a 17h.\n\nMon adresse\n{address}")
 
 
 class VocabularyEnforcementTests(unittest.TestCase):
@@ -121,6 +141,8 @@ class ReformulateSnippetTests(AdminTestCase):
 
         text, seen = self.reformulate("voici mon iban merci de faire le virement a l'ipsa", model)
         self.assertNotIn("FR76", seen["message"])
+        # Le modele a vu « mon iban », il garde donc une phrase qui a du sens.
+        self.assertIn("mon iban", seen["message"])
         self.assertEqual(
             text,
             "Voici mon IBAN : FR76 3000 6000 0112 3456 7890 189. Merci de faire le virement a l'IPSA.")
@@ -128,12 +150,14 @@ class ReformulateSnippetTests(AdminTestCase):
     def test_a_lost_marker_returns_the_dictation_with_its_snippet(self):
         text, _ = self.reformulate("voici mon iban merci de faire le virement",
                                    "Voici mon IBAN, merci de faire le virement.")
-        self.assertEqual(text, "voici FR76 3000 6000 0112 3456 7890 189 merci de faire le virement")
+        self.assertEqual(
+            text,
+            "voici mon iban : FR76 3000 6000 0112 3456 7890 189 merci de faire le virement")
 
     def test_a_refused_answer_returns_the_dictation_with_its_snippet(self):
         text, _ = self.reformulate("ecris a mon mail pour le partiel de l'ipsa",
                                    "Write to the email address for the exam.")
-        self.assertEqual(text, "ecris a contact@ipsa.fr pour le partiel de l'IPSA")
+        self.assertEqual(text, "ecris a mon mail : contact@ipsa.fr pour le partiel de l'IPSA")
 
     def test_a_truncated_answer_returns_the_dictation_with_its_snippet(self):
         token = self.sign_in(EMAIL)
@@ -147,7 +171,8 @@ class ReformulateSnippetTests(AdminTestCase):
                 "/api/reformulate", headers=self.auth(token),
                 json={"text": "voici mon iban", "style_id": "nova_style_messages",
                       "style_prompt": "Message court."})
-        self.assertEqual(response.json()["text"], "voici FR76 3000 6000 0112 3456 7890 189")
+        self.assertEqual(response.json()["text"],
+                         "voici mon iban : FR76 3000 6000 0112 3456 7890 189")
 
 
 if __name__ == "__main__":
