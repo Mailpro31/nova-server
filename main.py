@@ -17,6 +17,7 @@ import json
 import secrets
 import socket
 import threading
+import string
 import time
 import unicodedata
 import uuid
@@ -10984,7 +10985,9 @@ def protect_snippets(text: str, snippets) -> tuple[str, dict[str, str]]:
 
     def replace(found: re.Match) -> str:
         marker = f"{{{{snippet{len(restores)}}}}}"
-        restores[marker] = contents[found.group(0).casefold()]
+        # Le declencheur voyage avec sa valeur : c'est lui qui dit si le texte
+        # qui precede le repere annonce deja la valeur.
+        restores[marker] = (found.group(0), contents[found.group(0).casefold()])
         return f"{found.group(0)} {marker}"
 
     return pattern.sub(replace, text), restores
@@ -10994,26 +10997,32 @@ def protect_snippets(text: str, snippets) -> tuple[str, dict[str, str]]:
 ANNOUNCES_VALUE = (":", "-", "\u2013", "\u2014", "=", "(", "\u00ab", '"', ",")
 
 
-def restore_snippets(text: str, restores: dict[str, str]) -> str | None:
+def restore_snippets(text: str, restores: dict[str, tuple[str, str]]) -> str | None:
     """Le texte avec ses snippets, ou `None` si le modele a perdu un repere.
 
-    La valeur est annoncee par « : » quand le repere suit des mots : « Voici mon
-    adresse : 7 impasse des Bons Voisins. » Rien n'est ajoute quand la phrase
-    l'annonce deja, ni quand le modele a mis le repere sur sa propre ligne.
+    La valeur est annoncee par « : » quand le repere suit les mots du
+    declencheur : « Voici mon adresse : 7 impasse des Bons Voisins. » Rien n'est
+    ajoute quand la phrase l'annonce deja, quand le modele a mis le repere sur sa
+    propre ligne, ou quand il l'a deplace ailleurs dans la phrase.
     """
     if any(marker not in text for marker in restores):
         return None
-    for marker, content in restores.items():
+    for marker, (trigger, content) in restores.items():
         while marker in text:
             index = text.index(marker)
             prefix = text[:index].rstrip(" \t")
             rest = text[index + len(marker):]
+            last_word = re.split(r"\s", prefix)[-1].rstrip(string.punctuation) if prefix else ""
+            trigger_word = trigger.split()[-1] if trigger.split() else ""
             if not prefix or prefix.endswith("\n"):
-                text = f"{prefix}{content}{rest}"
+                separator = ""
             elif prefix.endswith(ANNOUNCES_VALUE):
-                text = f"{prefix} {content}{rest}"
+                separator = " "
+            elif trigger_word and last_word.casefold() == trigger_word.casefold():
+                separator = " : "
             else:
-                text = f"{prefix} : {content}{rest}"
+                separator = " "
+            text = f"{prefix}{separator}{content}{rest}"
     return text
 
 

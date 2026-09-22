@@ -64,7 +64,7 @@ class SnippetProtectionTests(unittest.TestCase):
     def test_the_value_is_placed_where_the_sentence_needs_it(self):
         _, restores = main.protect_snippets("Voici mon adresse.", self.ROWS)
         marker = next(iter(restores))
-        address = restores[marker]
+        address = restores[marker][1]
         # Apres des mots : la valeur est annoncee par « : ».
         self.assertEqual(
             main.restore_snippets(f"Voici mon adresse {marker} Jeremy.", restores),
@@ -77,6 +77,10 @@ class SnippetProtectionTests(unittest.TestCase):
         self.assertEqual(
             main.restore_snippets(f"Viens a 17h.\n\nMon adresse\n{marker}", restores),
             f"Viens a 17h.\n\nMon adresse\n{address}")
+        # Repere deplace ailleurs : la valeur est posee, sans deux-points.
+        self.assertEqual(
+            main.restore_snippets(f"Viens a 17h chez moi {marker}", restores),
+            f"Viens a 17h chez moi {address}")
 
 
 class VocabularyEnforcementTests(unittest.TestCase):
