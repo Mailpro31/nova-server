@@ -123,6 +123,7 @@ services:
       NOVA_AI_MAX_CONCURRENT_TEXT: "${NOVA_AI_MAX_CONCURRENT_TEXT:-2}"
       NOVA_AI_MAX_CONCURRENT_SPEECH: "${NOVA_AI_MAX_CONCURRENT_SPEECH:-1}"
       NOVA_AI_MAX_QUEUE: "${NOVA_AI_MAX_QUEUE:-4}"
+      NOVA_AI_QUEUE_WAIT_SECONDS: "${NOVA_AI_QUEUE_WAIT_SECONDS:-3}"
 
       # -- Reseau et bornes ----------------------------------------------------
       # `X-Forwarded-For` n'est lu que si la connexion vient d'une adresse

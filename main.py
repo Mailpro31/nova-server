@@ -46,6 +46,7 @@ import ratelimit
 import scim
 import secrets_provider
 from ai_runtime import (
+    ADVANCED_MINIMUM_VRAM_GB,
     AI_MODEL_NOT_READY,
     AI_PROMPT_TOO_LONG,
     AI_RUNTIME_BUSY,
@@ -6823,14 +6824,20 @@ def validate_ai_runtime_update(body: AIRuntimeConfigUpdateRequest) -> dict:
             raise auth_error(400, "AI_RUNTIME_CONCURRENCY_REQUIRED")
         if not (1 <= text <= 64 and 1 <= speech <= 32 and 0 <= queue <= 256):
             raise auth_error(400, "AI_RUNTIME_CONCURRENCY_INVALID")
-    hardware = detect_hardware()
-    if (
-        NOVA_SERVER_MODE == SERVER_MODE_DEDICATED
-        and profile == ModelProfile.ADVANCED
-        and hardware.vram_gb is not None
-        and hardware.vram_gb < 16
-    ):
-        raise auth_error(409, "AI_RUNTIME_HARDWARE_INCOMPATIBLE")
+    # `advanced` demande de la memoire video, et le refus doit aussi tomber
+    # quand on n'a pas pu la mesurer. La detection passe par `nvidia-smi` : sur
+    # une machine sans carte NVIDIA, ou dans un conteneur qui n'expose pas
+    # l'outil, `vram_gb` vaut None. L'ancienne condition laissait alors passer
+    # `advanced` — precisement sur les machines les moins capables de le tenir.
+    #
+    # Le mode `control_plane` n'execute aucune inference : rien a verifier.
+    if NOVA_SERVER_MODE == SERVER_MODE_DEDICATED and profile == ModelProfile.ADVANCED:
+        hardware = detect_hardware()
+        if (
+            hardware.vram_gb is None
+            or hardware.vram_gb < ADVANCED_MINIMUM_VRAM_GB
+        ):
+            raise auth_error(409, "AI_RUNTIME_HARDWARE_INCOMPATIBLE")
     return {
         "profile": profile,
         "reasoning_allowed": body.reasoning_allowed,
