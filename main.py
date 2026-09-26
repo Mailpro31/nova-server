@@ -3250,8 +3250,23 @@ def decode_jwt_claims(token: str) -> dict:
     except Exception:
         return {}
 
-def count_usage(email: str, kind: str, audio_seconds: float = 0.0):
+# Duree de conservation. Le detail horaire sert a lire les pics d'une rentree ;
+# au-dela, la trace mensuelle suffit a juger l'adoption, et garder l'heure
+# pendant deux ans reviendrait a conserver un emploi du temps par personne
+# sans que personne ne s'en serve.
+USAGE_HOURLY_RETENTION_DAYS = 90
+USAGE_MONTHLY_RETENTION_DAYS = 730
+HOST_SAMPLE_RETENTION_DAYS = 90
+
+
+def count_usage(
+    email: str,
+    kind: str,
+    audio_seconds: float = 0.0,
+    latency_ms: float | None = None,
+):
     day = time.strftime("%Y-%m-%d")
+    hour = time.strftime("%Y-%m-%dT%H")
     col = "transcriptions" if kind == "transcription" else "reformulations"
     with db() as conn:
         # Les colonnes sont qualifiees par leur table dans la clause `DO UPDATE`.
@@ -3265,6 +3280,31 @@ def count_usage(email: str, kind: str, audio_seconds: float = 0.0):
                 {col} = usage.{col} + 1,
                 audio_seconds = usage.audio_seconds + ?""",
             (email, day, 1, audio_seconds, audio_seconds),
+        )
+        # Le meme evenement, a l'heure : c'est la granularite qui montre les
+        # pics. La latence n'est portee que par l'horaire, parce que c'est la
+        # seule echelle ou une lenteur se rattache a une cause.
+        millis = float(latency_ms or 0.0)
+        conn.execute(
+            f"""INSERT INTO usage_hourly(
+                    email, hour, {col}, audio_seconds,
+                    latency_ms_sum, latency_ms_count, latency_ms_max)
+                VALUES (?,?,?,?,?,?,?)
+                ON CONFLICT(email, hour) DO UPDATE SET
+                {col} = usage_hourly.{col} + 1,
+                audio_seconds = usage_hourly.audio_seconds + ?,
+                latency_ms_sum = usage_hourly.latency_ms_sum + ?,
+                latency_ms_count = usage_hourly.latency_ms_count + ?,
+                latency_ms_max = CASE
+                    WHEN ? > usage_hourly.latency_ms_max THEN ?
+                    ELSE usage_hourly.latency_ms_max END""",
+            (
+                email, hour, 1, audio_seconds,
+                millis, 1 if latency_ms is not None else 0, millis,
+                audio_seconds,
+                millis, 1 if latency_ms is not None else 0,
+                millis, millis,
+            ),
         )
 
 # ---------------------------------------------------------------- email
@@ -11765,15 +11805,24 @@ async def reformulate(body: ReformulateRequest, user: str = Depends(current_user
     if context:
         system_prompt = f"{system_prompt}\n\n{context}"
     system_prompt = f"{system_prompt}\n\n{REWRITE_CONTRACT}"
+    # Le temps que la personne attend reellement, y compris la file. C'est
+    # celui-la qui doit tenir sous cinq secondes, pas celui du moteur seul.
+    started = time.monotonic()
     try:
         result = await execute_text(task_type, system_prompt, transcript_message(source_text))
     except RewriteTruncated:
         # Une reformulation coupee perd la fin de la dictee : la dictee entiere
         # vaut mieux.
-        count_usage(user, "reformulation")
+        count_usage(
+            user, "reformulation",
+            latency_ms=(time.monotonic() - started) * 1000.0,
+        )
         observability.log("reformulation.truncated", level="warning", style=style_id or "")
         return {"text": body.text}
-    count_usage(user, "reformulation")
+    count_usage(
+        user, "reformulation",
+        latency_ms=(time.monotonic() - started) * 1000.0,
+    )
     result = without_transcript_tags(result)
     if answer_repeats_instruction(system_prompt, result):
         # Le modele a rendu le gabarit. Une dictee brute vaut mieux qu'un prompt
