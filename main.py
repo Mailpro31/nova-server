@@ -3307,6 +3307,114 @@ def count_usage(
             ),
         )
 
+def record_host_sample(sample) -> None:
+    """Un releve machine de plus. Deux tours dans la meme seconde n'en font qu'un.
+
+    L'horodatage est la cle : si la boucle passe deux fois dans la meme seconde
+    -- au redemarrage, par exemple -- le second releve remplace le premier au
+    lieu de faire echouer l'insertion et d'interrompre le tour.
+    """
+    with db() as conn:
+        conn.execute(
+            """INSERT INTO host_samples(
+                   sampled_at, cpu_percent, ram_used_gb, ram_total_gb,
+                   gpu_percent, vram_used_gb, vram_total_gb,
+                   gpu_temperature_c, gpu_power_w)
+               VALUES (?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(sampled_at) DO UPDATE SET
+                   cpu_percent = excluded.cpu_percent,
+                   ram_used_gb = excluded.ram_used_gb,
+                   ram_total_gb = excluded.ram_total_gb,
+                   gpu_percent = excluded.gpu_percent,
+                   vram_used_gb = excluded.vram_used_gb,
+                   vram_total_gb = excluded.vram_total_gb,
+                   gpu_temperature_c = excluded.gpu_temperature_c,
+                   gpu_power_w = excluded.gpu_power_w""",
+            (
+                sample.sampled_at, sample.cpu_percent,
+                sample.ram_used_gb, sample.ram_total_gb,
+                sample.gpu_percent, sample.vram_used_gb, sample.vram_total_gb,
+                sample.gpu_temperature_c, sample.gpu_power_w,
+            ),
+        )
+
+
+def rollup_usage(now: float | None = None) -> int:
+    """Replie en trace mensuelle les heures sorties de la fenetre de detail.
+
+    Seules les heures deja hors fenetre sont repliees, et le repli est
+    idempotent : relancer le tour n'ajoute rien deux fois, parce qu'il additionne
+    par mois ce que la purge s'apprete a supprimer, puis marque le travail fait
+    en supprimant la source dans la meme transaction.
+    """
+    stamp = time.time() if now is None else now
+    limit = time.strftime(
+        "%Y-%m-%dT%H",
+        time.gmtime(stamp - USAGE_HOURLY_RETENTION_DAYS * 86400),
+    )
+    with db() as conn:
+        rows = conn.execute(
+            """SELECT email, substr(hour, 1, 7) AS month,
+                      SUM(transcriptions), SUM(reformulations), SUM(audio_seconds),
+                      SUM(latency_ms_sum), SUM(latency_ms_count), MAX(latency_ms_max),
+                      MAX(organization_id)
+               FROM usage_hourly WHERE hour < ?
+               GROUP BY email, substr(hour, 1, 7)""",
+            (limit,),
+        ).fetchall()
+        for row in rows:
+            email, month, transcriptions, reformulations, audio = row[0], row[1], row[2], row[3], row[4]
+            latency_sum, latency_count, latency_max, organization_id = row[5], row[6], row[7], row[8]
+            conn.execute(
+                """INSERT INTO usage_monthly(
+                       email, month, transcriptions, reformulations, audio_seconds,
+                       latency_ms_sum, latency_ms_count, latency_ms_max, organization_id)
+                   VALUES (?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(email, month) DO UPDATE SET
+                       transcriptions = usage_monthly.transcriptions + ?,
+                       reformulations = usage_monthly.reformulations + ?,
+                       audio_seconds = usage_monthly.audio_seconds + ?,
+                       latency_ms_sum = usage_monthly.latency_ms_sum + ?,
+                       latency_ms_count = usage_monthly.latency_ms_count + ?,
+                       latency_ms_max = CASE
+                           WHEN ? > usage_monthly.latency_ms_max THEN ?
+                           ELSE usage_monthly.latency_ms_max END""",
+                (
+                    email, month, transcriptions, reformulations, audio,
+                    latency_sum, latency_count, latency_max, organization_id,
+                    transcriptions, reformulations, audio,
+                    latency_sum, latency_count, latency_max, latency_max,
+                ),
+            )
+        conn.execute("DELETE FROM usage_hourly WHERE hour < ?", (limit,))
+    return len(rows)
+
+
+def purge_usage(now: float | None = None) -> int:
+    """Efface ce qui a depasse sa duree de conservation.
+
+    La minimisation des donnees n'est pas un reglage a part : sans cette purge,
+    une base d'etablissement garderait indefiniment un emploi du temps par
+    personne, que personne ne consulte et que personne ne peut justifier.
+    """
+    stamp = time.time() if now is None else now
+    sample_limit = time.strftime(
+        "%Y-%m-%dT%H:%M:%S", time.gmtime(stamp - HOST_SAMPLE_RETENTION_DAYS * 86400)
+    )
+    month_limit = time.strftime(
+        "%Y-%m", time.gmtime(stamp - USAGE_MONTHLY_RETENTION_DAYS * 86400)
+    )
+    removed = 0
+    with db() as conn:
+        removed += conn.execute(
+            "DELETE FROM host_samples WHERE sampled_at < ?", (sample_limit,)
+        ).rowcount or 0
+        removed += conn.execute(
+            "DELETE FROM usage_monthly WHERE month < ?", (month_limit,)
+        ).rowcount or 0
+    return removed
+
+
 # ---------------------------------------------------------------- email
 def send_code_email(to: str, code: str):
     if not SMTP_HOST:
