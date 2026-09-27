@@ -13284,6 +13284,202 @@ def readiness_probe():
     return JSONResponse(result, status_code=200 if result["ready"] else 503)
 
 
+# ───────────────────── Tableau de bord d'usage ────────────────────────────
+
+
+# Bornes de la fenetre demandee. Un mois de detail horaire fait deja 744 points
+# par serie ; au-dela, la console tracerait une bouillie et la requete
+# couterait plus que ce qu'elle apprend.
+USAGE_WINDOW_MAX_HOURS = 24 * 31
+USAGE_TOP_MEMBERS = 20
+
+
+def usage_window(hours: int) -> tuple[str, str]:
+    """La fenetre demandee, bornee, rendue en cles horaires UTC."""
+    span = max(1, min(int(hours), USAGE_WINDOW_MAX_HOURS))
+    now = time.time()
+    return (
+        time.strftime("%Y-%m-%dT%H", time.gmtime(now - span * 3600)),
+        time.strftime("%Y-%m-%dT%H", time.gmtime(now)),
+    )
+
+
+def usage_timeline(since: str) -> list[dict]:
+    """L'usage heure par heure, tous membres confondus.
+
+    C'est cette serie qui montre les pics et l'heure a laquelle ils tombent.
+    La latence y est rendue en moyenne *et* en pire cas : une moyenne de deux
+    secondes peut cacher une dictee a douze, et c'est celle-la qui fait douter
+    de l'outil.
+    """
+    with db() as conn:
+        rows = conn.execute(
+            """SELECT hour,
+                      SUM(transcriptions) AS transcriptions,
+                      SUM(reformulations) AS reformulations,
+                      SUM(audio_seconds) AS audio_seconds,
+                      SUM(latency_ms_sum) AS latency_sum,
+                      SUM(latency_ms_count) AS latency_count,
+                      MAX(latency_ms_max) AS latency_max,
+                      COUNT(DISTINCT email) AS people
+               FROM usage_hourly WHERE hour >= ?
+               GROUP BY hour ORDER BY hour""",
+            (since,),
+        ).fetchall()
+    timeline = []
+    for row in rows:
+        count = row["latency_count"] or 0
+        timeline.append(
+            {
+                "hour": row["hour"],
+                "transcriptions": row["transcriptions"] or 0,
+                "reformulations": row["reformulations"] or 0,
+                "audio_seconds": round(row["audio_seconds"] or 0.0, 1),
+                "people": row["people"] or 0,
+                "latency_ms_average": round(row["latency_sum"] / count) if count else None,
+                "latency_ms_max": round(row["latency_max"] or 0.0) or None,
+            }
+        )
+    return timeline
+
+
+def usage_by_member(since: str) -> list[dict]:
+    """Le detail par personne, sur la fenetre demandee.
+
+    Cette vue nomme des salaries : elle ne sort que pour un administrateur, et
+    sa consultation est inscrite au journal. Voir `control_read_usage_metrics`.
+    """
+    with db() as conn:
+        rows = conn.execute(
+            """SELECT email,
+                      SUM(transcriptions) AS transcriptions,
+                      SUM(reformulations) AS reformulations,
+                      SUM(audio_seconds) AS audio_seconds,
+                      SUM(latency_ms_sum) AS latency_sum,
+                      SUM(latency_ms_count) AS latency_count
+               FROM usage_hourly WHERE hour >= ?
+               GROUP BY email
+               ORDER BY (SUM(transcriptions) + SUM(reformulations)) DESC""",
+            (since,),
+        ).fetchall()
+    members = []
+    for row in rows[:USAGE_TOP_MEMBERS]:
+        count = row["latency_count"] or 0
+        members.append(
+            {
+                "email": row["email"],
+                "transcriptions": row["transcriptions"] or 0,
+                "reformulations": row["reformulations"] or 0,
+                "audio_seconds": round(row["audio_seconds"] or 0.0, 1),
+                "latency_ms_average": round(row["latency_sum"] / count) if count else None,
+            }
+        )
+    return members
+
+
+def host_timeline(since: str) -> list[dict]:
+    """L'etat machine sur la fenetre. Les colonnes vides restent vides.
+
+    Un serveur sans carte graphique rend `None` pour le GPU : la console doit
+    afficher « pas de carte », et non zero pour cent d'utilisation, qui se lirait
+    comme une carte au repos.
+    """
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM host_samples WHERE sampled_at >= ? ORDER BY sampled_at",
+            (f"{since}:00:00",),
+        ).fetchall()
+    return [
+        {
+            "sampled_at": row["sampled_at"],
+            "cpu_percent": row["cpu_percent"],
+            "ram_used_gb": row["ram_used_gb"],
+            "ram_total_gb": row["ram_total_gb"],
+            "gpu_percent": row["gpu_percent"],
+            "vram_used_gb": row["vram_used_gb"],
+            "vram_total_gb": row["vram_total_gb"],
+            "gpu_temperature_c": row["gpu_temperature_c"],
+            "gpu_power_w": row["gpu_power_w"],
+        }
+        for row in rows
+    ]
+
+
+def usage_summary(timeline: list[dict]) -> dict:
+    """Ce qui se lit en un coup d'oeil, calcule a partir de la meme serie.
+
+    Recalculer le resume par une seconde requete laisserait les deux diverger
+    des que la fenetre change d'une heure entre les deux appels.
+    """
+    if not timeline:
+        return {
+            "dictations": 0, "people_peak": 0, "busiest_hour": None,
+            "latency_ms_average": None, "latency_ms_max": None,
+            "over_five_seconds": 0,
+        }
+    total = sum(h["transcriptions"] + h["reformulations"] for h in timeline)
+    busiest = max(timeline, key=lambda h: h["transcriptions"] + h["reformulations"])
+    measured = [h for h in timeline if h["latency_ms_average"] is not None]
+    average = (
+        round(sum(h["latency_ms_average"] for h in measured) / len(measured))
+        if measured else None
+    )
+    peaks = [h["latency_ms_max"] for h in timeline if h["latency_ms_max"]]
+    return {
+        "dictations": total,
+        "people_peak": max(h["people"] for h in timeline),
+        "busiest_hour": busiest["hour"],
+        "latency_ms_average": average,
+        "latency_ms_max": max(peaks) if peaks else None,
+        # Le nombre d'heures ou le pire cas a depasse l'objectif. Un seul
+        # depassement ne condamne rien ; dix heures sur vingt-quatre, si.
+        "over_five_seconds": sum(1 for p in peaks if p > 5000),
+    }
+
+
+@app.get("/api/control/organization/usage-metrics")
+def control_read_usage_metrics(
+    hours: int = 24,
+    members: bool = False,
+    principal: AdminPrincipal = Depends(
+        require_admin_capability(CAPABILITY_DIAGNOSTICS_READ)
+    ),
+):
+    """L'historique que la console trace.
+
+    `members=true` ajoute le detail nominatif. Ce n'est pas un parametre anodin :
+    il nomme des salaries, et sa consultation est donc inscrite au journal
+    d'administration. Les totaux, eux, ne designent personne et ne sont pas
+    journalises — sans quoi le journal se remplirait a chaque rafraichissement
+    d'une page ouverte toute la journee.
+    """
+    since, until = usage_window(hours)
+    timeline = usage_timeline(since)
+    payload = {
+        "since": since,
+        "until": until,
+        "summary": usage_summary(timeline),
+        "timeline": timeline,
+        "host": host_timeline(since),
+    }
+    if members:
+        # Les totaux relevent du diagnostic ; nommer qui dicte releve de la
+        # gestion des personnes. `read_only` porte `diagnostics_read` et
+        # pourrait donc lire les totaux : lui ouvrir le detail nominatif
+        # reviendrait a donner un rapport d'activite par salarie a un role
+        # concu pour ne rien pouvoir faire. Seul `organization_admin` porte
+        # `identity_manage`.
+        if not principal.can(CAPABILITY_IDENTITY_MANAGE):
+            raise auth_error(403, "ADMIN_ROLE_REQUIRED")
+        record_admin_action(
+            principal, "usage_metrics.read_members",
+            target_type="organization", target_id=principal.organization_id,
+            metadata={"hours": hours},
+        )
+        payload["members"] = usage_by_member(since)
+    return payload
+
+
 @app.get("/api/metrics")
 def metrics_endpoint():
     """Exposition Prometheus.

@@ -4,6 +4,7 @@ Ces tests ne lancent aucune boucle et ne dependent d'aucun materiel : le releve
 machine est teste sur ses fonctions pures, le reste sur la base.
 """
 
+import json
 import time
 import unittest
 from unittest.mock import patch
@@ -187,6 +188,103 @@ class UsageWorkerTests(unittest.TestCase):
         record.assert_called_once()
         rollup.assert_not_called()
         purge.assert_not_called()
+
+
+class UsageMetricsApiTests(AdminTestCase):
+    """Ce que la console lit, et ce qu'elle n'a pas le droit de lire."""
+
+    ROUTE = "/api/control/organization/usage-metrics"
+
+    def setUp(self):
+        super().setUp()
+        with main.db() as conn:
+            conn.execute("DELETE FROM usage_hourly")
+            conn.execute("DELETE FROM host_samples")
+
+    def read(self, query="", role=main.SECURITY_ROLE_ORGANIZATION_ADMIN):
+        token = self.admin_session(role=role)
+        return self.client.get(f"{self.ROUTE}{query}", headers=self.auth(token))
+
+    def seed(self):
+        hour = time.strftime("%Y-%m-%dT%H", time.gmtime())
+        with main.db() as conn:
+            for email, reformulations, latency in (
+                ("a@ecole.example", 5, 1200.0),
+                ("b@ecole.example", 2, 6200.0),
+            ):
+                conn.execute(
+                    """INSERT INTO usage_hourly(email, hour, transcriptions,
+                           reformulations, audio_seconds, latency_ms_sum,
+                           latency_ms_count, latency_ms_max)
+                       VALUES (?,?,?,?,?,?,?,?)""",
+                    (email, hour, 1, reformulations, 12.5,
+                     latency * reformulations, reformulations, latency),
+                )
+        return hour
+
+    def test_the_totals_never_name_anyone(self):
+        self.seed()
+        response = self.read()
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertNotIn("members", payload)
+        self.assertNotIn("a@ecole.example", json.dumps(payload))
+
+    def test_the_summary_counts_the_hours_above_the_objective(self):
+        hour = self.seed()
+        summary = self.read().json()["summary"]
+        self.assertEqual(summary["dictations"], 9)
+        self.assertEqual(summary["people_peak"], 2)
+        self.assertEqual(summary["busiest_hour"], hour)
+        self.assertEqual(summary["latency_ms_max"], 6200)
+        self.assertEqual(summary["over_five_seconds"], 1)
+
+    def test_the_named_detail_is_journalled(self):
+        self.seed()
+        payload = self.read("?members=true").json()
+        self.assertEqual(payload["members"][0]["email"], "a@ecole.example")
+        with main.db() as conn:
+            actions = [
+                row["action"]
+                for row in conn.execute("SELECT action FROM admin_audit_log").fetchall()
+            ]
+        self.assertIn("usage_metrics.read_members", actions)
+
+    def test_reading_the_totals_is_not_journalled(self):
+        """Une page ouverte toute la journee remplirait le journal pour rien."""
+        self.seed()
+        self.read()
+        with main.db() as conn:
+            count = conn.execute(
+                "SELECT COUNT(*) AS n FROM admin_audit_log "
+                "WHERE action LIKE 'usage_metrics%'"
+            ).fetchone()["n"]
+        self.assertEqual(count, 0)
+
+    def test_a_read_only_role_sees_the_totals_but_never_the_names(self):
+        """`read_only` porte `diagnostics_read`. Il ne gere pas les personnes."""
+        self.seed()
+        self.assertEqual(self.read(role=main.SECURITY_ROLE_READ_ONLY).status_code, 200)
+        refused = self.read("?members=true", role=main.SECURITY_ROLE_READ_ONLY)
+        self.assertEqual(refused.status_code, 403)
+
+    def test_a_content_editor_sees_nothing_at_all(self):
+        self.seed()
+        refused = self.read(role=main.SECURITY_ROLE_CONTENT_EDITOR)
+        self.assertEqual(refused.status_code, 403)
+
+    def test_the_window_is_bounded(self):
+        self.seed()
+        payload = self.read("?hours=100000").json()
+        span = time.mktime(time.strptime(payload["until"], "%Y-%m-%dT%H")) - \
+            time.mktime(time.strptime(payload["since"], "%Y-%m-%dT%H"))
+        self.assertLessEqual(span / 3600, main.USAGE_WINDOW_MAX_HOURS + 1)
+
+    def test_an_empty_window_answers_zero_and_not_an_error(self):
+        payload = self.read("?hours=1").json()
+        self.assertEqual(payload["summary"]["dictations"], 0)
+        self.assertIsNone(payload["summary"]["busiest_hour"])
+        self.assertEqual(payload["timeline"], [])
 
 
 if __name__ == "__main__":
