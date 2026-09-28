@@ -33,7 +33,18 @@ import {
   Tag,
 } from "../components/primitives";
 
-const MEMBER_ROLES = ["student", "teacher", "staff", "partner"] as const;
+// Les six metiers que le serveur accepte. `employee` et `manager` y sont
+// declares depuis que Business existe ; leur absence ici empechait de
+// declarer un salarie ou un encadrant dans une entreprise, sans raison.
+// Le metier ne confere aucun droit : c'est `security_role` qui decide.
+const MEMBER_ROLES = [
+  "student",
+  "teacher",
+  "staff",
+  "employee",
+  "manager",
+  "partner",
+] as const;
 
 function timestamp(value: number | null): string {
   return value ? new Date(value * 1000).toLocaleString() : "—";
