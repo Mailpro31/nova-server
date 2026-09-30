@@ -11684,6 +11684,170 @@ def kept_word_ratio(dictated: str, written: str) -> float | None:
     return len(source & content_words(written)) / len(source)
 
 
+# --- Notes de cours : le controle le plus strict ------------------------------
+#
+# Portage de `rewrite::guard` du poste (nova-desktop#199), a garder identique :
+# memes seuils, memes mots, memes motifs de refus. Un membre dont la
+# reformulation passe par le serveur ne doit pas recevoir ce que le poste
+# aurait refuse.
+
+COURSE_NOTES_STYLE = "nova_style_course_notes"
+# Des notes de cours ne resument pas : la moitie des mots dictes au moins. Une
+# reprise (« non pardon… ») ecarte legitimement une partie de la dictee ; les
+# mots de reprise et les nombres en lettres ne comptent donc pas.
+COURSE_MIN_KEPT_WORDS = 0.5
+# Assez pour une correction d'orthographe et un libelle de structure, pas pour
+# un exemple ni une explication.
+COURSE_MAX_ADDED_WORDS = 0.2
+COURSE_STRUCTURE_WORDS = frozenset(
+    "retenir definition important attention chapitre partie titre remarque".split()
+)
+COURSE_FILLER_WORDS = frozenset(
+    "pardon plutot enfin attends attend oublie bref voila donc alors genre euh hmm bon".split()
+)
+COURSE_NUMBER_WORDS = frozenset((
+    "zero deux trois quatre cinq sept huit neuf onze douze treize quatorze quinze "
+    "seize vingt trente quarante cinquante soixante cent cents mille million "
+    "millions milliard milliards virgule pourcent three four five seven eight nine "
+    "eleven twelve twenty thirty forty fifty hundred thousand"
+).split())
+NUMBER_WORD_VALUES = {
+    "zero": 0, "un": 1, "une": 1, "deux": 2, "trois": 3, "quatre": 4, "cinq": 5,
+    "six": 6, "sept": 7, "huit": 8, "neuf": 9, "dix": 10, "onze": 11, "douze": 12,
+    "treize": 13, "quatorze": 14, "quinze": 15, "seize": 16, "vingt": 20,
+    "vingts": 20, "trente": 30, "quarante": 40, "cinquante": 50, "soixante": 60,
+    "cent": 100, "cents": 100, "mille": 1_000, "million": 1_000_000,
+    "millions": 1_000_000, "milliard": 1_000_000_000, "milliards": 1_000_000_000,
+}
+NUMBER_TOKEN = re.compile(r"[^\W\d_]+|\d+|[^\s\w\-']")
+DIGIT_NUMBER = re.compile(r"\d+(?:[   ]\d{3})*(?:[,.]\d+)?")
+SUPERSCRIPT_NUMBER = re.compile("[⁰¹²³⁴⁵⁶⁷⁸⁹]+")
+SPOKEN_POWER = re.compile(r"\bcarr[ée]s?\b|\bcubes?\b", re.IGNORECASE)
+SUPERSCRIPT_DIGITS = str.maketrans("⁰¹²³⁴⁵⁶⁷⁸⁹", "0123456789")
+
+
+def fold_accents(text: str) -> str:
+    folded = unicodedata.normalize("NFD", text or "")
+    return "".join(char for char in folded if unicodedata.category(char) != "Mn")
+
+
+def number_value(values: list[int]) -> int:
+    """La valeur d'une suite de mots-nombres (« mille sept cent quatre-vingt-
+    treize » → 1793)."""
+    total, current, previous = 0, 0, None
+    for value in values:
+        if value == 100:
+            current = max(current, 1) * 100
+        elif value in (1_000, 1_000_000, 1_000_000_000):
+            total += max(current, 1) * value
+            current = 0
+        elif value == 20 and previous == 4:
+            # « quatre-vingt » : quatre fois vingt, pas quatre plus vingt.
+            current = current - 4 + 80
+        else:
+            current += value
+        previous = value
+    return total + current
+
+
+def spoken_numbers(text: str) -> list[str]:
+    """Les nombres dits en lettres, en chiffres (« vingt mars » → « 20 »,
+    « six virgule zero deux » → « 6,02 »).
+
+    Une suite s'arrete a la ponctuation et au premier mot qui n'est pas un
+    nombre ; « et » n'y entre que dans « vingt et un », « soixante et onze ».
+    « un » ou « une » seuls sont des articles, pas des nombres.
+    """
+    tokens = [fold_accents(token) for token in NUMBER_TOKEN.findall((text or "").lower())]
+
+    def value_at(index: int) -> int | None:
+        return NUMBER_WORD_VALUES.get(tokens[index]) if index < len(tokens) else None
+
+    numbers, index = [], 0
+    while index < len(tokens):
+        if value_at(index) is None:
+            index += 1
+            continue
+        start, values = index, []
+        while index < len(tokens):
+            value = value_at(index)
+            if value is not None:
+                values.append(value)
+                index += 1
+            elif (tokens[index] == "et" and values and 20 <= values[-1] <= 60
+                  and index + 1 < len(tokens) and tokens[index + 1] in ("un", "une", "onze")):
+                index += 1
+            else:
+                break
+        if len(values) == 1 and tokens[start] in ("un", "une"):
+            continue
+        number = str(number_value(values))
+        # « virgule » : les chiffres qui suivent sont des decimales.
+        if index < len(tokens) and tokens[index] == "virgule" and value_at(index + 1) is not None:
+            index += 1
+            decimals = ""
+            while value_at(index) is not None:
+                decimals += str(value_at(index))
+                index += 1
+            number = f"{number},{decimals}"
+        numbers.append(number)
+    return numbers
+
+
+def numbers_in(text: str) -> set[str]:
+    """Tous les nombres d'un texte : chiffres, exposants, lettres, puissances
+    dites (« au carre » → 2, « au cube » → 3)."""
+    numbers = {
+        re.sub(r"[   ]", "", match).replace(".", ",")
+        for match in DIGIT_NUMBER.findall(text or "")
+    }
+    numbers.update(
+        match.translate(SUPERSCRIPT_DIGITS) for match in SUPERSCRIPT_NUMBER.findall(text or ""))
+    numbers.update(
+        "3" if match.lower().startswith("cub") else "2"
+        for match in SPOKEN_POWER.findall(text or ""))
+    numbers.update(spoken_numbers(text))
+    return numbers
+
+
+def course_words(text: str) -> set[str]:
+    """Les mots porteurs des notes : quatre lettres au moins, sans accents, au
+    singulier, hors nombres en lettres et mots de reprise."""
+    words = set()
+    for word in content_words(text):
+        if word in COURSE_NUMBER_WORDS or word in COURSE_FILLER_WORDS:
+            continue
+        if len(word) > 4 and word[-1] in "sx":
+            word = word[:-1]
+        words.add(word)
+    return words
+
+
+def course_notes_refusal(dictated: str, text: str) -> str | None:
+    """Les controles des notes de cours, dans l'ordre du poste."""
+    # Une sortie qui s'emballe repete la meme tournure jusqu'a la limite.
+    if len(text) > len(dictated) * 2 + 80:
+        return "output-runaway"
+    source_language = dictation_language(dictated)
+    written_language = dictation_language(text)
+    if source_language and written_language and source_language != written_language:
+        return "language-changed"
+    # Un nombre que l'eleve n'a pas dit — une date de partiel decalee — est
+    # l'erreur la plus couteuse : il la revisera.
+    said, written = numbers_in(dictated), numbers_in(text)
+    if written - said:
+        return "number-changed"
+    if said - written:
+        return "number-lost"
+    written_words = course_words(text) - COURSE_STRUCTURE_WORDS
+    dictated_words = course_words(dictated)
+    if written_words and len(written_words - dictated_words) / len(written_words) > COURSE_MAX_ADDED_WORDS:
+        return "content-added"
+    if dictated_words and len(dictated_words & course_words(text)) / len(dictated_words) < COURSE_MIN_KEPT_WORDS:
+        return "dictation-not-kept"
+    return None
+
+
 def rewrite_refusal(dictated: str, answer: str, style_id: str) -> str | None:
     """Pourquoi cette sortie ne doit pas remplacer la dictee, ou `None`.
 
@@ -11697,6 +11861,11 @@ def rewrite_refusal(dictated: str, answer: str, style_id: str) -> str | None:
     lowered = text.lower()
     if lowered.startswith(CHATBOT_OPENINGS) and not dictated.strip().lower().startswith(CHATBOT_OPENINGS):
         return "chatbot-answer"
+    # Les notes de cours ont leurs propres controles, plus stricts, et les
+    # motifs du poste : les nombres y sont compares en chiffres comme en
+    # lettres.
+    if style_id == COURSE_NOTES_STYLE:
+        return course_notes_refusal(dictated, text)
     if any(number not in text for number in EXPLICIT_NUMBER.findall(dictated)):
         return "explicit-number-lost"
     if len(text) > max(1, len(dictated)) * 6 + 160:
