@@ -11431,6 +11431,76 @@ def runtime_http_error(error: AIRuntimeError, task_type: TaskType) -> HTTPExcept
     return HTTPException(status_by_code.get(error.code, 502), detail)
 
 
+# Ce que le moteur lit de l'amorce. Whisper n'en garde que ~224 jetons ; 400
+# caractères de français y tiennent avec de la marge, et un dépassement serait
+# tronqué en silence par le moteur, pas refusé.
+TRANSCRIPTION_HINT_MAX_CHARS = 400
+
+
+def transcription_hint(user: str) -> str | None:
+    """Le vocabulaire du membre, tel qu'il doit être écrit, pour le moteur.
+
+    Passé à Whisper comme texte d'amorce : le modèle tend alors à écrire
+    « Aéro 3 » plutôt que « aéro trois », et « Baratto » plutôt qu'une graphie
+    devinée. C'est un indice, pas une règle — la correction déterministe
+    s'applique toujours ensuite.
+
+    La forme retenue est la **cible** (`replacement`) quand elle existe : donner
+    au moteur « Aero 3 » lui apprendrait précisément la graphie à corriger.
+
+    Le vocabulaire personnel passe avant celui de l'organisation : si la borne
+    coupe, c'est celui de l'élève — sa voix, ses mots — qui reste.
+    """
+    with db() as conn:
+        personal = conn.execute(
+            "SELECT term,replacement FROM personal_dictionary WHERE email=? "
+            "ORDER BY term", (user,)
+        ).fetchall()
+        shared = organization_shared_terms(conn, nova_organization_id())
+    seen: set[str] = set()
+    terms: list[str] = []
+    length = 0
+    for row in [*personal, *shared]:
+        term = (row["replacement"] or row["term"] or "").strip()
+        key = term.casefold()
+        if not term or key in seen:
+            continue
+        # « , » entre les termes, « . » final.
+        cost = len(term) + (2 if terms else 0)
+        if length + cost + 1 > TRANSCRIPTION_HINT_MAX_CHARS:
+            break
+        seen.add(key)
+        terms.append(term)
+        length += cost
+    return ", ".join(terms) + "." if terms else None
+
+
+def _spoken_words(value: str) -> list[str]:
+    return re.findall(r"\w+", value.casefold())
+
+
+def is_hint_echo(text: str, hint: str | None) -> bool:
+    """Le moteur a-t-il recopié l'amorce au lieu de transcrire ?
+
+    Défaut connu de Whisper sur un audio vide ou inaudible : il rend le texte
+    d'amorce. Coller alors « IPSA, Aéro 3, IONIS. » serait inventer une dictée.
+
+    Est un écho un texte fait **uniquement** de mots de l'amorce et qui en
+    reprend au moins deux termes (trois quand l'amorce en a davantage). Dire
+    « IPSA » seul reste une dictée : un seul terme ne permet pas de trancher,
+    et effacer ce que l'élève a vraiment dit serait pire que de laisser passer.
+    """
+    if not hint:
+        return False
+    words = _spoken_words(text)
+    if not words or not set(words) <= set(_spoken_words(hint)):
+        return False
+    spoken = f" {' '.join(words)} "
+    terms = [t for t in (" ".join(_spoken_words(part)) for part in hint.split(",")) if t]
+    matched = sum(1 for term in terms if f" {term} " in spoken)
+    return matched >= 2 and matched >= min(3, len(terms))
+
+
 async def transcribe_audio(
     file: UploadFile, user: str, task_type: TaskType, max_bytes: int
 ) -> dict:
@@ -11441,16 +11511,25 @@ async def transcribe_audio(
     choisir entre gêner l'une et laisser l'autre sans protection.
     """
     audio = await read_bounded_upload(file, max_bytes)
+    # L'amorce est un bonus : une base indisponible ne doit pas rendre le poste
+    # muet — la dictée part alors sans indice, comme avant.
+    try:
+        hint = transcription_hint(user)
+    except Exception:  # noqa: BLE001 — la dictée d'abord
+        observability.log("transcription_hint_unavailable", level="warning")
+        hint = None
     try:
         result = await ORGANIZATION_AI_ROUTER.transcribe(
             task_type,
             audio,
             file.filename or "audio.wav",
+            prompt=hint,
         )
     except AIRuntimeError as error:
         raise runtime_http_error(error, task_type) from error
     count_usage(user, "transcription", result.duration_seconds or 0.0)
-    return {"text": result.text}
+    text = "" if is_hint_echo(result.text, hint) else result.text
+    return {"text": text}
 
 
 @app.post("/api/transcribe")

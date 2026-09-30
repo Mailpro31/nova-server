@@ -181,6 +181,29 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(seen["path"], "/v1/audio/transcriptions")
         self.assertIn(b"runtime-speech-model", seen["body"])
 
+    async def test_whisper_compatible_adapter_sends_the_vocabulary_hint(self):
+        bodies = []
+
+        def handler(request: httpx.Request):
+            bodies.append(request.content)
+            return httpx.Response(200, json={"text": "bonjour"})
+
+        backend = WhisperCompatibleSpeechBackend(
+            "http://127.0.0.1:8002",
+            "runtime-speech-model",
+            transport=httpx.MockTransport(handler),
+        )
+        for prompt in ("IPSA, Aéro 3.", None):
+            await backend.transcribe(
+                SpeechInferenceRequest(
+                    "request-3", TaskType.TRANSCRIPTION_REALTIME, b"RIFFaudio",
+                    "sample.wav", "fr", False, 10, prompt=prompt,
+                )
+            )
+        self.assertIn('name="prompt"'.encode(), bodies[0])
+        self.assertIn("Aéro 3".encode(), bodies[0])
+        self.assertNotIn('name="prompt"'.encode(), bodies[1])
+
 
 class CustomProfileTests(unittest.TestCase):
     """`custom` n'est pas un preset Nova : il vient du deploiement.
