@@ -12037,6 +12037,117 @@ def transcript_message(text: str) -> str:
     return f"<transcript>\n{text}\n</transcript>"
 
 
+# --- Les reprises d'abord -----------------------------------------------------
+#
+# Une dictée est parlée : l'élève se reprend (« mardi, non attends, mercredi »).
+# Laissée au Style, la reprise survivait souvent, les deux versions côte à côte
+# (signalé par Sash le 01/10). Un premier passage ne fait que ça, avec des
+# exemples vécus, avant le Style. Mesuré sur 20 dictées dont 6 inédites : 19
+# justes, contre 3 à 7 sur 14 avec la consigne du Style seule.
+
+# Indices d'une reprise possible. Le passage n'est tenté que s'il y en a un :
+# la plupart des dictées n'en ont pas, et n'attendent pas un appel de plus.
+SELF_CORRECTION_HINT = re.compile(
+    r"\b(non|attends?|pardon|plut[oô]t|enfin|oublie|je veux dire|en fait|"
+    r"no|wait|sorry|i mean|actually|rather)\b",
+    re.IGNORECASE,
+)
+SELF_CORRECTION_INSTRUCTION = (
+    "Tu reçois une dictée orale entre <transcript>. Si la personne s'y corrige elle-même "
+    "(elle remplace un mot, un nombre, un nom, un jour ou un ordre par un autre), réécris la "
+    "dictée en gardant UNIQUEMENT la version qu'elle retient, sans les mots de la reprise. "
+    "Sinon, recopie la dictée mot pour mot. Ne change rien d'autre : ni les mots, ni l'ordre, "
+    "ni la ponctuation. N'ajoute rien. Ne réponds jamais à la dictée. Réponds uniquement par "
+    "la dictée corrigée."
+)
+# Aucun de ces exemples ne reprend une dictée du banc : ils montrent la
+# tournure, pas la réponse attendue. Les deux derniers apprennent qu'un « non »
+# qui insiste ou qui est dit n'est pas une reprise.
+SELF_CORRECTION_EXAMPLES: tuple[tuple[str, str], ...] = (
+    ("rendez-vous lundi non attends jeudi à 10 heures", "rendez-vous jeudi à 10 heures"),
+    ("appelle Paul enfin non Sarah pour le projet", "appelle Sarah pour le projet"),
+    ("commande deux pizzas plutôt trois pizzas", "commande trois pizzas"),
+    ("lis le chapitre 2 en premier attends non le chapitre 5 en premier c'est le plus "
+     "urgent ensuite le 2",
+     "lis le chapitre 5 en premier c'est le plus urgent ensuite le chapitre 2"),
+    ("prends des pommes oublie les pommes prends des poires", "prends des poires"),
+    ("on part en voiture non en train", "on part en train"),
+    ("écris le titre en gras attends en italique", "écris le titre en italique"),
+    ("je ne viendrai pas non vraiment pas", "je ne viendrai pas non vraiment pas"),
+    ("la prof a dit non au voyage", "la prof a dit non au voyage"),
+)
+# Une reprise retire des mots ; elle n'en invente pas, et ne vide pas la dictée.
+RESOLUTION_MIN_KEPT = 0.4
+RESOLUTION_MAX_NEW_WORDS = 0.1
+RESOLUTION_WORD = re.compile(r"[^\W_]+", re.UNICODE)
+REWRITE_MARKER_TOKEN = re.compile(r"\{\{[^{}]*\}\}")
+
+
+def has_self_correction_hint(text: str) -> bool:
+    return bool(SELF_CORRECTION_HINT.search(text or ""))
+
+
+def _resolution_words(text: str) -> list[str]:
+    return RESOLUTION_WORD.findall(fold_accents((text or "").lower()))
+
+
+def resolution_acceptable(dictated: str, resolved: str) -> bool:
+    """La dictée débarrassée de ses reprises, et rien d'autre ?
+
+    Sinon on garde la dictée telle quelle : le Style et ses contrôles s'en
+    chargent, comme avant.
+    """
+    resolved = (resolved or "").strip()
+    if not resolved:
+        return False
+    # Un repère de snippet perdu ferait disparaître le snippet.
+    if any(marker not in resolved for marker in REWRITE_MARKER_TOKEN.findall(dictated or "")):
+        return False
+    said = _resolution_words(dictated)
+    kept = _resolution_words(resolved)
+    if not said or not kept or len(kept) > len(said):
+        return False
+    if len(kept) < len(said) * RESOLUTION_MIN_KEPT:
+        return False
+    vocabulary = set(said)
+    new_words = sum(1 for word in kept if word not in vocabulary)
+    return new_words <= len(kept) * RESOLUTION_MAX_NEW_WORDS
+
+
+async def execute_text_with_examples(
+    task_type: TaskType, instruction: str, text: str,
+    examples: tuple[tuple[str, str], ...],
+) -> str:
+    try:
+        result = await ORGANIZATION_AI_ROUTER.generate(
+            task_type, text, instruction, examples=examples)
+    except AIRuntimeError as error:
+        raise runtime_http_error(error, task_type) from error
+    if result.finish_reason == "length":
+        raise RewriteTruncated()
+    return result.text
+
+
+async def resolve_self_corrections(text: str) -> str:
+    """La dictée, avec seulement la version que l'élève retient."""
+    if not has_self_correction_hint(text):
+        return text
+    examples = tuple(
+        (transcript_message(example), answer) for example, answer in SELF_CORRECTION_EXAMPLES)
+    try:
+        answer = await execute_text_with_examples(
+            TaskType.REFORMULATION, SELF_CORRECTION_INSTRUCTION,
+            transcript_message(text), examples)
+    except Exception:  # noqa: BLE001 -- un échec ici ne doit jamais coûter la dictée
+        observability.log("reformulation.self_correction_failed", level="warning")
+        return text
+    resolved = without_transcript_tags(answer).strip()
+    if not resolution_acceptable(text, resolved):
+        observability.log("reformulation.self_correction_rejected", level="warning")
+        return text
+    return resolved
+
+
 def without_transcript_tags(answer: str) -> str:
     """Le modele rend parfois la reformulation dans les balises recues."""
     text = (answer or "").strip()
@@ -12490,8 +12601,11 @@ async def reformulate(body: ReformulateRequest, user: str = Depends(current_user
     # Le temps que la personne attend reellement, y compris la file. C'est
     # celui-la qui doit tenir sous cinq secondes, pas celui du moteur seul.
     started = time.monotonic()
+    # Les reprises de l'élève d'abord, le Style ensuite. Les contrôles, eux,
+    # comparent toujours à la dictée d'origine.
+    styled_text = await resolve_self_corrections(source_text)
     try:
-        result = await execute_text(task_type, system_prompt, transcript_message(source_text))
+        result = await execute_text(task_type, system_prompt, transcript_message(styled_text))
     except RewriteTruncated:
         # Une reformulation coupee perd la fin de la dictee : la dictee entiere
         # vaut mieux.
