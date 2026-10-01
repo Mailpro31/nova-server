@@ -124,6 +124,31 @@ class AllStylesFactsTests(unittest.TestCase):
         self.assertIn("friday", main.dates_in("before Friday, next week"))
         self.assertEqual(main.dates_in("un cours sur les nombres"), set())
 
+    def test_the_everyday_style_is_as_strict_as_a_faithful_style(self):
+        # nova-desktop#207 : le Style « Au quotidien », que le mode automatique
+        # choisit partout ou aucune app n'est reconnue.
+        self.assertEqual(refusal(
+            "je passe te voir cet après-midi",
+            "Je passe te voir cet après-midi pour discuter du budget, des priorités "
+            "et des prochaines étapes du projet.",
+            "nova_style_everyday",
+        ), "content-added")
+        self.assertEqual(refusal(
+            "le contrôle de maths est jeudi",
+            "Le contrôle de maths est vendredi.",
+            "nova_style_everyday",
+        ), "date-changed")
+        self.assertEqual(refusal(
+            "merci beaucoup pour ton aide",
+            "Thank you very much for your help.",
+            "nova_style_everyday",
+        ), "language-changed")
+        self.assertIsNone(refusal(
+            "il a mangé a la cantine et sa a était bon",
+            "Il a mangé à la cantine et ça a été bon.",
+            "nova_style_everyday",
+        ))
+
     def test_school_and_personal_styles_are_left_alone(self):
         # Un Style d'organisation peut traduire ou resumer : seuls les nombres
         # en chiffres y restent exiges, comme avant.
