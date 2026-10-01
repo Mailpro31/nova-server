@@ -178,6 +178,31 @@ class SlowResolutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertLessEqual(main.SELF_CORRECTION_TIMEOUT_SECONDS, 5)
 
 
+class ReasoningTagsTests(unittest.TestCase):
+    """Un modèle qui « réfléchit » (Qwen3) rend parfois sa balise vide avant la
+    réponse. Mesuré le 01/10 : la reprise juste était rejetée à cause d'elle,
+    et une reformulation l'aurait collée dans le document de l'élève."""
+
+    def test_reasoning_is_never_part_of_the_answer(self):
+        self.assertEqual(main.without_reasoning("</think>\n\non se voit mercredi"),
+                         "on se voit mercredi")
+        self.assertEqual(
+            main.without_reasoning("<think>je pèse le pour et le contre</think>\nLe texte."),
+            "Le texte.")
+        self.assertEqual(main.without_reasoning("Un texte sans balise."), "Un texte sans balise.")
+
+    def test_a_resolution_behind_an_empty_reasoning_tag_is_kept(self):
+        import asyncio
+
+        async def thinking(task_type, instruction, text, examples):
+            return "<think>\n\n</think>\n\non se voit mercredi à 14 heures"
+
+        with patch.object(main, "execute_text_with_examples", thinking):
+            resolved = asyncio.run(main.resolve_self_corrections(
+                "on se voit mardi non attends mercredi à 14 heures"))
+        self.assertEqual(resolved, "on se voit mercredi à 14 heures")
+
+
 class UnrequestedListTests(unittest.TestCase):
     """Vu le 01/10 : « acheter des carottes en premier… » est sorti en liste à
     puces, chaque phrase précédée d'un tiret, alors que rien n'en annonçait."""
