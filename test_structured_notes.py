@@ -137,3 +137,43 @@ if __name__ == "__main__":
     import unittest
 
     unittest.main()
+
+
+class LongStructuredNotesTests(StructuredNotesTests):
+    """Une transcription de vidéo ou de cours entier ne tenait pas dans la
+    fenêtre du petit modèle du serveur : « Nova n'a pas pu structurer ces
+    notes », sans plus d'explication (vu par Sash le 01/10). Le texte long est
+    désormais structuré par morceaux qui tiennent, puis remis bout à bout."""
+
+    sentences = [f"Phrase numéro {i} du cours sur les volcans et leurs éruptions." for i in range(400)]
+
+    def test_a_long_text_is_structured_in_pieces_that_fit(self):
+        text = " ".join(self.sentences)
+        self.assertGreater(len(text), main.STRUCTURED_NOTES_CHUNK_CHARS * 3)
+        response, requests = self.post({"note_type": "lecture", "text": text})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertGreater(len(requests), 1)
+        for request in requests:
+            self.assertLessEqual(len(request.input), main.STRUCTURED_NOTES_CHUNK_CHARS)
+        sent = " ".join(request.input for request in requests)
+        for sentence in self.sentences:
+            self.assertIn(sentence, sent)
+        self.assertEqual(response.json()["text"].count("fake:engineering_notes"), len(requests))
+
+    def test_a_short_text_stays_a_single_request(self):
+        response, requests = self.post({"note_type": "lecture", "text": self.sentences[0]})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(len(requests), 1)
+
+    def test_pieces_follow_sentences_and_lose_nothing(self):
+        text = " ".join(self.sentences)
+        pieces = main.split_for_structuring(text, 500)
+        self.assertTrue(all(len(piece) <= 500 for piece in pieces))
+        self.assertEqual(" ".join(pieces).split(), text.split())
+        self.assertTrue(all(piece.endswith(".") for piece in pieces))
+
+    def test_a_sentence_longer_than_a_piece_is_cut_between_words(self):
+        text = " ".join(["mot"] * 400)
+        pieces = main.split_for_structuring(text, 100)
+        self.assertTrue(all(len(piece) <= 100 for piece in pieces))
+        self.assertEqual(" ".join(pieces).split(), text.split())
