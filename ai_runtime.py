@@ -152,6 +152,9 @@ class SpeechInferenceRequest:
     language: str | None
     timestamps: bool
     timeout_seconds: float
+    # Texte d'amorce : le vocabulaire attendu, écrit comme il doit l'être. Il
+    # oriente l'orthographe des mots rares ; il ne remplace rien.
+    prompt: str | None = None
 
 
 @dataclass(frozen=True)
@@ -518,6 +521,8 @@ class WhisperCompatibleSpeechBackend:
         data: dict[str, str] = {"model": self.model}
         if request.language:
             data["language"] = request.language
+        if request.prompt:
+            data["prompt"] = request.prompt
         if request.timestamps:
             data["response_format"] = "verbose_json"
         started = time.monotonic()
@@ -866,6 +871,7 @@ class OrganizationAIRouter:
         language: str | None = None,
         timestamps: bool = False,
         request_id: str | None = None,
+        prompt: str | None = None,
     ) -> SpeechInferenceResult:
         if task_type not in SPEECH_TASKS:
             raise AIRuntimeError(AI_RUNTIME_CONFIG_INVALID)
@@ -878,6 +884,7 @@ class OrganizationAIRouter:
             language,
             timestamps,
             timeout,
+            prompt,
         )
         await self.speech_capacity.acquire()
         try:
