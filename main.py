@@ -12149,7 +12149,7 @@ async def resolve_self_corrections(text: str) -> str:
     except Exception:  # noqa: BLE001 -- un échec ici ne doit jamais coûter la dictée
         observability.log("reformulation.self_correction_failed", level="warning")
         return text
-    resolved = without_transcript_tags(answer).strip()
+    resolved = without_transcript_tags(without_reasoning(answer)).strip()
     if not resolution_acceptable(text, resolved):
         observability.log("reformulation.self_correction_rejected", level="warning")
         return text
@@ -12185,6 +12185,17 @@ def without_unrequested_list(dictated: str, text: str, style_id: str) -> str:
             sentence += "."
         sentences.append(sentence[0].upper() + sentence[1:])
     return " ".join(sentences)
+
+
+# La « réflexion » d'un modèle qui raisonne (Qwen3). Même vide, sa balise
+# précède parfois la réponse : elle n'est jamais une partie du texte.
+REASONING_BLOCK = re.compile(r"<think>.*?</think>", re.IGNORECASE | re.DOTALL)
+ORPHAN_REASONING_END = re.compile(r"^\s*</think>", re.IGNORECASE)
+
+
+def without_reasoning(answer: str) -> str:
+    text = REASONING_BLOCK.sub("", answer or "")
+    return ORPHAN_REASONING_END.sub("", text).strip()
 
 
 def without_transcript_tags(answer: str) -> str:
@@ -12659,7 +12670,7 @@ async def reformulate(body: ReformulateRequest, user: str = Depends(current_user
         latency_ms=(time.monotonic() - started) * 1000.0,
     )
     result = without_unrequested_list(
-        source_text, without_transcript_tags(result), style_id)
+        source_text, without_transcript_tags(without_reasoning(result)), style_id)
     if answer_repeats_instruction(system_prompt, result):
         # Le modele a rendu le gabarit. Une dictee brute vaut mieux qu'un prompt
         # colle dans le document de quelqu'un.
