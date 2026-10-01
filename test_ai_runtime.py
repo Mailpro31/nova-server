@@ -181,6 +181,29 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(seen["path"], "/v1/audio/transcriptions")
         self.assertIn(b"runtime-speech-model", seen["body"])
 
+    async def test_whisper_compatible_adapter_sends_the_vocabulary_hint(self):
+        bodies = []
+
+        def handler(request: httpx.Request):
+            bodies.append(request.content)
+            return httpx.Response(200, json={"text": "bonjour"})
+
+        backend = WhisperCompatibleSpeechBackend(
+            "http://127.0.0.1:8002",
+            "runtime-speech-model",
+            transport=httpx.MockTransport(handler),
+        )
+        for prompt in ("IPSA, Aéro 3.", None):
+            await backend.transcribe(
+                SpeechInferenceRequest(
+                    "request-3", TaskType.TRANSCRIPTION_REALTIME, b"RIFFaudio",
+                    "sample.wav", "fr", False, 10, prompt=prompt,
+                )
+            )
+        self.assertIn('name="prompt"'.encode(), bodies[0])
+        self.assertIn("Aéro 3".encode(), bodies[0])
+        self.assertNotIn('name="prompt"'.encode(), bodies[1])
+
 
 class CustomProfileTests(unittest.TestCase):
     """`custom` n'est pas un preset Nova : il vient du deploiement.
@@ -745,10 +768,10 @@ class StyleResolutionTests(AdminTestCase):
         )
         self.assertEqual(response.status_code, 200)
         request = router.text_backend.requests[0]
-        # Telle qu'envoyee, suivie du contrat commun a toute reformulation.
-        self.assertEqual(
-            request.instruction, f"Ameliore la transcription.\n\n{main.REWRITE_CONTRACT}"
-        )
+        # Telle qu'envoyee, suivie du contrat commun a toute reformulation. Le
+        # vocabulaire de l'organisation peut s'intercaler ; l'ordre, lui, tient.
+        self.assertTrue(request.instruction.startswith("Ameliore la transcription."))
+        self.assertTrue(request.instruction.endswith(main.REWRITE_CONTRACT))
         self.assertEqual(request.task_type, TaskType.STYLE_TRANSFORM)
 
     def test_a_personal_style_is_applied_as_the_client_sent_it(self):
@@ -759,10 +782,9 @@ class StyleResolutionTests(AdminTestCase):
             router, style_id="style-perso-1742", style_prompt="Ecris en vers."
         )
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(
-            router.text_backend.requests[0].instruction,
-            f"Ecris en vers.\n\n{main.REWRITE_CONTRACT}",
-        )
+        instruction = router.text_backend.requests[0].instruction
+        self.assertTrue(instruction.startswith("Ecris en vers."))
+        self.assertTrue(instruction.endswith(main.REWRITE_CONTRACT))
 
     def test_no_style_at_all_stays_plain_reformulation(self):
         router = self.fake_router()
