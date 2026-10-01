@@ -12116,7 +12116,42 @@ def resolution_acceptable(dictated: str, resolved: str) -> bool:
         return False
     vocabulary = set(said)
     new_words = sum(1 for word in kept if word not in vocabulary)
-    return new_words <= len(kept) * RESOLUTION_MAX_NEW_WORDS
+    if new_words > len(kept) * RESOLUTION_MAX_NEW_WORDS:
+        return False
+    # Retirer des mots, oui ; retirer la correction et garder l'erreur, non.
+    return not correction_lost(dictated, resolved)
+
+
+# Après une reprise, l'élève dit quelque chose de nouveau : « non le BUS »,
+# « euh non ROUGE », « non pardon de la FRANCE ». Une sortie qui a perdu tous
+# ces mots-là a gardé la version qu'il venait de rejeter. Mesuré le 01/10 sur
+# le serveur RTX : 3 dictées sur 20, sans qu'aucun autre contrôle ne bronche.
+CORRECTION_LOOKBEHIND_WORDS = 8
+CORRECTION_LOOKAHEAD_WORDS = 5
+CORRECTION_STOP_WORDS = frozenset(
+    "le la les l de du des d un une a au aux en et c est ce s se y que qu je j tu il "
+    "elle on nous vous ils elles mais donc puis alors bah ben euh hum mm the an of to "
+    "at in on and is it i".split()
+)
+
+
+def correction_lost(dictated: str, text: str) -> bool:
+    """La sortie a-t-elle perdu tout ce que l'élève a dit pour se corriger ?"""
+    folded = fold_accents((dictated or "").lower())
+    written = set(_resolution_words(text))
+    for marker in SELF_CORRECTION_HINT.finditer(folded):
+        before = set(_resolution_words(folded[: marker.start()])[-CORRECTION_LOOKBEHIND_WORDS:])
+        new_words = []
+        for word in _resolution_words(folded[marker.end():]):
+            if (word in CORRECTION_STOP_WORDS or word in before
+                    or SELF_CORRECTION_HINT.fullmatch(word)):
+                continue
+            new_words.append(word)
+            if len(new_words) == CORRECTION_LOOKAHEAD_WORDS:
+                break
+        if new_words and not any(word in written for word in new_words):
+            return True
+    return False
 
 
 async def execute_text_with_examples(
@@ -12536,6 +12571,8 @@ def course_notes_refusal(dictated: str, text: str) -> str | None:
         return "content-added"
     if dictated_words and len(dictated_words & course_words(text)) / len(dictated_words) < COURSE_MIN_KEPT_WORDS:
         return "dictation-not-kept"
+    if correction_lost(dictated, text):
+        return "correction-lost"
     return None
 
 
@@ -12570,6 +12607,11 @@ def rewrite_refusal(dictated: str, answer: str, style_id: str) -> str | None:
     # lettres.
     if style_id == COURSE_NOTES_STYLE:
         return course_notes_refusal(dictated, text)
+    # La version que l'élève venait de rejeter, à la place de sa correction.
+    # Un compte rendu résume et un Style d'organisation peut tout réécrire :
+    # eux seuls y échappent.
+    if style_id in GUARDED_STYLE_IDS and correction_lost(dictated, text):
+        return "correction-lost"
     # « Reunion » resume : il ne reprend pas chaque heure ni chaque montant cite.
     # Exiger tous les nombres faisait refuser presque chaque compte rendu, et le
     # membre recevait le dialogue brut. Un nombre reecrit lui est refuse, comme

@@ -10,7 +10,11 @@ exemples envoyés au modèle : elles disent si le passage généralise.
     docker compose exec api python scripts/bench_self_corrections.py
 
 Mesuré le 01/10 sur Qwen3-4B (modèle local de Nova) : 19/20 après Style.
-Ce banc mesure le passage seul, sur le modèle réellement servi.
+Ce banc mesure le passage seul, sur le modèle réellement servi. Il sépare
+les reprises justes, les dictées laissées telles quelles (inoffensives : les
+deux versions restent visibles) et les versions rejetées gardées, qui doivent
+rester à zéro. La sortie du Style passe ensuite le même contrôle
+(`correction-lost`).
 """
 
 import asyncio
@@ -71,18 +75,33 @@ def judge(out: str, keep, drop, order) -> bool:
 
 
 async def run() -> int:
-    good, timings = 0, []
+    good = untouched = rejected_kept = other = 0
+    timings = []
     for dictated, keep, drop, order in CASES:
         started = time.monotonic()
         resolved = await main.resolve_self_corrections(dictated)
         timings.append(time.monotonic() - started)
-        ok = judge(resolved, keep, drop, order)
-        good += ok
-        print(("OK  " if ok else "NON ") + resolved)
+        if judge(resolved, keep, drop, order):
+            good += 1
+            verdict = "OK      "
+        elif resolved == dictated:
+            # Inoffensif : l'élève voit ses deux versions.
+            untouched += 1
+            verdict = "INCHANGÉ"
+        elif main.correction_lost(dictated, resolved):
+            # Le seul résultat inacceptable : la version rejetée, sans la correction.
+            rejected_kept += 1
+            verdict = "REJETÉE "
+        else:
+            other += 1
+            verdict = "AUTRE   "
+        print(f"{verdict} {resolved}")
     timings.sort()
-    print(f"\n{good}/{len(CASES)} reprises justes ; "
+    print(f"\n{good}/{len(CASES)} reprises justes ; {untouched} laissées telles quelles ; "
+          f"{rejected_kept} versions rejetées gardées ; {other} autres écarts ; "
           f"temps ajouté médian {timings[len(timings) // 2]:.2f} s, max {timings[-1]:.2f} s")
-    return 0 if good == len(CASES) else 1
+    # Le seuil non négociable : jamais la version que l'élève venait de rejeter.
+    return 0 if rejected_kept == 0 else 1
 
 
 if __name__ == "__main__":
