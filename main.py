@@ -11823,6 +11823,142 @@ def course_words(text: str) -> set[str]:
     return words
 
 
+# --- Nombres et dates : aucun Style integre ne les change ---------------------
+#
+# Portage de `rewrite::guard` du poste (nova-desktop#205), a garder identique.
+
+# Jours et mois, en francais et en anglais, sans accents. « may » et « march »
+# n'y sont pas : en anglais ce sont d'abord des verbes.
+DATE_WORDS = frozenset((
+    "lundi mardi mercredi jeudi vendredi samedi dimanche janvier fevrier mars "
+    "avril mai juin juillet aout septembre octobre novembre decembre demain hier "
+    "aujourdhui monday tuesday wednesday thursday friday saturday sunday january "
+    "february april june july august september october november december "
+    "tomorrow yesterday today tonight"
+).split())
+# Periodes qui, avec « prochain » ou « dernier », fixent une echeance.
+DATE_PERIODS = frozenset("semaine mois annee an week month year".split())
+DATE_RELATIVES = frozenset("prochain prochaine dernier derniere next last".split())
+DATE_TOKEN = re.compile(r"(?:[^\W\d_]|')+")
+# Mots qui annoncent une reprise : ce qui est dit juste avant peut etre ecarte.
+CORRECTION_MARKERS = frozenset("pardon plutot attends sorry rather".split())
+# Nombre de mots, avant une reprise, que la reprise peut remplacer.
+CORRECTION_WINDOW = 6
+# Les reperes (`{{nvxlex0}}`, `{{adresse}}`) protegent un terme pendant la
+# reecriture : leurs chiffres n'ont pas ete dits.
+REWRITE_MARKER = re.compile(r"\{\{[^{}]*\}\}")
+PERSONAL_VALUE_MARKER = re.compile(r"\{\{([^{}\r\n]+)\}\}")
+LIST_NUMBERING = re.compile(r"^\s*\d+[.)]\s+", re.MULTILINE)
+# Styles qui corrigent sans reecrire : ils n'ajoutent presque rien.
+FAITHFUL_STYLE_IDS = frozenset({
+    "default_improve_transcriptions",
+    "nova_style_voice_to_text",
+    "nova_style_messages",
+})
+FAITHFUL_MAX_ADDED_WORDS = 0.25
+# En dessous, la part ajoutee ne mesure rien : corriger un seul mot mal entendu
+# dans une dictee courte en ajoute deja un sur trois.
+FAITHFUL_MIN_WRITTEN_WORDS = 6
+
+
+def dates_in(text: str) -> set[str]:
+    """Les dates dites en toutes lettres : jours, mois, « demain », « la semaine
+    prochaine »."""
+    tokens = [fold_accents(token.replace("'", "")) for token in DATE_TOKEN.findall((text or "").lower())]
+    dates = set()
+    for index, token in enumerate(tokens):
+        if token in DATE_WORDS:
+            dates.add(token)
+        if token in DATE_PERIODS:
+            neighbours = [tokens[j] for j in (index - 1, index + 1) if 0 <= j < len(tokens)]
+            relative = next((word for word in neighbours if word in DATE_RELATIVES), None)
+            if relative:
+                dates.add(f"{token} {relative}")
+    return dates
+
+
+def _is_fact_token(word: str) -> bool:
+    return any(char in "0123456789" for char in word) or word in NUMBER_WORD_VALUES or word in DATE_WORDS
+
+
+def _strip_non_alphanumeric(word: str) -> str:
+    start, end = 0, len(word)
+    while start < end and not word[start].isalnum():
+        start += 1
+    while end > start and not word[end - 1].isalnum():
+        end -= 1
+    return word[start:end]
+
+
+def without_abandoned(text: str) -> str:
+    """La dictee sans ce qu'une reprise a abandonne : les quelques mots dits juste
+    avant « pardon », « plutot », « je veux dire », ou avant un « non » suivi
+    d'un nombre ou d'une date (« le 12 non le 13 »). La valeur retenue reste."""
+    raw = (text or "").split()
+    words = [_strip_non_alphanumeric(fold_accents(word.lower())) for word in raw]
+    dropped = [False] * len(raw)
+    index = 0
+    while index < len(words):
+        if words[index] in CORRECTION_MARKERS:
+            span = 1
+        elif " ".join(words[index:index + 3]) == "je veux dire" and index + 3 <= len(words):
+            span = 3
+        elif index + 2 <= len(words) and " ".join(words[index:index + 2]) in ("i mean", "no wait"):
+            span = 2
+        elif words[index] in ("non", "no") and index + 1 < len(words) and _is_fact_token(words[index + 1]):
+            span = 1
+        else:
+            span = 0
+        if span:
+            for position in range(max(0, index - CORRECTION_WINDOW), index + span):
+                dropped[position] = True
+            index += span
+        else:
+            index += 1
+    return " ".join(word for word, gone in zip(raw, dropped) if not gone)
+
+
+def facts_refusal(dictated: str, text: str, lost_matters: bool) -> str | None:
+    """Les nombres et les dates de la sortie face a ceux de la dictee.
+
+    Un nombre ou une date que la personne n'a pas dits est refuse partout ; un
+    nombre ou une date dits et absents l'est quand `lost_matters` — partout
+    sauf dans un compte rendu, qui resume. Ce qu'une reprise a abandonne peut
+    disparaitre ; la valeur retenue, jamais.
+    """
+    dictated = REWRITE_MARKER.sub(" ", dictated or "")
+    text = LIST_NUMBERING.sub("", REWRITE_MARKER.sub(" ", text or ""))
+    written_numbers, written_dates = numbers_in(text), dates_in(text)
+    if written_numbers - numbers_in(dictated):
+        return "number-changed"
+    if written_dates - dates_in(dictated):
+        return "date-changed"
+    if lost_matters:
+        required = without_abandoned(dictated)
+        if numbers_in(required) - written_numbers:
+            return "number-lost"
+        if dates_in(required) - written_dates:
+            return "date-lost"
+    return None
+
+
+def has_personal_value_marker(text: str) -> bool:
+    """Un repere de valeur personnelle (`{{adresse}}`) justifie une reecriture ;
+    un terme du lexique (`{{nvxlexN}}`), non."""
+    return any(not marker.startswith("nvxlex") for marker in PERSONAL_VALUE_MARKER.findall(text or ""))
+
+
+def faithful_content_added(dictated: str, text: str) -> bool:
+    """Un Style fidele a-t-il ajoute du contenu ?"""
+    written = course_words(text)
+    if len(written) < FAITHFUL_MIN_WRITTEN_WORDS or has_personal_value_marker(dictated):
+        return False
+    written -= COURSE_STRUCTURE_WORDS
+    if not written:
+        return False
+    return len(written - course_words(dictated)) / len(written) > FAITHFUL_MAX_ADDED_WORDS
+
+
 def course_notes_refusal(dictated: str, text: str) -> str | None:
     """Les controles des notes de cours, dans l'ordre du poste."""
     # Une sortie qui s'emballe repete la meme tournure jusqu'a la limite.
@@ -11834,11 +11970,9 @@ def course_notes_refusal(dictated: str, text: str) -> str | None:
         return "language-changed"
     # Un nombre que l'eleve n'a pas dit — une date de partiel decalee — est
     # l'erreur la plus couteuse : il la revisera.
-    said, written = numbers_in(dictated), numbers_in(text)
-    if written - said:
-        return "number-changed"
-    if said - written:
-        return "number-lost"
+    reason = facts_refusal(dictated, text, True)
+    if reason:
+        return reason
     written_words = course_words(text) - COURSE_STRUCTURE_WORDS
     dictated_words = course_words(dictated)
     if written_words and len(written_words - dictated_words) / len(written_words) > COURSE_MAX_ADDED_WORDS:
@@ -11866,7 +12000,9 @@ def rewrite_refusal(dictated: str, answer: str, style_id: str) -> str | None:
     # lettres.
     if style_id == COURSE_NOTES_STYLE:
         return course_notes_refusal(dictated, text)
-    if any(number not in text for number in EXPLICIT_NUMBER.findall(dictated)):
+    # Ce qu'une reprise a abandonne (« le 12, non pardon, le 13 ») n'a pas a
+    # survivre ; la valeur retenue, si.
+    if any(number not in text for number in EXPLICIT_NUMBER.findall(without_abandoned(dictated))):
         return "explicit-number-lost"
     if len(text) > max(1, len(dictated)) * 6 + 160:
         return "output-expanded-excessively"
@@ -11886,6 +12022,12 @@ def rewrite_refusal(dictated: str, answer: str, style_id: str) -> str | None:
     compact = lambda value: re.sub(r"[ \u00a0\u202f]", "", value)  # noqa: E731
     if any(compact(number) not in compact(text) for number in GROUPED_NUMBER.findall(dictated)):
         return "number-format-changed"
+    # Un compte rendu resume : il peut omettre, jamais inventer.
+    reason = facts_refusal(dictated, text, style_id != "nova_style_meeting")
+    if reason:
+        return reason
+    if style_id in FAITHFUL_STYLE_IDS and faithful_content_added(dictated, text):
+        return "content-added"
     return None
 
 
