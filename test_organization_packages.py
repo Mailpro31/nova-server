@@ -847,7 +847,8 @@ class SkillExecutionTests(AdminTestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["text"], "resultat")
         self.assertIn("Summarise in three bullets.", seen["prompt"])
-        self.assertEqual(seen["text"], "bonjour")
+        # Le texte selectionne arrive delimite, comme pour une commande.
+        self.assertEqual(seen["text"], main.command_text("bonjour"))
 
     def test_the_instruction_never_comes_from_the_client(self):
         """Sinon n'importe qui ferait executer n'importe quoi au modele en se

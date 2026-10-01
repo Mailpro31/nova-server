@@ -690,10 +690,10 @@ class StyleResolutionTests(AdminTestCase):
         )
         self.assertEqual(response.status_code, 200)
         request = router.text_backend.requests[0]
-        # Telle qu'envoyee, suivie du contrat commun a toute reformulation.
-        self.assertEqual(
-            request.instruction, f"Ameliore la transcription.\n\n{main.REWRITE_CONTRACT}"
-        )
+        # Telle qu'envoyee, suivie du contrat commun a toute reformulation. Le
+        # vocabulaire de l'organisation peut s'intercaler ; l'ordre, lui, tient.
+        self.assertTrue(request.instruction.startswith("Ameliore la transcription."))
+        self.assertTrue(request.instruction.endswith(main.REWRITE_CONTRACT))
         self.assertEqual(request.task_type, TaskType.STYLE_TRANSFORM)
 
     def test_a_personal_style_is_applied_as_the_client_sent_it(self):
@@ -704,10 +704,9 @@ class StyleResolutionTests(AdminTestCase):
             router, style_id="style-perso-1742", style_prompt="Ecris en vers."
         )
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(
-            router.text_backend.requests[0].instruction,
-            f"Ecris en vers.\n\n{main.REWRITE_CONTRACT}",
-        )
+        instruction = router.text_backend.requests[0].instruction
+        self.assertTrue(instruction.startswith("Ecris en vers."))
+        self.assertTrue(instruction.endswith(main.REWRITE_CONTRACT))
 
     def test_no_style_at_all_stays_plain_reformulation(self):
         router = self.fake_router()
