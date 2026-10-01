@@ -11764,6 +11764,7 @@ REWRITE_CONTRACT = (
 # mots repris.
 GUARDED_STYLE_IDS = frozenset({
     "default_improve_transcriptions",
+    "nova_style_everyday",
     "nova_style_voice_to_text",
     "nova_style_messages",
     "nova_style_email",
@@ -12007,6 +12008,7 @@ LIST_NUMBERING = re.compile(r"^\s*\d+[.)]\s+", re.MULTILINE)
 # Styles qui corrigent sans reecrire : ils n'ajoutent presque rien.
 FAITHFUL_STYLE_IDS = frozenset({
     "default_improve_transcriptions",
+    "nova_style_everyday",
     "nova_style_voice_to_text",
     "nova_style_messages",
 })
