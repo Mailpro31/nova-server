@@ -74,6 +74,7 @@ x-nova-environment: &nova-environment
     NOVA_AI_MAX_CONCURRENT_TEXT: "${NOVA_AI_MAX_CONCURRENT_TEXT:-2}"
     NOVA_AI_MAX_CONCURRENT_SPEECH: "${NOVA_AI_MAX_CONCURRENT_SPEECH:-1}"
     NOVA_AI_MAX_QUEUE: "${NOVA_AI_MAX_QUEUE:-4}"
+    NOVA_AI_QUEUE_WAIT_SECONDS: "${NOVA_AI_QUEUE_WAIT_SECONDS:-3}"
     # Profil `custom` : declare par le deploiement, ou pas du tout. Les deux
     # premieres valeurs sont exigees ensemble ; sans elles, `custom` n'est pas
     # proposable dans Nova Admin. Ni URL, ni modele, ni secret ici.
@@ -139,6 +140,24 @@ services:
   # Sortant uniquement, et en lecture seule chez Google. La cle du compte de
   # service arrive par le mecanisme de secrets du deploiement : elle n'est ni
   # en base, ni dans ce fichier.
+  # Le releve d'usage et l'entretien de son historique. Processus separe pour la
+  # meme raison que la synchronisation d'annuaire : un releve toutes les minutes
+  # et un repli qui parcourt trois mois de lignes n'ont pas a etre payes par
+  # quelqu'un qui dicte.
+  #
+  # Aucun port, aucun acces sortant. Il lit la machine et ecrit dans la base.
+  usage-metrics:
+    build: .
+    command: ["python", "usage_worker.py"]
+    environment:
+      <<: *nova-environment
+    volumes:
+      - nova-data:/data
+    depends_on:
+      prepare:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
   directory-sync:
     build: .
     command: ["python", "directory_worker.py"]

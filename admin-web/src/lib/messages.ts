@@ -910,6 +910,38 @@ export const t = {
       "Some features may still be unavailable because of this deployment's education mode.",
   },
 
+  usageMetrics: {
+    title: "Usage",
+    description:
+      "How much Nova is used, by how many people, at what hour, and how long they wait. The machine's own load is shown underneath.",
+    window: { "24": "24 hours", "168": "7 days", "744": "31 days" },
+    dictations: "Dictations",
+    peoplePeak: "People at peak",
+    busiestHour: "Busiest hour",
+    latencyAverage: "Average wait",
+    latencyPeak: "Worst wait",
+    // Le pire cas seul ne dit pas s'il fut isole. Le nombre d'heures, si.
+    hoursOverObjective: (count: number) =>
+      count === 1 ? "1 hour over 5 s" : `${count} hours over 5 s`,
+    dictationsByHour: "Dictations per hour",
+    peopleByHour: "People per hour",
+    latencyByHour: "Wait per hour",
+    objectiveLegend: "Peak and average, against the 5 s objective",
+    cpuAndMemory: "Processor and memory",
+    graphicsCard: "Graphics card",
+    percentLegend: "Percent in use",
+    noGraphicsCard:
+      "No graphics card was seen on this machine. Nova serves smaller models on the processor alone.",
+    empty: "No dictation in this window yet.",
+    exportCsv: "Export this window (CSV)",
+    exportMembersCsv: "Export the named detail (CSV)",
+    showNames: "Show the named detail",
+    // Dit avant de montrer, pas apres : l'administrateur doit savoir que son
+    // geste laisse une trace, et que ces chiffres nomment des salaries.
+    namesAreJournalled:
+      "This detail names members. Each time it is opened, the reading is written to the administration journal. Tell the people concerned that their usage is measured.",
+    member: "Member",
+  },
   limits: {
     title: "Limits",
     lead: "Limits that apply to every member of this organization.",

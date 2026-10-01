@@ -47,6 +47,7 @@ import ratelimit
 import scim
 import secrets_provider
 from ai_runtime import (
+    ADVANCED_MINIMUM_VRAM_GB,
     AI_MODEL_NOT_READY,
     AI_PROMPT_TOO_LONG,
     AI_RUNTIME_BUSY,
@@ -2374,6 +2375,11 @@ POLICY_SETTINGS: dict[str, PolicySetting] = {
         # ressembler a du contenu de personne, et un test le verifie mot a mot.
         PolicySetting("generated_instructions_enabled", bool, True, "prompts"),
         PolicySetting("past_dictations_enabled", bool, True, "history"),
+        # Le mode reunion capture les autres participants : c'est la
+        # fonction qu'un service juridique ou un comite d'entreprise voudra
+        # encadrer en premier. Le poste sait deja la retirer sur annonce ;
+        # sans cette cle, l'organisation n'avait aucun moyen de le demander.
+        PolicySetting("meeting_enabled", bool, True, "meeting"),
         # Une duree, pas un interrupteur : elle ne ferme aucune capacite. Elle
         # protege le moteur partage d'un enregistrement sans fin. Le poste
         # previent avant la limite et arrete ; `/api/transcribe` refuse ce qui
@@ -3250,8 +3256,23 @@ def decode_jwt_claims(token: str) -> dict:
     except Exception:
         return {}
 
-def count_usage(email: str, kind: str, audio_seconds: float = 0.0):
+# Duree de conservation. Le detail horaire sert a lire les pics d'une rentree ;
+# au-dela, la trace mensuelle suffit a juger l'adoption, et garder l'heure
+# pendant deux ans reviendrait a conserver un emploi du temps par personne
+# sans que personne ne s'en serve.
+USAGE_HOURLY_RETENTION_DAYS = 90
+USAGE_MONTHLY_RETENTION_DAYS = 730
+HOST_SAMPLE_RETENTION_DAYS = 90
+
+
+def count_usage(
+    email: str,
+    kind: str,
+    audio_seconds: float = 0.0,
+    latency_ms: float | None = None,
+):
     day = time.strftime("%Y-%m-%d")
+    hour = time.strftime("%Y-%m-%dT%H")
     col = "transcriptions" if kind == "transcription" else "reformulations"
     with db() as conn:
         # Les colonnes sont qualifiees par leur table dans la clause `DO UPDATE`.
@@ -3266,6 +3287,139 @@ def count_usage(email: str, kind: str, audio_seconds: float = 0.0):
                 audio_seconds = usage.audio_seconds + ?""",
             (email, day, 1, audio_seconds, audio_seconds),
         )
+        # Le meme evenement, a l'heure : c'est la granularite qui montre les
+        # pics. La latence n'est portee que par l'horaire, parce que c'est la
+        # seule echelle ou une lenteur se rattache a une cause.
+        millis = float(latency_ms or 0.0)
+        conn.execute(
+            f"""INSERT INTO usage_hourly(
+                    email, hour, {col}, audio_seconds,
+                    latency_ms_sum, latency_ms_count, latency_ms_max)
+                VALUES (?,?,?,?,?,?,?)
+                ON CONFLICT(email, hour) DO UPDATE SET
+                {col} = usage_hourly.{col} + 1,
+                audio_seconds = usage_hourly.audio_seconds + ?,
+                latency_ms_sum = usage_hourly.latency_ms_sum + ?,
+                latency_ms_count = usage_hourly.latency_ms_count + ?,
+                latency_ms_max = CASE
+                    WHEN ? > usage_hourly.latency_ms_max THEN ?
+                    ELSE usage_hourly.latency_ms_max END""",
+            (
+                email, hour, 1, audio_seconds,
+                millis, 1 if latency_ms is not None else 0, millis,
+                audio_seconds,
+                millis, 1 if latency_ms is not None else 0,
+                millis, millis,
+            ),
+        )
+
+def record_host_sample(sample) -> None:
+    """Un releve machine de plus. Deux tours dans la meme seconde n'en font qu'un.
+
+    L'horodatage est la cle : si la boucle passe deux fois dans la meme seconde
+    -- au redemarrage, par exemple -- le second releve remplace le premier au
+    lieu de faire echouer l'insertion et d'interrompre le tour.
+    """
+    with db() as conn:
+        conn.execute(
+            """INSERT INTO host_samples(
+                   sampled_at, cpu_percent, ram_used_gb, ram_total_gb,
+                   gpu_percent, vram_used_gb, vram_total_gb,
+                   gpu_temperature_c, gpu_power_w)
+               VALUES (?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(sampled_at) DO UPDATE SET
+                   cpu_percent = excluded.cpu_percent,
+                   ram_used_gb = excluded.ram_used_gb,
+                   ram_total_gb = excluded.ram_total_gb,
+                   gpu_percent = excluded.gpu_percent,
+                   vram_used_gb = excluded.vram_used_gb,
+                   vram_total_gb = excluded.vram_total_gb,
+                   gpu_temperature_c = excluded.gpu_temperature_c,
+                   gpu_power_w = excluded.gpu_power_w""",
+            (
+                sample.sampled_at, sample.cpu_percent,
+                sample.ram_used_gb, sample.ram_total_gb,
+                sample.gpu_percent, sample.vram_used_gb, sample.vram_total_gb,
+                sample.gpu_temperature_c, sample.gpu_power_w,
+            ),
+        )
+
+
+def rollup_usage(now: float | None = None) -> int:
+    """Replie en trace mensuelle les heures sorties de la fenetre de detail.
+
+    Seules les heures deja hors fenetre sont repliees, et le repli est
+    idempotent : relancer le tour n'ajoute rien deux fois, parce qu'il additionne
+    par mois ce que la purge s'apprete a supprimer, puis marque le travail fait
+    en supprimant la source dans la meme transaction.
+    """
+    stamp = time.time() if now is None else now
+    limit = time.strftime(
+        "%Y-%m-%dT%H",
+        time.gmtime(stamp - USAGE_HOURLY_RETENTION_DAYS * 86400),
+    )
+    with db() as conn:
+        rows = conn.execute(
+            """SELECT email, substr(hour, 1, 7) AS month,
+                      SUM(transcriptions), SUM(reformulations), SUM(audio_seconds),
+                      SUM(latency_ms_sum), SUM(latency_ms_count), MAX(latency_ms_max),
+                      MAX(organization_id)
+               FROM usage_hourly WHERE hour < ?
+               GROUP BY email, substr(hour, 1, 7)""",
+            (limit,),
+        ).fetchall()
+        for row in rows:
+            email, month, transcriptions, reformulations, audio = row[0], row[1], row[2], row[3], row[4]
+            latency_sum, latency_count, latency_max, organization_id = row[5], row[6], row[7], row[8]
+            conn.execute(
+                """INSERT INTO usage_monthly(
+                       email, month, transcriptions, reformulations, audio_seconds,
+                       latency_ms_sum, latency_ms_count, latency_ms_max, organization_id)
+                   VALUES (?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(email, month) DO UPDATE SET
+                       transcriptions = usage_monthly.transcriptions + ?,
+                       reformulations = usage_monthly.reformulations + ?,
+                       audio_seconds = usage_monthly.audio_seconds + ?,
+                       latency_ms_sum = usage_monthly.latency_ms_sum + ?,
+                       latency_ms_count = usage_monthly.latency_ms_count + ?,
+                       latency_ms_max = CASE
+                           WHEN ? > usage_monthly.latency_ms_max THEN ?
+                           ELSE usage_monthly.latency_ms_max END""",
+                (
+                    email, month, transcriptions, reformulations, audio,
+                    latency_sum, latency_count, latency_max, organization_id,
+                    transcriptions, reformulations, audio,
+                    latency_sum, latency_count, latency_max, latency_max,
+                ),
+            )
+        conn.execute("DELETE FROM usage_hourly WHERE hour < ?", (limit,))
+    return len(rows)
+
+
+def purge_usage(now: float | None = None) -> int:
+    """Efface ce qui a depasse sa duree de conservation.
+
+    La minimisation des donnees n'est pas un reglage a part : sans cette purge,
+    une base d'etablissement garderait indefiniment un emploi du temps par
+    personne, que personne ne consulte et que personne ne peut justifier.
+    """
+    stamp = time.time() if now is None else now
+    sample_limit = time.strftime(
+        "%Y-%m-%dT%H:%M:%S", time.gmtime(stamp - HOST_SAMPLE_RETENTION_DAYS * 86400)
+    )
+    month_limit = time.strftime(
+        "%Y-%m", time.gmtime(stamp - USAGE_MONTHLY_RETENTION_DAYS * 86400)
+    )
+    removed = 0
+    with db() as conn:
+        removed += conn.execute(
+            "DELETE FROM host_samples WHERE sampled_at < ?", (sample_limit,)
+        ).rowcount or 0
+        removed += conn.execute(
+            "DELETE FROM usage_monthly WHERE month < ?", (month_limit,)
+        ).rowcount or 0
+    return removed
+
 
 # ---------------------------------------------------------------- email
 def send_code_email(to: str, code: str):
@@ -6839,14 +6993,20 @@ def validate_ai_runtime_update(body: AIRuntimeConfigUpdateRequest) -> dict:
             raise auth_error(400, "AI_RUNTIME_CONCURRENCY_REQUIRED")
         if not (1 <= text <= 64 and 1 <= speech <= 32 and 0 <= queue <= 256):
             raise auth_error(400, "AI_RUNTIME_CONCURRENCY_INVALID")
-    hardware = detect_hardware()
-    if (
-        NOVA_SERVER_MODE == SERVER_MODE_DEDICATED
-        and profile == ModelProfile.ADVANCED
-        and hardware.vram_gb is not None
-        and hardware.vram_gb < 16
-    ):
-        raise auth_error(409, "AI_RUNTIME_HARDWARE_INCOMPATIBLE")
+    # `advanced` demande de la memoire video, et le refus doit aussi tomber
+    # quand on n'a pas pu la mesurer. La detection passe par `nvidia-smi` : sur
+    # une machine sans carte NVIDIA, ou dans un conteneur qui n'expose pas
+    # l'outil, `vram_gb` vaut None. L'ancienne condition laissait alors passer
+    # `advanced` — precisement sur les machines les moins capables de le tenir.
+    #
+    # Le mode `control_plane` n'execute aucune inference : rien a verifier.
+    if NOVA_SERVER_MODE == SERVER_MODE_DEDICATED and profile == ModelProfile.ADVANCED:
+        hardware = detect_hardware()
+        if (
+            hardware.vram_gb is None
+            or hardware.vram_gb < ADVANCED_MINIMUM_VRAM_GB
+        ):
+            raise auth_error(409, "AI_RUNTIME_HARDWARE_INCOMPATIBLE")
     return {
         "profile": profile,
         "reasoning_allowed": body.reasoning_allowed,
@@ -10740,7 +10900,7 @@ def me(user: str = Depends(current_user), u=Depends(current_account)):
     # serveur plus ancien ou une reponse tronquee n'y citerait pas `history`
     # sans l'avoir ferme, et une fonction ne s'eteint jamais sur un silence.
     # Seules les decisions de policy comptent ici, pas le mode pedagogique.
-    closable_core = {"learning", "styles", "prompts", "history"}
+    closable_core = {"learning", "styles", "prompts", "history", "meeting"}
     member_settings = member_policy_document["settings"]
     closed_capabilities = sorted(
         setting.capability
@@ -11583,6 +11743,76 @@ def runtime_http_error(error: AIRuntimeError, task_type: TaskType) -> HTTPExcept
     return HTTPException(status_by_code.get(error.code, 502), detail)
 
 
+# Ce que le moteur lit de l'amorce. Whisper n'en garde que ~224 jetons ; 400
+# caractères de français y tiennent avec de la marge, et un dépassement serait
+# tronqué en silence par le moteur, pas refusé.
+TRANSCRIPTION_HINT_MAX_CHARS = 400
+
+
+def transcription_hint(user: str) -> str | None:
+    """Le vocabulaire du membre, tel qu'il doit être écrit, pour le moteur.
+
+    Passé à Whisper comme texte d'amorce : le modèle tend alors à écrire
+    « Aéro 3 » plutôt que « aéro trois », et « Baratto » plutôt qu'une graphie
+    devinée. C'est un indice, pas une règle — la correction déterministe
+    s'applique toujours ensuite.
+
+    La forme retenue est la **cible** (`replacement`) quand elle existe : donner
+    au moteur « Aero 3 » lui apprendrait précisément la graphie à corriger.
+
+    Le vocabulaire personnel passe avant celui de l'organisation : si la borne
+    coupe, c'est celui de l'élève — sa voix, ses mots — qui reste.
+    """
+    with db() as conn:
+        personal = conn.execute(
+            "SELECT term,replacement FROM personal_dictionary WHERE email=? "
+            "ORDER BY term", (user,)
+        ).fetchall()
+        shared = organization_shared_terms(conn, nova_organization_id())
+    seen: set[str] = set()
+    terms: list[str] = []
+    length = 0
+    for row in [*personal, *shared]:
+        term = (row["replacement"] or row["term"] or "").strip()
+        key = term.casefold()
+        if not term or key in seen:
+            continue
+        # « , » entre les termes, « . » final.
+        cost = len(term) + (2 if terms else 0)
+        if length + cost + 1 > TRANSCRIPTION_HINT_MAX_CHARS:
+            break
+        seen.add(key)
+        terms.append(term)
+        length += cost
+    return ", ".join(terms) + "." if terms else None
+
+
+def _spoken_words(value: str) -> list[str]:
+    return re.findall(r"\w+", value.casefold())
+
+
+def is_hint_echo(text: str, hint: str | None) -> bool:
+    """Le moteur a-t-il recopié l'amorce au lieu de transcrire ?
+
+    Défaut connu de Whisper sur un audio vide ou inaudible : il rend le texte
+    d'amorce. Coller alors « IPSA, Aéro 3, IONIS. » serait inventer une dictée.
+
+    Est un écho un texte fait **uniquement** de mots de l'amorce et qui en
+    reprend au moins deux termes (trois quand l'amorce en a davantage). Dire
+    « IPSA » seul reste une dictée : un seul terme ne permet pas de trancher,
+    et effacer ce que l'élève a vraiment dit serait pire que de laisser passer.
+    """
+    if not hint:
+        return False
+    words = _spoken_words(text)
+    if not words or not set(words) <= set(_spoken_words(hint)):
+        return False
+    spoken = f" {' '.join(words)} "
+    terms = [t for t in (" ".join(_spoken_words(part)) for part in hint.split(",")) if t]
+    matched = sum(1 for term in terms if f" {term} " in spoken)
+    return matched >= 2 and matched >= min(3, len(terms))
+
+
 async def transcribe_audio(
     file: UploadFile, user: str, task_type: TaskType, max_bytes: int
 ) -> dict:
@@ -11593,16 +11823,25 @@ async def transcribe_audio(
     choisir entre gêner l'une et laisser l'autre sans protection.
     """
     audio = await read_bounded_upload(file, max_bytes)
+    # L'amorce est un bonus : une base indisponible ne doit pas rendre le poste
+    # muet — la dictée part alors sans indice, comme avant.
+    try:
+        hint = transcription_hint(user)
+    except Exception:  # noqa: BLE001 — la dictée d'abord
+        observability.log("transcription_hint_unavailable", level="warning")
+        hint = None
     try:
         result = await ORGANIZATION_AI_ROUTER.transcribe(
             task_type,
             audio,
             file.filename or "audio.wav",
+            prompt=hint,
         )
     except AIRuntimeError as error:
         raise runtime_http_error(error, task_type) from error
     count_usage(user, "transcription", result.duration_seconds or 0.0)
-    return {"text": result.text}
+    text = "" if is_hint_echo(result.text, hint) else result.text
+    return {"text": text}
 
 
 @app.post("/api/transcribe")
@@ -12246,15 +12485,24 @@ async def reformulate(body: ReformulateRequest, user: str = Depends(current_user
     if context:
         system_prompt = f"{system_prompt}\n\n{context}"
     system_prompt = f"{system_prompt}\n\n{REWRITE_CONTRACT}"
+    # Le temps que la personne attend reellement, y compris la file. C'est
+    # celui-la qui doit tenir sous cinq secondes, pas celui du moteur seul.
+    started = time.monotonic()
     try:
         result = await execute_text(task_type, system_prompt, transcript_message(source_text))
     except RewriteTruncated:
         # Une reformulation coupee perd la fin de la dictee : la dictee entiere
         # vaut mieux.
-        count_usage(user, "reformulation")
+        count_usage(
+            user, "reformulation",
+            latency_ms=(time.monotonic() - started) * 1000.0,
+        )
         observability.log("reformulation.truncated", level="warning", style=style_id or "")
         return fallback
-    count_usage(user, "reformulation")
+    count_usage(
+        user, "reformulation",
+        latency_ms=(time.monotonic() - started) * 1000.0,
+    )
     result = without_transcript_tags(result)
     if answer_repeats_instruction(system_prompt, result):
         # Le modele a rendu le gabarit. Une dictee brute vaut mieux qu'un prompt
@@ -13615,6 +13863,202 @@ def readiness_probe():
         }
     )
     return JSONResponse(result, status_code=200 if result["ready"] else 503)
+
+
+# ───────────────────── Tableau de bord d'usage ────────────────────────────
+
+
+# Bornes de la fenetre demandee. Un mois de detail horaire fait deja 744 points
+# par serie ; au-dela, la console tracerait une bouillie et la requete
+# couterait plus que ce qu'elle apprend.
+USAGE_WINDOW_MAX_HOURS = 24 * 31
+USAGE_TOP_MEMBERS = 20
+
+
+def usage_window(hours: int) -> tuple[str, str]:
+    """La fenetre demandee, bornee, rendue en cles horaires UTC."""
+    span = max(1, min(int(hours), USAGE_WINDOW_MAX_HOURS))
+    now = time.time()
+    return (
+        time.strftime("%Y-%m-%dT%H", time.gmtime(now - span * 3600)),
+        time.strftime("%Y-%m-%dT%H", time.gmtime(now)),
+    )
+
+
+def usage_timeline(since: str) -> list[dict]:
+    """L'usage heure par heure, tous membres confondus.
+
+    C'est cette serie qui montre les pics et l'heure a laquelle ils tombent.
+    La latence y est rendue en moyenne *et* en pire cas : une moyenne de deux
+    secondes peut cacher une dictee a douze, et c'est celle-la qui fait douter
+    de l'outil.
+    """
+    with db() as conn:
+        rows = conn.execute(
+            """SELECT hour,
+                      SUM(transcriptions) AS transcriptions,
+                      SUM(reformulations) AS reformulations,
+                      SUM(audio_seconds) AS audio_seconds,
+                      SUM(latency_ms_sum) AS latency_sum,
+                      SUM(latency_ms_count) AS latency_count,
+                      MAX(latency_ms_max) AS latency_max,
+                      COUNT(DISTINCT email) AS people
+               FROM usage_hourly WHERE hour >= ?
+               GROUP BY hour ORDER BY hour""",
+            (since,),
+        ).fetchall()
+    timeline = []
+    for row in rows:
+        count = row["latency_count"] or 0
+        timeline.append(
+            {
+                "hour": row["hour"],
+                "transcriptions": row["transcriptions"] or 0,
+                "reformulations": row["reformulations"] or 0,
+                "audio_seconds": round(row["audio_seconds"] or 0.0, 1),
+                "people": row["people"] or 0,
+                "latency_ms_average": round(row["latency_sum"] / count) if count else None,
+                "latency_ms_max": round(row["latency_max"] or 0.0) or None,
+            }
+        )
+    return timeline
+
+
+def usage_by_member(since: str) -> list[dict]:
+    """Le detail par personne, sur la fenetre demandee.
+
+    Cette vue nomme des salaries : elle ne sort que pour un administrateur, et
+    sa consultation est inscrite au journal. Voir `control_read_usage_metrics`.
+    """
+    with db() as conn:
+        rows = conn.execute(
+            """SELECT email,
+                      SUM(transcriptions) AS transcriptions,
+                      SUM(reformulations) AS reformulations,
+                      SUM(audio_seconds) AS audio_seconds,
+                      SUM(latency_ms_sum) AS latency_sum,
+                      SUM(latency_ms_count) AS latency_count
+               FROM usage_hourly WHERE hour >= ?
+               GROUP BY email
+               ORDER BY (SUM(transcriptions) + SUM(reformulations)) DESC""",
+            (since,),
+        ).fetchall()
+    members = []
+    for row in rows[:USAGE_TOP_MEMBERS]:
+        count = row["latency_count"] or 0
+        members.append(
+            {
+                "email": row["email"],
+                "transcriptions": row["transcriptions"] or 0,
+                "reformulations": row["reformulations"] or 0,
+                "audio_seconds": round(row["audio_seconds"] or 0.0, 1),
+                "latency_ms_average": round(row["latency_sum"] / count) if count else None,
+            }
+        )
+    return members
+
+
+def host_timeline(since: str) -> list[dict]:
+    """L'etat machine sur la fenetre. Les colonnes vides restent vides.
+
+    Un serveur sans carte graphique rend `None` pour le GPU : la console doit
+    afficher « pas de carte », et non zero pour cent d'utilisation, qui se lirait
+    comme une carte au repos.
+    """
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM host_samples WHERE sampled_at >= ? ORDER BY sampled_at",
+            (f"{since}:00:00",),
+        ).fetchall()
+    return [
+        {
+            "sampled_at": row["sampled_at"],
+            "cpu_percent": row["cpu_percent"],
+            "ram_used_gb": row["ram_used_gb"],
+            "ram_total_gb": row["ram_total_gb"],
+            "gpu_percent": row["gpu_percent"],
+            "vram_used_gb": row["vram_used_gb"],
+            "vram_total_gb": row["vram_total_gb"],
+            "gpu_temperature_c": row["gpu_temperature_c"],
+            "gpu_power_w": row["gpu_power_w"],
+        }
+        for row in rows
+    ]
+
+
+def usage_summary(timeline: list[dict]) -> dict:
+    """Ce qui se lit en un coup d'oeil, calcule a partir de la meme serie.
+
+    Recalculer le resume par une seconde requete laisserait les deux diverger
+    des que la fenetre change d'une heure entre les deux appels.
+    """
+    if not timeline:
+        return {
+            "dictations": 0, "people_peak": 0, "busiest_hour": None,
+            "latency_ms_average": None, "latency_ms_max": None,
+            "over_five_seconds": 0,
+        }
+    total = sum(h["transcriptions"] + h["reformulations"] for h in timeline)
+    busiest = max(timeline, key=lambda h: h["transcriptions"] + h["reformulations"])
+    measured = [h for h in timeline if h["latency_ms_average"] is not None]
+    average = (
+        round(sum(h["latency_ms_average"] for h in measured) / len(measured))
+        if measured else None
+    )
+    peaks = [h["latency_ms_max"] for h in timeline if h["latency_ms_max"]]
+    return {
+        "dictations": total,
+        "people_peak": max(h["people"] for h in timeline),
+        "busiest_hour": busiest["hour"],
+        "latency_ms_average": average,
+        "latency_ms_max": max(peaks) if peaks else None,
+        # Le nombre d'heures ou le pire cas a depasse l'objectif. Un seul
+        # depassement ne condamne rien ; dix heures sur vingt-quatre, si.
+        "over_five_seconds": sum(1 for p in peaks if p > 5000),
+    }
+
+
+@app.get("/api/control/organization/usage-metrics")
+def control_read_usage_metrics(
+    hours: int = 24,
+    members: bool = False,
+    principal: AdminPrincipal = Depends(
+        require_admin_capability(CAPABILITY_DIAGNOSTICS_READ)
+    ),
+):
+    """L'historique que la console trace.
+
+    `members=true` ajoute le detail nominatif. Ce n'est pas un parametre anodin :
+    il nomme des salaries, et sa consultation est donc inscrite au journal
+    d'administration. Les totaux, eux, ne designent personne et ne sont pas
+    journalises — sans quoi le journal se remplirait a chaque rafraichissement
+    d'une page ouverte toute la journee.
+    """
+    since, until = usage_window(hours)
+    timeline = usage_timeline(since)
+    payload = {
+        "since": since,
+        "until": until,
+        "summary": usage_summary(timeline),
+        "timeline": timeline,
+        "host": host_timeline(since),
+    }
+    if members:
+        # Les totaux relevent du diagnostic ; nommer qui dicte releve de la
+        # gestion des personnes. `read_only` porte `diagnostics_read` et
+        # pourrait donc lire les totaux : lui ouvrir le detail nominatif
+        # reviendrait a donner un rapport d'activite par salarie a un role
+        # concu pour ne rien pouvoir faire. Seul `organization_admin` porte
+        # `identity_manage`.
+        if not principal.can(CAPABILITY_IDENTITY_MANAGE):
+            raise auth_error(403, "ADMIN_ROLE_REQUIRED")
+        record_admin_action(
+            principal, "usage_metrics.read_members",
+            target_type="organization", target_id=principal.organization_id,
+            metadata={"hours": hours},
+        )
+        payload["members"] = usage_by_member(since)
+    return payload
 
 
 @app.get("/api/metrics")
