@@ -153,5 +153,40 @@ class CorrectionsComeFirstRouteTests(AdminTestCase):
         self.assertIn("mardi non attends mercredi", seen["style"][0])
 
 
+class UnrequestedListTests(unittest.TestCase):
+    """Vu le 01/10 : « acheter des carottes en premier… » est sorti en liste à
+    puces, chaque phrase précédée d'un tiret, alors que rien n'en annonçait."""
+
+    listed = ("- Dire à Stéphanie que je dois aller chercher le chien.\n"
+              "- Faire les courses.\n"
+              "- Acheter des betteraves en premier.")
+
+    def test_a_list_nobody_asked_for_becomes_sentences_again(self):
+        self.assertEqual(
+            main.without_unrequested_list(
+                "dire à Stéphanie que je dois aller chercher le chien faire les courses "
+                "acheter des betteraves en premier",
+                self.listed, "nova_style_everyday"),
+            "Dire à Stéphanie que je dois aller chercher le chien. Faire les courses. "
+            "Acheter des betteraves en premier.")
+
+    def test_an_announced_enumeration_keeps_its_list(self):
+        dictated = "premièrement relire le cours deuxièmement faire les exercices"
+        listed = "- Relire le cours.\n- Faire les exercices."
+        self.assertEqual(
+            main.without_unrequested_list(dictated, listed, "nova_style_everyday"), listed)
+
+    def test_styles_that_structure_keep_their_lists(self):
+        for style in ("nova_style_notes", "nova_style_todo", "nova_style_course_notes"):
+            self.assertEqual(
+                main.without_unrequested_list("faire les courses", self.listed, style),
+                self.listed)
+
+    def test_a_text_without_list_is_untouched(self):
+        text = "Il a mangé à la cantine.\nÇa a été bon."
+        self.assertEqual(
+            main.without_unrequested_list("il a mangé", text, "nova_style_everyday"), text)
+
+
 if __name__ == "__main__":
     unittest.main()
