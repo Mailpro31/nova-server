@@ -614,6 +614,11 @@ class BusinessPolicyAndPackageTests(AdminTestCase):
                 "styles_enabled",
                 "generated_instructions_enabled",
                 "past_dictations_enabled",
+                # Mode reunion : cle Core. Elle ferme la capture des autres
+                # participants pour une organisation quelle que soit sa
+                # nature, et une ecole a les memes raisons de l'encadrer
+                # qu'une entreprise.
+                "meeting_enabled",
                 # Styles desactives un par un : commun a toute organisation.
                 "disabled_style_ids",
                 # Affichage des groupes au membre : commun a toute organisation.

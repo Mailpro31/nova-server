@@ -181,6 +181,29 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(seen["path"], "/v1/audio/transcriptions")
         self.assertIn(b"runtime-speech-model", seen["body"])
 
+    async def test_whisper_compatible_adapter_sends_the_vocabulary_hint(self):
+        bodies = []
+
+        def handler(request: httpx.Request):
+            bodies.append(request.content)
+            return httpx.Response(200, json={"text": "bonjour"})
+
+        backend = WhisperCompatibleSpeechBackend(
+            "http://127.0.0.1:8002",
+            "runtime-speech-model",
+            transport=httpx.MockTransport(handler),
+        )
+        for prompt in ("IPSA, Aéro 3.", None):
+            await backend.transcribe(
+                SpeechInferenceRequest(
+                    "request-3", TaskType.TRANSCRIPTION_REALTIME, b"RIFFaudio",
+                    "sample.wav", "fr", False, 10, prompt=prompt,
+                )
+            )
+        self.assertIn('name="prompt"'.encode(), bodies[0])
+        self.assertIn("Aéro 3".encode(), bodies[0])
+        self.assertNotIn('name="prompt"'.encode(), bodies[1])
+
 
 class CustomProfileTests(unittest.TestCase):
     """`custom` n'est pas un preset Nova : il vient du deploiement.
@@ -408,6 +431,61 @@ class RouterTests(unittest.IsolatedAsyncioTestCase):
         await router.generate(TaskType.AI_SKILL, "x", "y")
         self.assertEqual(text.requests[0].options.reasoning, ReasoningMode.OFF)
         self.assertEqual(text.requests[1].options.reasoning, ReasoningMode.ON)
+
+    async def test_a_waiting_request_is_served_within_the_budget(self):
+        """Une place qui se libere avant la fin du budget doit servir, pas refuser.
+
+        Le cas de l'administration : deux personnes dictent en meme temps sur un
+        profil a une seule place. La seconde attendait une seconde puis recevait
+        AI_RUNTIME_BUSY, alors que son budget de cinq secondes laissait tout le
+        temps de la servir. Le poste retombait sur son moteur local, et la
+        personne voyait la qualite changer sans rien avoir fait.
+        """
+        router = self.router(
+            text=FakeTextInferenceBackend(delay=1.6),
+            max_concurrent_text=1,
+            max_queue=4,
+            queue_wait_seconds=4.0,
+        )
+        running = asyncio.create_task(
+            router.generate(TaskType.REFORMULATION, "premier", "instruction")
+        )
+        await asyncio.sleep(0.01)
+        # Sert, apres attente. Aucune exception.
+        await router.generate(TaskType.REFORMULATION, "second", "instruction")
+        await running
+
+    async def test_the_queue_still_refuses_once_it_is_full(self):
+        """La patience ne remplace pas la borne : une file pleine refuse tout de suite.
+
+        Sans ce test, allonger l'attente transformerait le refus franc en un
+        entassement silencieux, ce qui est exactement ce que la porte existe pour
+        empecher.
+        """
+        router = self.router(
+            text=FakeTextInferenceBackend(delay=0.4),
+            max_concurrent_text=1,
+            max_queue=0,
+            queue_wait_seconds=4.0,
+        )
+        running = asyncio.create_task(
+            router.generate(TaskType.AI_SKILL, "premier", "instruction")
+        )
+        await asyncio.sleep(0.01)
+        with self.assertRaises(AIRuntimeError) as raised:
+            await router.generate(TaskType.AI_SKILL, "second", "instruction")
+        self.assertEqual(raised.exception.code, AI_RUNTIME_BUSY)
+        await running
+
+    async def test_the_patience_is_configurable_and_bounded(self):
+        """Le deploiement fixe l'attente ; elle ne peut ni disparaitre ni deriver."""
+        self.assertEqual(self.router().text_capacity.queue_wait_seconds,
+                         ai_runtime.DEFAULT_QUEUE_WAIT_SECONDS)
+        gate = ai_runtime._CapacityGate(1, 1, queue_wait_seconds=0.0)
+        self.assertGreaterEqual(gate.queue_wait_seconds, 0.05)
+        gate = ai_runtime._CapacityGate(1, 1, queue_wait_seconds=10_000.0)
+        self.assertLessEqual(gate.queue_wait_seconds,
+                             ai_runtime.MAX_QUEUE_WAIT_SECONDS)
 
     async def test_busy_is_explicit_when_capacity_and_queue_are_full(self):
         router = self.router(
@@ -1263,6 +1341,68 @@ class EngineRefusalLogTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(captured.records[0].fields["error_type"], "unknown")
         self.assertEqual(captured.records[0].fields["status"], 500)
 
+
+
+class AdvancedProfileHardwareGateTests(unittest.TestCase):
+    """`advanced` ne doit pas etre accepte sur une machine qui ne le tient pas.
+
+    La detection de memoire video passe par `nvidia-smi`. Sur une machine sans
+    carte NVIDIA, ou dans un conteneur qui n'expose pas l'outil, elle rend None
+    -- et le garde-fou d'origine ne se declenchait que sur une valeur connue et
+    trop basse. Il laissait donc passer `advanced` exactement sur les machines
+    les moins capables de le servir.
+    """
+
+    def body(self, profile="advanced"):
+        import main
+
+        return main.AIRuntimeConfigUpdateRequest(
+            expected_revision=1, profile=profile, reasoning_allowed=False
+        )
+
+    def validate(self, vram_gb):
+        import ai_runtime
+        import main
+
+        hardware = ai_runtime.HardwareInfo(
+            cpu="x", architecture="AMD64", ram_gb=32.0,
+            gpu_vendor=None, gpu_model=None, vram_gb=vram_gb, driver_version=None,
+        )
+        with patch.object(main, "detect_hardware", return_value=hardware), \
+             patch.object(main, "NOVA_SERVER_MODE", main.SERVER_MODE_DEDICATED):
+            return main.validate_ai_runtime_update(self.body())
+
+    def test_advanced_is_refused_when_the_video_memory_is_unknown(self):
+        import main
+
+        with self.assertRaises(Exception) as raised:
+            self.validate(None)
+        self.assertEqual(raised.exception.detail, "AI_RUNTIME_HARDWARE_INCOMPATIBLE")
+        self.assertEqual(raised.exception.status_code, 409)
+        del main
+
+    def test_advanced_is_refused_below_the_minimum(self):
+        with self.assertRaises(Exception) as raised:
+            self.validate(8.0)
+        self.assertEqual(raised.exception.detail, "AI_RUNTIME_HARDWARE_INCOMPATIBLE")
+
+    def test_advanced_is_accepted_at_the_minimum(self):
+        import ai_runtime
+
+        resolved = self.validate(ai_runtime.ADVANCED_MINIMUM_VRAM_GB)
+        self.assertEqual(resolved["profile"], ai_runtime.ModelProfile.ADVANCED)
+
+    def test_the_recommendation_stays_prudent_without_a_measurement(self):
+        """Sans mesure, on recommande le profil le plus modeste, pas le plus gros."""
+        import ai_runtime
+
+        unknown = ai_runtime.HardwareInfo(
+            cpu="x", architecture="AMD64", ram_gb=None,
+            gpu_vendor=None, gpu_model=None, vram_gb=None, driver_version=None,
+        )
+        self.assertEqual(
+            ai_runtime.recommend_profile(unknown), ai_runtime.ModelProfile.EFFICIENT
+        )
 
 
 if __name__ == "__main__":
