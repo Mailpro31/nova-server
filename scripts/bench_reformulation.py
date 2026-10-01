@@ -10,6 +10,8 @@ classée selon ce que l'élève reçoit réellement :
            telle quelle -- sûr, mais pas mis au propre ;
 - FAUSSE : la reformulation a passé tous les contrôles et pourtant elle
            invente, perd ou change quelque chose. Doit rester à zéro.
+- ERREUR : le moteur n'a pas répondu (délai, indisponible) ; le poste rend
+           alors la dictée telle quelle. Compté, et la mesure continue.
 
 À lancer sur le serveur, dans le conteneur de l'API :
 
@@ -27,6 +29,8 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
+
+from fastapi import HTTPException  # noqa: E402
 
 import main  # noqa: E402
 from ai_runtime import TaskType  # noqa: E402
@@ -87,17 +91,23 @@ def faithful(style: str, dictated: str, text: str, keep, forbid) -> bool:
     return len(text.split()) <= len(dictated.split()) * ratio + slack
 
 
-async def run() -> int:
-    totals = {"JUSTE": 0, "RENDUE": 0, "FAUSSE": 0}
+async def measure() -> dict[str, int]:
+    totals = {"JUSTE": 0, "RENDUE": 0, "FAUSSE": 0, "ERREUR": 0}
     timings = []
     for style, prompt in PROMPTS["styles"].items():
         system_prompt = f"{main.style_instruction(prompt)}\n\n{main.REWRITE_CONTRACT}"
-        counts = {"JUSTE": 0, "RENDUE": 0, "FAUSSE": 0}
+        counts = {"JUSTE": 0, "RENDUE": 0, "FAUSSE": 0, "ERREUR": 0}
         print(f"\n== {style}")
         for dictated, keep, forbid in CASES:
             started = time.monotonic()
-            outcome = await main.rewrite_dictation(
-                dictated, system_prompt, TaskType.STYLE_TRANSFORM, style)
+            try:
+                outcome = await main.rewrite_dictation(
+                    dictated, system_prompt, TaskType.STYLE_TRANSFORM, style)
+            except HTTPException as error:
+                timings.append(time.monotonic() - started)
+                counts["ERREUR"] += 1
+                print(f"ERREUR ({error.detail}) {dictated}")
+                continue
             timings.append(time.monotonic() - started)
             if outcome.text is None:
                 verdict, shown = "RENDUE", f"({outcome.reason}) {dictated}"
@@ -108,14 +118,19 @@ async def run() -> int:
             counts[verdict] += 1
             print(f"{verdict:6} {shown}".replace("\n", " / "))
         print(f"-- {style} : {counts['JUSTE']} justes, {counts['RENDUE']} rendues telles "
-              f"quelles, {counts['FAUSSE']} fausses")
+              f"quelles, {counts['FAUSSE']} fausses, {counts['ERREUR']} erreurs du moteur")
         for key in totals:
             totals[key] += counts[key]
     timings.sort()
     total = sum(totals.values())
     print(f"\n{totals['JUSTE']}/{total} justes ; {totals['RENDUE']} rendues telles quelles ; "
-          f"{totals['FAUSSE']} fausses ; temps médian {timings[len(timings) // 2]:.2f} s, "
-          f"max {timings[-1]:.2f} s")
+          f"{totals['FAUSSE']} fausses ; {totals['ERREUR']} erreurs du moteur ; "
+          f"temps médian {timings[len(timings) // 2]:.2f} s, max {timings[-1]:.2f} s")
+    return totals
+
+
+async def run() -> int:
+    totals = await measure()
     return 0 if totals["FAUSSE"] == 0 else 1
 
 
