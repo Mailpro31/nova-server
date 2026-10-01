@@ -106,6 +106,22 @@ CONTEXT_SAFETY_MARGIN_TOKENS = 8
 # ce que ce correctif existe precisement pour empecher.
 _FALLBACK_CHARS_PER_TOKEN = 2.0
 _FALLBACK_MESSAGE_OVERHEAD_TOKENS = 8
+# Combien de temps une requete accepte d'attendre sa place avant d'etre refusee.
+#
+# Une seconde -- la valeur d'origine -- refusait une requete que le budget de
+# l'utilisateur laissait tout le temps de servir : sur un profil a une seule
+# place, la seconde personne qui dicte en meme temps recevait AI_RUNTIME_BUSY
+# apres une seconde, et son poste retombait sur le moteur local. La qualite
+# changeait sans qu'elle ait rien fait, et sans que rien ne le lui dise.
+#
+# Trois secondes laissent servir la quasi-totalite des attentes reelles tout en
+# gardant deux secondes de marge sous l'objectif de cinq secondes de bout en
+# bout. Le plafond existe pour qu'un deploiement ne puisse pas transformer la
+# porte en salle d'attente sans fin : au-dela, mieux vaut un refus franc, que le
+# poste sait traiter, qu'une requete qui pend.
+DEFAULT_QUEUE_WAIT_SECONDS = 3.0
+MIN_QUEUE_WAIT_SECONDS = 0.05
+MAX_QUEUE_WAIT_SECONDS = 15.0
 
 
 class AIRuntimeError(RuntimeError):
@@ -672,10 +688,18 @@ class CapacitySnapshot:
 
 
 class _CapacityGate:
-    def __init__(self, limit: int, max_queue: int, queue_wait_seconds: float = 1.0):
+    def __init__(
+        self,
+        limit: int,
+        max_queue: int,
+        queue_wait_seconds: float = DEFAULT_QUEUE_WAIT_SECONDS,
+    ):
         self.limit = max(1, limit)
         self.max_queue = max(0, max_queue)
-        self.queue_wait_seconds = max(0.05, queue_wait_seconds)
+        self.queue_wait_seconds = min(
+            MAX_QUEUE_WAIT_SECONDS,
+            max(MIN_QUEUE_WAIT_SECONDS, queue_wait_seconds),
+        )
         self._semaphore = asyncio.Semaphore(self.limit)
         self._lock = asyncio.Lock()
         self._active = 0
@@ -738,6 +762,7 @@ MAX_OUTPUT_TOKENS_CEILING = 16384
 TEMPERATURE_CEILING = 2.0
 
 
+
 class OrganizationAIRouter:
     """One fail-closed routing point for every organization inference task."""
 
@@ -751,6 +776,7 @@ class OrganizationAIRouter:
         max_concurrent_text: int = 2,
         max_concurrent_speech: int = 1,
         max_queue: int = 4,
+        queue_wait_seconds: float = DEFAULT_QUEUE_WAIT_SECONDS,
         custom_options: TextInferenceOptions | None = None,
     ):
         self.text_backend = text_backend
@@ -761,10 +787,15 @@ class OrganizationAIRouter:
         self.custom_options = custom_options
         self.profile = profile
         self.reasoning_allowed = reasoning_allowed
-        self.text_capacity = _CapacityGate(max_concurrent_text, max_queue)
-        self.speech_capacity = _CapacityGate(max_concurrent_speech, max_queue)
+        self.text_capacity = _CapacityGate(
+            max_concurrent_text, max_queue, queue_wait_seconds
+        )
+        self.speech_capacity = _CapacityGate(
+            max_concurrent_speech, max_queue, queue_wait_seconds
+        )
         self.fallback_policy = "disabled"
         self.applied_revision = 0
+        self.queue_wait_seconds = queue_wait_seconds
 
     def apply_local_config(
         self,
@@ -780,8 +811,14 @@ class OrganizationAIRouter:
             raise AIRuntimeError(AI_RUNTIME_CONFIG_INVALID)
         self.profile = profile
         self.reasoning_allowed = reasoning_allowed
-        self.text_capacity = _CapacityGate(max_concurrent_text, max_queue)
-        self.speech_capacity = _CapacityGate(max_concurrent_speech, max_queue)
+        # La patience vient du deploiement, pas de la console : elle decoule de
+        # l'objectif de latence, que l'exploitant fixe une fois.
+        self.text_capacity = _CapacityGate(
+            max_concurrent_text, max_queue, self.queue_wait_seconds
+        )
+        self.speech_capacity = _CapacityGate(
+            max_concurrent_speech, max_queue, self.queue_wait_seconds
+        )
         self.applied_revision = revision
 
     def _options(
@@ -1013,10 +1050,23 @@ def detect_hardware() -> HardwareInfo:
     )
 
 
+# Ce qu'il faut de memoire video pour chaque profil.
+#
+# `ADVANCED_MINIMUM` est la borne sous laquelle le profil est refuse ; la
+# recommandation attend `ADVANCED_RECOMMENDED` pour le proposer d'elle-meme.
+# Les deux valeurs different volontairement : entre les deux, le profil tient
+# mais sans marge, et c'est a l'exploitant de decider s'il la prend.
+ADVANCED_MINIMUM_VRAM_GB = 16.0
+ADVANCED_RECOMMENDED_VRAM_GB = 24.0
+STANDARD_RECOMMENDED_VRAM_GB = 10.0
+
+
 def recommend_profile(hardware: HardwareInfo) -> ModelProfile:
-    if hardware.vram_gb is not None and hardware.vram_gb >= 24:
+    if hardware.vram_gb is None:
+        return ModelProfile.EFFICIENT
+    if hardware.vram_gb >= ADVANCED_RECOMMENDED_VRAM_GB:
         return ModelProfile.ADVANCED
-    if hardware.vram_gb is not None and hardware.vram_gb >= 10:
+    if hardware.vram_gb >= STANDARD_RECOMMENDED_VRAM_GB:
         return ModelProfile.STANDARD
     return ModelProfile.EFFICIENT
 
@@ -1102,5 +1152,8 @@ def router_from_environment() -> OrganizationAIRouter:
         max_concurrent_text=int(os.getenv("NOVA_AI_MAX_CONCURRENT_TEXT", "2")),
         max_concurrent_speech=int(os.getenv("NOVA_AI_MAX_CONCURRENT_SPEECH", "1")),
         max_queue=int(os.getenv("NOVA_AI_MAX_QUEUE", "4")),
+        queue_wait_seconds=float(
+            os.getenv("NOVA_AI_QUEUE_WAIT_SECONDS", str(DEFAULT_QUEUE_WAIT_SECONDS))
+        ),
         custom_options=custom_options,
     )
