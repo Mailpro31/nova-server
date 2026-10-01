@@ -43,7 +43,8 @@ class RewriteDictationTests(unittest.TestCase):
     def test_a_refused_rewrite_carries_its_reason_and_no_text(self):
         outcome = run("le partiel est le 12 mars", "Le partiel est le 13 mars.")
         self.assertIsNone(outcome.text)
-        self.assertEqual(outcome.reason, "number-changed")
+        # Le 12 a disparu : le contrôle des chiffres explicites le voit en premier.
+        self.assertEqual(outcome.reason, "explicit-number-lost")
 
     def test_a_truncated_rewrite_is_reported(self):
         outcome = run("une longue dictée", main.RewriteTruncated())
