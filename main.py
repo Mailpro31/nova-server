@@ -6,6 +6,7 @@ Confidentialité : seuls des COMPTEURS d'usage sont stockés, jamais le contenu.
 """
 import asyncio
 import csv
+from dataclasses import dataclass
 import io
 import os
 import urllib.parse
@@ -12646,6 +12647,45 @@ def rewrite_refusal(dictated: str, answer: str, style_id: str) -> str | None:
     return None
 
 
+@dataclass(frozen=True)
+class RewriteOutcome:
+    """Ce que le circuit de reformulation rend : le texte, ou le motif du refus.
+
+    `resolved` est la dictée après le passage des reprises, telle que le Style
+    l'a reçue.
+    """
+
+    text: str | None
+    reason: str
+    resolved: str
+
+
+async def rewrite_dictation(
+    source_text: str, system_prompt: str, task_type: TaskType, style_id: str,
+) -> RewriteOutcome:
+    """Le circuit d'une reformulation, sans la route HTTP : reprises, Style,
+    nettoyage, contrôles. La route et le banc de mesure l'appellent tous deux,
+    pour que le banc mesure exactement ce que reçoit l'élève.
+
+    Les contrôles comparent toujours à la dictée d'origine.
+    """
+    resolved = await resolve_self_corrections(source_text)
+    try:
+        result = await execute_text(task_type, system_prompt, transcript_message(resolved))
+    except RewriteTruncated:
+        # Une reformulation coupée perd la fin de la dictée.
+        return RewriteOutcome(None, "truncated", resolved)
+    result = without_unrequested_list(
+        source_text, without_transcript_tags(without_reasoning(result)), style_id)
+    if answer_repeats_instruction(system_prompt, result):
+        # Le modèle a rendu le gabarit au lieu de la dictée.
+        return RewriteOutcome(None, "template_echo", resolved)
+    refusal = rewrite_refusal(source_text, result, style_id)
+    if refusal:
+        return RewriteOutcome(None, refusal, resolved)
+    return RewriteOutcome(result, "ok", resolved)
+
+
 # --- reformulation (proxy vers LLM, API OpenAI-compatible)
 @app.post("/api/reformulate")
 async def reformulate(body: ReformulateRequest, user: str = Depends(current_user),
@@ -12693,38 +12733,25 @@ async def reformulate(body: ReformulateRequest, user: str = Depends(current_user
     # Le temps que la personne attend reellement, y compris la file. C'est
     # celui-la qui doit tenir sous cinq secondes, pas celui du moteur seul.
     started = time.monotonic()
-    # Les reprises de l'élève d'abord, le Style ensuite. Les contrôles, eux,
-    # comparent toujours à la dictée d'origine.
-    styled_text = await resolve_self_corrections(source_text)
-    try:
-        result = await execute_text(task_type, system_prompt, transcript_message(styled_text))
-    except RewriteTruncated:
-        # Une reformulation coupee perd la fin de la dictee : la dictee entiere
-        # vaut mieux.
-        count_usage(
-            user, "reformulation",
-            latency_ms=(time.monotonic() - started) * 1000.0,
-        )
-        observability.log("reformulation.truncated", level="warning", style=style_id or "")
-        return fallback
+    outcome = await rewrite_dictation(source_text, system_prompt, task_type, style_id)
     count_usage(
         user, "reformulation",
         latency_ms=(time.monotonic() - started) * 1000.0,
     )
-    result = without_unrequested_list(
-        source_text, without_transcript_tags(without_reasoning(result)), style_id)
-    if answer_repeats_instruction(system_prompt, result):
-        # Le modele a rendu le gabarit. Une dictee brute vaut mieux qu'un prompt
-        # colle dans le document de quelqu'un.
-        observability.log("reformulation.template_echo", level="warning", style=style_id or "")
+    if outcome.text is None:
+        # Une reformulation coupée, un gabarit recopié, une réponse, une
+        # traduction, un nombre perdu : la dictée d'origine est rendue, jamais
+        # un texte que la personne n'a pas dit.
+        if outcome.reason == "truncated":
+            observability.log("reformulation.truncated", level="warning", style=style_id or "")
+        elif outcome.reason == "template_echo":
+            observability.log("reformulation.template_echo", level="warning",
+                              style=style_id or "")
+        else:
+            observability.log("reformulation.refused", level="warning",
+                              style=style_id or "", reason=outcome.reason)
         return fallback
-    refusal = rewrite_refusal(source_text, result, style_id)
-    if refusal:
-        # Une reponse, une traduction, un nombre perdu : la dictee d'origine
-        # est rendue, jamais un texte que la personne n'a pas dit.
-        observability.log("reformulation.refused", level="warning",
-                          style=style_id or "", reason=refusal)
-        return fallback
+    result = outcome.text
     restored = restore_snippets(enforce_vocabulary(result, vocabulary), snippet_restores)
     if restored is None:
         # Le modele a perdu un repere : le snippet manquerait au texte.
