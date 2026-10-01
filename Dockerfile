@@ -42,6 +42,9 @@ COPY usage_metrics.py usage_worker.py ./
 COPY learning/ ./learning/
 # Les fichiers SQL que `migrations.py` decouvre au runtime dans `migrations/`.
 COPY migrations/ ./migrations/
+# Le banc des reprises, a lancer sur le serveur avec son vrai modele :
+# `docker compose exec api python scripts/bench_self_corrections.py`.
+COPY scripts/bench_self_corrections.py ./scripts/
 
 # Le mode Lab. Ces fichiers vivent dans l'image plutot que sur le poste
 # client : ils heritent ainsi de la verification de digest OCI que
