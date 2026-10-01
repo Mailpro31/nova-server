@@ -12148,6 +12148,37 @@ async def resolve_self_corrections(text: str) -> str:
     return resolved
 
 
+# Une liste que personne n'a demandée. Le petit modèle du serveur découpait une
+# dictée entière en tirets dès qu'il entendait « en premier » (vu le 01/10). Les
+# Styles qui corrigent sans structurer rendent alors des phrases, sans rien
+# perdre ; ceux qui structurent (Notes, To-do, Notes de cours) gardent leurs
+# listes, et une énumération annoncée à voix haute aussi.
+ENUMERATION_CUE = re.compile(
+    r"\b(premi[eè]rement|deuxi[eè]mement|troisi[eè]mement|primo|secundo|tirets?|"
+    r"listes?|[àa] la ligne|nouvelle ligne|firstly|secondly|bullet|new line)\b",
+    re.IGNORECASE,
+)
+LIST_LINE = re.compile(r"^\s*(?:[-•*]|\d+[.)])\s+(.*\S)\s*$")
+
+
+def without_unrequested_list(dictated: str, text: str, style_id: str) -> str:
+    if style_id and style_id not in FAITHFUL_STYLE_IDS:
+        return text
+    lines = [line for line in (text or "").splitlines() if line.strip()]
+    if sum(1 for line in lines if LIST_LINE.match(line)) < 2:
+        return text
+    if ENUMERATION_CUE.search(dictated or ""):
+        return text
+    sentences = []
+    for line in lines:
+        match = LIST_LINE.match(line)
+        sentence = (match.group(1) if match else line).strip()
+        if sentence[-1] not in ".!?…:;":
+            sentence += "."
+        sentences.append(sentence[0].upper() + sentence[1:])
+    return " ".join(sentences)
+
+
 def without_transcript_tags(answer: str) -> str:
     """Le modele rend parfois la reformulation dans les balises recues."""
     text = (answer or "").strip()
@@ -12619,7 +12650,8 @@ async def reformulate(body: ReformulateRequest, user: str = Depends(current_user
         user, "reformulation",
         latency_ms=(time.monotonic() - started) * 1000.0,
     )
-    result = without_transcript_tags(result)
+    result = without_unrequested_list(
+        source_text, without_transcript_tags(result), style_id)
     if answer_repeats_instruction(system_prompt, result):
         # Le modele a rendu le gabarit. Une dictee brute vaut mieux qu'un prompt
         # colle dans le document de quelqu'un.
