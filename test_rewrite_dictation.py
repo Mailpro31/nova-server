@@ -11,6 +11,8 @@ import asyncio
 import unittest
 from unittest.mock import patch
 
+from test_main import AdminTestCase  # noqa: F401
+
 import main
 from ai_runtime import TaskType
 
