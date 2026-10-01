@@ -2375,6 +2375,11 @@ POLICY_SETTINGS: dict[str, PolicySetting] = {
         # ressembler a du contenu de personne, et un test le verifie mot a mot.
         PolicySetting("generated_instructions_enabled", bool, True, "prompts"),
         PolicySetting("past_dictations_enabled", bool, True, "history"),
+        # Le mode reunion capture les autres participants : c'est la
+        # fonction qu'un service juridique ou un comite d'entreprise voudra
+        # encadrer en premier. Le poste sait deja la retirer sur annonce ;
+        # sans cette cle, l'organisation n'avait aucun moyen de le demander.
+        PolicySetting("meeting_enabled", bool, True, "meeting"),
         # Une duree, pas un interrupteur : elle ne ferme aucune capacite. Elle
         # protege le moteur partage d'un enregistrement sans fin. Le poste
         # previent avant la limite et arrete ; `/api/transcribe` refuse ce qui
@@ -10895,7 +10900,7 @@ def me(user: str = Depends(current_user), u=Depends(current_account)):
     # serveur plus ancien ou une reponse tronquee n'y citerait pas `history`
     # sans l'avoir ferme, et une fonction ne s'eteint jamais sur un silence.
     # Seules les decisions de policy comptent ici, pas le mode pedagogique.
-    closable_core = {"learning", "styles", "prompts", "history"}
+    closable_core = {"learning", "styles", "prompts", "history", "meeting"}
     member_settings = member_policy_document["settings"]
     closed_capabilities = sorted(
         setting.capability
