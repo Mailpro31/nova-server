@@ -33,6 +33,12 @@ COPY observability.py production_config.py ratelimit.py scim.py secrets_provider
 # a la fermeture reelle des imports : le prochain oubli echoue en CI, pas au
 # deploiement.
 COPY google_directory.py group_rules.py directory_worker.py ./
+# Le releve d'usage et son tour de service. `usage_worker.py` est le `command`
+# du service `usage-metrics` : sans lui dans l'image, le conteneur ne demarre
+# pas du tout, sur `can't open file '/app/usage_worker.py'`. La liste des
+# points d'entree de `test_dockerfile_closure.py` est desormais lue dans le
+# compose, donc le prochain service ajoute reclamera ses fichiers tout seul.
+COPY usage_metrics.py usage_worker.py ./
 COPY learning/ ./learning/
 # Les fichiers SQL que `migrations.py` decouvre au runtime dans `migrations/`.
 COPY migrations/ ./migrations/

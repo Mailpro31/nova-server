@@ -140,6 +140,24 @@ services:
   # Sortant uniquement, et en lecture seule chez Google. La cle du compte de
   # service arrive par le mecanisme de secrets du deploiement : elle n'est ni
   # en base, ni dans ce fichier.
+  # Le releve d'usage et l'entretien de son historique. Processus separe pour la
+  # meme raison que la synchronisation d'annuaire : un releve toutes les minutes
+  # et un repli qui parcourt trois mois de lignes n'ont pas a etre payes par
+  # quelqu'un qui dicte.
+  #
+  # Aucun port, aucun acces sortant. Il lit la machine et ecrit dans la base.
+  usage-metrics:
+    build: .
+    command: ["python", "usage_worker.py"]
+    environment:
+      <<: *nova-environment
+    volumes:
+      - nova-data:/data
+    depends_on:
+      prepare:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
   directory-sync:
     build: .
     command: ["python", "directory_worker.py"]
