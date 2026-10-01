@@ -56,5 +56,30 @@ class ReformulationBenchTests(unittest.TestCase):
             ["12", "mars"], ["13"]))
 
 
+class BenchRunTests(unittest.TestCase):
+    """Un moteur qui dépasse son délai est un résultat à compter, pas une raison
+    d'arrêter la mesure : vu le 01/10, la première erreur arrêtait tout le
+    banc."""
+
+    def test_an_engine_error_is_counted_and_the_bench_goes_on(self):
+        import asyncio
+        from unittest.mock import patch
+
+        from fastapi import HTTPException
+
+        calls = []
+
+        async def flaky(dictated, system_prompt, task_type, style):
+            calls.append(dictated)
+            if len(calls) == 1:
+                raise HTTPException(504, {"code": "AI_RUNTIME_TIMEOUT"})
+            return main.RewriteOutcome(dictated, "ok", dictated)
+
+        with patch.object(main, "rewrite_dictation", flaky):
+            totals = asyncio.run(bench.measure())
+        self.assertEqual(totals["ERREUR"], 1)
+        self.assertEqual(len(calls), len(bench.CASES) * len(bench.PROMPTS["styles"]))
+
+
 if __name__ == "__main__":
     unittest.main()
