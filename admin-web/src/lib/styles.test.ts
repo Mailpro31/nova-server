@@ -34,6 +34,7 @@ describe("Styles model", () => {
   test("the builtin Styles are those an organization member sees", () => {
     expect(BUILTIN_STYLES.map((style) => style.id)).toEqual([
       "default_improve_transcriptions",
+      "nova_style_everyday",
       "nova_style_course_notes",
       "nova_style_email",
       "nova_style_messages",
