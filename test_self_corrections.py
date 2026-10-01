@@ -153,6 +153,31 @@ class CorrectionsComeFirstRouteTests(AdminTestCase):
         self.assertIn("mardi non attends mercredi", seen["style"][0])
 
 
+class SlowResolutionTests(unittest.IsolatedAsyncioTestCase):
+    """Un modèle lent ne doit pas faire attendre l'élève.
+
+    Mesuré le 01/10 : un moteur qui ne répond pas ajoutait 30 secondes, le
+    délai de toute reformulation, avant même que le Style commence."""
+
+    async def test_a_slow_resolution_gives_up_quickly_and_keeps_the_dictation(self):
+        import asyncio
+        import time
+
+        async def slow(task_type, instruction, text, examples):
+            await asyncio.sleep(5)
+            return "on se voit mercredi"
+
+        dictated = "on se voit mardi non attends mercredi"
+        with patch.object(main, "execute_text_with_examples", slow),                 patch.object(main, "SELF_CORRECTION_TIMEOUT_SECONDS", 0.2):
+            started = time.monotonic()
+            resolved = await main.resolve_self_corrections(dictated)
+        self.assertEqual(resolved, dictated)
+        self.assertLess(time.monotonic() - started, 1.5)
+
+    def test_the_budget_stays_short(self):
+        self.assertLessEqual(main.SELF_CORRECTION_TIMEOUT_SECONDS, 5)
+
+
 class UnrequestedListTests(unittest.TestCase):
     """Vu le 01/10 : « acheter des carottes en premier… » est sorti en liste à
     puces, chaque phrase précédée d'un tiret, alors que rien n'en annonçait."""
