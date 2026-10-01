@@ -4,6 +4,7 @@ Serveur de transcription + reformulation on-premise pour établissements.
 Auth : email académique + code à 6 chiffres.
 Confidentialité : seuls des COMPTEURS d'usage sont stockés, jamais le contenu.
 """
+import asyncio
 import csv
 import io
 import os
@@ -12076,6 +12077,10 @@ SELF_CORRECTION_EXAMPLES: tuple[tuple[str, str], ...] = (
     ("je ne viendrai pas non vraiment pas", "je ne viendrai pas non vraiment pas"),
     ("la prof a dit non au voyage", "la prof a dit non au voyage"),
 )
+# Le passage s'ajoute au temps d'attente de l'élève : au-delà, on le laisse
+# tomber et le Style reçoit la dictée telle quelle. Un moteur bloqué ajoutait
+# sinon le délai complet d'une reformulation, 30 s, avant même le Style.
+SELF_CORRECTION_TIMEOUT_SECONDS = 4.0
 # Une reprise retire des mots ; elle n'en invente pas, et ne vide pas la dictée.
 RESOLUTION_MIN_KEPT = 0.4
 RESOLUTION_MAX_NEW_WORDS = 0.1
@@ -12135,9 +12140,12 @@ async def resolve_self_corrections(text: str) -> str:
     examples = tuple(
         (transcript_message(example), answer) for example, answer in SELF_CORRECTION_EXAMPLES)
     try:
-        answer = await execute_text_with_examples(
-            TaskType.REFORMULATION, SELF_CORRECTION_INSTRUCTION,
-            transcript_message(text), examples)
+        answer = await asyncio.wait_for(
+            execute_text_with_examples(
+                TaskType.REFORMULATION, SELF_CORRECTION_INSTRUCTION,
+                transcript_message(text), examples),
+            SELF_CORRECTION_TIMEOUT_SECONDS,
+        )
     except Exception:  # noqa: BLE001 -- un échec ici ne doit jamais coûter la dictée
         observability.log("reformulation.self_correction_failed", level="warning")
         return text
