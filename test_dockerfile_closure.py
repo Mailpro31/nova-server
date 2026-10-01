@@ -20,20 +20,65 @@ réellement.
 """
 
 import ast
+import json
 import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 
-# Ce que le `CMD` de l'image et les `command:` du compose démarrent vraiment,
-# plus l'outil d'opérateur, exécuté à la main dans le conteneur `api`.
-ENTRYPOINTS = (
-    "serve.py",
-    "main.py",
-    "connector.py",
-    "directory_worker.py",
-    "admin_cli.py",
-)
+# L'outil d'opérateur. Il n'est le `command` d'aucun service : l'installateur
+# l'exécute à la main dans le conteneur `api` pour nommer le premier
+# administrateur. Rien ne peut donc le déduire, il est nommé ici.
+OPERATOR_TOOLS = ("admin_cli.py",)
+
+
+def launched_python_scripts(source: str) -> set[str]:
+    """Les scripts que `python` démarre dans un `command:` ou un `CMD`.
+
+    Les commandes sont des tableaux JSON sur une seule ligne. Celles qui ne
+    commencent pas par `python` ne nous concernent pas : le moteur de langue
+    reçoit ses propres options, pas un script du dépôt.
+    """
+    scripts: set[str] = set()
+    for ligne in source.splitlines():
+        match = re.search(r"(?:command|CMD):?\s*(\[.*\])\s*$", ligne)
+        if not match:
+            continue
+        try:
+            argv = json.loads(match.group(1))
+        except json.JSONDecodeError:
+            continue
+        if not argv or argv[0] != "python":
+            continue
+        for index, argument in enumerate(argv):
+            if argument.endswith(".py"):
+                scripts.add(argument)
+            # `python -c "import main; main.init_db()"` démarre `main` sans
+            # jamais nommer un fichier. Le service `prepare` fait exactement
+            # ça, et l'image doit quand même contenir ce qu'il importe.
+            elif argument == "-c" and index + 1 < len(argv):
+                for module in re.findall(r"import\s+(\w+)", argv[index + 1]):
+                    scripts.add(f"{module}.py")
+    return scripts
+
+
+def declared_entrypoints() -> tuple[str, ...]:
+    """Ce que l'image et le compose démarrent vraiment.
+
+    Cette liste était écrite à la main, et c'est ainsi que `usage_worker` a pu
+    devenir le `command` d'un service sans que rien ne réclame sa présence dans
+    l'image : le test ne partait pas de lui, donc ne voyait pas qu'il manquait.
+    Elle est maintenant lue à la source.
+    """
+    trouves = set(OPERATOR_TOOLS)
+    for fichier in ("docker-compose.yml", "Dockerfile"):
+        trouves |= launched_python_scripts(
+            (ROOT / fichier).read_text(encoding="utf-8")
+        )
+    return tuple(sorted(trouves))
+
+
+ENTRYPOINTS = declared_entrypoints()
 
 
 def repository_modules() -> dict[str, Path]:
@@ -105,3 +150,26 @@ def test_entrypoints_exist():
     """Un point d'entrée renommé rendrait le test ci-dessus vide, donc muet."""
     absent = [entry for entry in ENTRYPOINTS if not (ROOT / entry).is_file()]
     assert not absent, f"Points d'entrée introuvables : {', '.join(absent)}"
+
+
+def test_the_entrypoints_are_read_and_not_an_empty_list():
+    """Une lecture qui ne trouve rien rendrait le test de fermeture muet.
+
+    C'est le risque qu'on prend en calculant la liste plutôt qu'en l'écrivant :
+    si le format d'un `command:` change et que la lecture ne comprend plus
+    rien, la fermeture des imports devient vide, et tout passe. Ces cinq-là
+    sont les processus que le compose démarre aujourd'hui.
+    """
+    attendus = {
+        "serve.py",
+        "main.py",
+        "connector.py",
+        "directory_worker.py",
+        "usage_worker.py",
+    }
+    absents = sorted(attendus - set(ENTRYPOINTS))
+    assert not absents, (
+        f"Ces processus sont démarrés par le compose mais la lecture ne les "
+        f"voit plus : {', '.join(absents)}. Le test de fermeture ne protège "
+        "plus ce qu'ils importent."
+    )
