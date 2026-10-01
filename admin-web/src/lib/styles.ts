@@ -27,6 +27,7 @@ export const BUILTIN_STYLES: readonly StyleEntry[] = [
     name: "Improved transcription",
     origin: "builtin",
   },
+  { id: "nova_style_course_notes", name: "Lecture notes", origin: "builtin" },
   { id: "nova_style_email", name: "Email", origin: "builtin" },
   { id: "nova_style_messages", name: "Messages", origin: "builtin" },
   { id: "nova_style_notes", name: "Notes", origin: "builtin" },
