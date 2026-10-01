@@ -12600,6 +12600,44 @@ async def engineering_notes(body: CommandRequest, user: str = Depends(current_us
     return {"text": await execute_text(TaskType.ENGINEERING_NOTES, prompt, source_text)}
 
 
+# Un morceau de notes que le modèle peut lire ET restituer dans sa fenêtre. Le
+# petit modèle d'un serveur d'établissement n'a souvent que 4096 jetons : une
+# transcription de vidéo ou d'un cours entier ne tenait pas, et le membre ne
+# lisait que « Nova n'a pas pu structurer ces notes » (vu le 01/10). ~4000
+# caractères font ~1200 jetons en français : la consigne, le morceau et sa
+# version structurée tiennent ensemble.
+STRUCTURED_NOTES_CHUNK_CHARS = 4000
+SENTENCE_END = re.compile(r"(?<=[.!?…])\s+")
+
+
+def split_for_structuring(text: str, limit: int) -> list[str]:
+    """Des morceaux d'au plus `limit` caractères, coupés entre deux phrases, ou
+    entre deux mots quand une phrase seule dépasse. Aucun mot n'est perdu."""
+    pieces: list[str] = []
+    current = ""
+    for sentence in SENTENCE_END.split((text or "").strip()):
+        parts = [sentence]
+        if len(sentence) > limit:
+            parts, line = [], ""
+            for word in sentence.split():
+                if line and len(line) + 1 + len(word) > limit:
+                    parts.append(line)
+                    line = word
+                else:
+                    line = f"{line} {word}" if line else word
+            if line:
+                parts.append(line)
+        for part in parts:
+            if current and len(current) + 1 + len(part) > limit:
+                pieces.append(current)
+                current = part
+            else:
+                current = f"{current} {part}" if current else part
+    if current:
+        pieces.append(current)
+    return pieces
+
+
 @app.post("/api/structured-notes",
           dependencies=[Depends(product_capability("engineeringNotes", "engineering_notes"))])
 async def structured_notes(body: StructuredNotesRequest, user: str = Depends(current_user),
@@ -12619,8 +12657,11 @@ async def structured_notes(body: StructuredNotesRequest, user: str = Depends(cur
     )
     if context:
         prompt += f"\n\n{context}"
-    text = await execute_text(TaskType.ENGINEERING_NOTES, prompt, source_text)
-    return {"text": text, "note_type": body.note_type}
+    # Un texte long est structuré morceau par morceau, dans l'ordre : chaque
+    # morceau tient dans la fenêtre du modèle, rien n'est laissé de côté.
+    pieces = split_for_structuring(source_text, STRUCTURED_NOTES_CHUNK_CHARS) or [source_text]
+    parts = [await execute_text(TaskType.ENGINEERING_NOTES, prompt, piece) for piece in pieces]
+    return {"text": "\n\n".join(part.strip() for part in parts), "note_type": body.note_type}
 
 # ================================================================ LEARN
 #
