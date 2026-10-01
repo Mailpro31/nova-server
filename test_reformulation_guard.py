@@ -113,6 +113,14 @@ class ReformulationGuardTests(AdminTestCase):
                                    style_id="nova_style_meeting")
         self.assertEqual(text, dictated)
 
+    def test_a_meeting_summary_may_leave_numbers_out(self):
+        # Un compte rendu ne reprend pas chaque heure ni chaque montant.
+        dictated = ("Autres : on a depense 1 850 euros sur les 3 000, la batterie coute 140 "
+                    "euros, rendez-vous le 14 octobre de 9 heures a midi")
+        summary = "## Resume\nLe budget est presque consomme ; essais le 14 octobre."
+        text, _ = self.reformulate(dictated, summary, style_id="nova_style_meeting")
+        self.assertEqual(text, summary)
+
     def test_an_empty_answer_is_refused(self):
         text, _ = self.reformulate("merci de venir demain", "   ")
         self.assertEqual(text, "merci de venir demain")

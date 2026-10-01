@@ -5,6 +5,7 @@
  * compilateur qui le dira, pas un écran vide en production.
  */
 
+import type { UsageMetrics } from "./usageMetrics";
 import { ApiClient } from "./api";
 import type {
   CustomLessonDraft,
@@ -725,6 +726,22 @@ export class ControlPlane {
 
   policy() {
     return this.client.request<PolicyView>("/api/control/organization/policy");
+  }
+
+  /**
+   * L'historique d'usage sur `hours` heures.
+   *
+   * `members` demande le detail nominatif. Le serveur ne le rend qu'a un role
+   * qui gere les personnes, et inscrit chaque lecture au journal : la console
+   * ne le demande donc que lorsque l'administrateur ouvre cette section, pas
+   * a chaque rafraichissement de la page.
+   */
+  usageMetrics(hours: number, members = false) {
+    const query = new URLSearchParams({ hours: String(hours) });
+    if (members) query.set("members", "true");
+    return this.client.request<UsageMetrics>(
+      `/api/control/organization/usage-metrics?${query}`,
+    );
   }
 
   /**
