@@ -11102,11 +11102,30 @@ def snippet_pattern(trigger: str) -> re.Pattern:
     return re.compile(rf"(?<!\w){re.escape(trigger.strip())}(?!\w)", re.IGNORECASE)
 
 
+SNIPPET_TRIGGER_SEPARATORS = re.compile(r"[,|]")
+
+
+def snippet_triggers(trigger: str | None) -> list[str]:
+    """Les façons de dire un snippet : « mon matricule, mon numéro IPSA ».
+
+    Un élève dys ne formule pas pareil d'un jour à l'autre ; chaque façon,
+    séparée par une virgule ou une barre verticale, insère le même contenu.
+    """
+    ways: list[str] = []
+    for way in SNIPPET_TRIGGER_SEPARATORS.split(trigger or ""):
+        way = way.strip()
+        if way and way.casefold() not in (known.casefold() for known in ways):
+            ways.append(way)
+    return ways
+
+
 def longest_first(snippets) -> list:
     # « mon adresse pro » avant « mon adresse » : sinon le plus court mange
-    # le debut du plus long, et « pro » reste en trop.
-    rows = [row for row in snippets if (row["trigger"] or "").strip()]
-    return sorted(rows, key=lambda row: len(row["trigger"].strip()), reverse=True)
+    # le debut du plus long, et « pro » reste en trop. Chaque façon de dire un
+    # snippet devient une ligne, avec le même contenu.
+    rows = [{"trigger": way, "content": row["content"]}
+            for row in snippets for way in snippet_triggers(row["trigger"])]
+    return sorted(rows, key=lambda row: len(row["trigger"]), reverse=True)
 
 
 def apply_snippets(text: str, snippets: list[database.Row]) -> str:
