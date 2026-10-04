@@ -12040,6 +12040,34 @@ CHATBOT_OPENINGS = (
     "voici une réponse", "certainement, je", "sure, i can", "of course, i",
     "yes, i can", "here is an answer", "i'd be happy to",
 )
+# Ce qu'un assistant dit à l'élève, et qu'un élève ne dicte pas dans ses
+# notes ni dans son e-mail -- où que ce soit dans la sortie. Mesuré sur le
+# RTX : « Je suis désolé, mais votre demande semble incomplète. Pourriez-vous
+# préciser… » en fin d'e-mail. Comparé en mots, sans ponctuation : un élève
+# qui dicte « pourriez vous préciser » le garde. Même liste sur le poste
+# (`actions::ASSISTANT_SENTENCES`).
+ASSISTANT_SENTENCES = (
+    "votre demande semble", "demande semble incomplète", "pourriez vous préciser",
+    "pouvez vous préciser", "je n ai pas compris votre", "je ne comprends pas votre",
+    "en tant qu assistant", "en tant qu ia", "en tant que modèle",
+    "voulez vous que je", "souhaitez vous que je", "n hésitez pas à me",
+    "le texte fourni", "la transcription fournie", "la dictée fournie",
+    "your request seems", "could you clarify", "could you please clarify",
+    "as an ai", "as an assistant", "would you like me to", "feel free to ask me",
+    "the text provided", "the transcript provided", "i didn t understand your",
+)
+
+
+def spoken_words(text: str) -> str:
+    """Le texte en mots minuscules, séparés par une espace, bornés par des espaces."""
+    return " " + " ".join(re.findall(r"[^\W_]+", (text or "").casefold())) + " "
+
+
+def assistant_sentence(dictated: str, written: str) -> bool:
+    """Une phrase d'assistant dans la sortie, que l'élève n'a pas dictée."""
+    said, wrote = spoken_words(dictated), spoken_words(written)
+    return any(f" {sentence} " in wrote and f" {sentence} " not in said
+               for sentence in ASSISTANT_SENTENCES)
 FRENCH_MARKERS = frozenset(
     "le la les des une un est et que qui pour dans sur avec pas vous nous je tu "
     "il elle on mon ma mes ton ta de du au aux ce cette merci avant après".split()
@@ -12621,6 +12649,8 @@ def rewrite_refusal(dictated: str, answer: str, style_id: str) -> str | None:
         return "empty-output"
     lowered = text.lower()
     if lowered.startswith(CHATBOT_OPENINGS) and not dictated.strip().lower().startswith(CHATBOT_OPENINGS):
+        return "chatbot-answer"
+    if assistant_sentence(dictated, text):
         return "chatbot-answer"
     # Les notes de cours ont leurs propres controles, plus stricts, et les
     # motifs du poste : les nombres y sont compares en chiffres comme en
