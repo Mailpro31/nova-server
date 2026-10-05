@@ -55,3 +55,29 @@ class PersonChangedTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OwnerMovedTests(unittest.TestCase):
+    """Mesuré sur le RTX le 05/10, Style par défaut du poste : la dictée « mon
+    numéro étudiant c'est 21 45 87 32 » est devenue « le numéro de mon étudiant
+    est 21 45 87 32 ». Le « mon » est toujours là, mais il a changé de nom :
+    ce n'est plus le numéro de l'élève, c'est celui de « mon étudiant »."""
+
+    def test_a_possessive_moved_to_the_next_word_is_caught(self):
+        self.assertTrue(main.person_changed(
+            "mon numéro étudiant c'est 21 45 87 32",
+            "le numéro de mon étudiant est 21 45 87 32"))
+        self.assertEqual(
+            main.rewrite_refusal("mon numéro étudiant c'est 21 45 87 32",
+                                 "le numéro de mon étudiant est 21 45 87 32",
+                                 "default_improve_transcriptions"),
+            "person-changed")
+
+    def test_a_kept_owner_with_reordered_words_passes(self):
+        for dictated, written in (
+            ("mon numéro étudiant c'est 21 45 87 32", "Mon numéro étudiant est 21 45 87 32."),
+            ("ma présentation demain est prête", "Demain, ma présentation est prête."),
+            ("mon cours de maths commence", "Mon cours de maths commence."),
+        ):
+            with self.subTest(dictated=dictated):
+                self.assertFalse(main.person_changed(dictated, written))
