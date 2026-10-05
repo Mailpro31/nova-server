@@ -12763,6 +12763,17 @@ def person_changed(dictated: str, written: str) -> bool:
         before = {wrote[i - 1] for i in range(1, len(wrote)) if wrote[i] == noun}
         if before & OTHER_POSSESSIVES and not before & FIRST_PERSON_POSSESSIVES:
             return True
+    # Le possessif a changé de nom : « mon numéro étudiant » réécrit « le numéro
+    # de mon étudiant » (RTX, 05/10). Le numéro n'est plus celui de l'élève.
+    owned_after = {wrote[i + 1] for i in range(len(wrote) - 1)
+                   if wrote[i] in FIRST_PERSON_POSSESSIVES}
+    for i in range(len(said) - 2):
+        if said[i] not in FIRST_PERSON_POSSESSIVES:
+            continue
+        noun, following = said[i + 1], said[i + 2]
+        moved = following in owned_after and following not in owned
+        if noun in wrote and noun not in owned_after and moved:
+            return True
     return False
 
 
