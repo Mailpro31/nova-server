@@ -814,7 +814,7 @@ class DictationInvariantTests(AdminTestCase):
         # `max_bytes` est passe par la route : la dictee et l'import n'ont ni la
         # meme taille attendue ni le meme budget moteur, et le service partage
         # ne la devine pas.
-        async def engine(file, user, task_type, max_bytes):
+        async def engine(file, user, task_type, max_bytes, **options):
             return {"text": "bonjour"}
 
         with patch.object(main, "transcribe_audio", engine):

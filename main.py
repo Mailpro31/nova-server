@@ -11834,8 +11834,30 @@ def is_hint_echo(text: str, hint: str | None) -> bool:
     return matched >= 2 and matched >= min(3, len(terms))
 
 
+DICTATION_LANGUAGE = re.compile(r"[a-z]{2,3}")
+# Ce que Whisper écrit sur un clip presque vide : des hésitations, de la
+# ponctuation, une voyelle étirée (« Lééééééé... »). Mesuré le 05/10.
+HESITATIONS = frozenset(
+    "euh heu hum hm hmm mm mmh mhm uh um mm-hmm".split()
+)
+STRETCHED_SOUND = re.compile(r"(.)\1{3,}")
+
+
+def requested_language(value: str | None) -> str | None:
+    """La langue de dictée envoyée par le poste, ou `None` si elle n'en est pas une."""
+    value = (value or "").strip().lower()
+    return value if DICTATION_LANGUAGE.fullmatch(value) and value != "auto" else None
+
+
+def only_hesitations(text: str) -> bool:
+    """Vrai si la transcription n'a que des hésitations ou de la ponctuation."""
+    words = re.findall(r"[^\W\d_]+(?:-[^\W\d_]+)*", (text or "").casefold())
+    return all(word in HESITATIONS or STRETCHED_SOUND.search(word) for word in words)
+
+
 async def transcribe_audio(
-    file: UploadFile, user: str, task_type: TaskType, max_bytes: int
+    file: UploadFile, user: str, task_type: TaskType, max_bytes: int,
+    language: str | None = None,
 ) -> dict:
     """Shared speech service; authorization remains route-specific.
 
@@ -11857,12 +11879,14 @@ async def transcribe_audio(
             audio,
             file.filename or "audio.wav",
             prompt=hint,
+            language=language,
         )
     except AIRuntimeError as error:
         raise runtime_http_error(error, task_type) from error
     count_usage(user, "transcription", result.duration_seconds or 0.0)
-    text = "" if is_hint_echo(result.text, hint) else result.text
-    return {"text": text}
+    if is_hint_echo(result.text, hint) or only_hesitations(result.text):
+        return {"text": ""}
+    return {"text": result.text}
 
 
 @app.post("/api/transcribe")
@@ -11871,8 +11895,14 @@ async def transcribe(
     user: str = Depends(current_user),
     account=Depends(current_account),
     content_length: int | None = Header(default=None),
+    language: str | None = None,
 ):
     """Dictee au micro.
+
+    `language` est la langue de dictée choisie par l'élève (`?language=fr`).
+    Imposée à Whisper, elle a presque divisé par deux les erreurs de mots sur
+    une voix cassée dans le bruit (0,47 → 0,27, mesuré le 05/10). Absente ou
+    invalide, Whisper la devine, comme avant.
 
     **Aucune policy produit ne ferme cette route.** La dictee est le coeur de
     Nova : une organisation qui la couperait par erreur de configuration
@@ -11891,7 +11921,8 @@ async def transcribe(
     await reject_overlong_dictation(
         file, account_organization(account) or nova_organization_id(), account)
     return await transcribe_audio(
-        file, user, TaskType.TRANSCRIPTION_REALTIME, MAX_TRANSCRIBE_AUDIO_BYTES
+        file, user, TaskType.TRANSCRIPTION_REALTIME, MAX_TRANSCRIBE_AUDIO_BYTES,
+        language=requested_language(language),
     )
 
 

@@ -89,7 +89,7 @@ class DictationLimitDeliveryTests(AdminTestCase):
         self.assertEqual(response.status_code, 200, response.text)
 
     def dictate(self, audio: bytes):
-        async def engine(file, user, task_type, max_bytes):
+        async def engine(file, user, task_type, max_bytes, **options):
             return {"text": "bonjour"}
 
         token = self.sign_in("etudiant@example.com")
@@ -143,7 +143,7 @@ class DictationLimitDeliveryTests(AdminTestCase):
     def test_file_import_is_not_bound_by_the_dictation_limit(self):
         self.set_limit(30)
 
-        async def engine(file, user, task_type, max_bytes):
+        async def engine(file, user, task_type, max_bytes, **options):
             return {"text": "bonjour"}
 
         token = self.sign_in("etudiant@example.com")
