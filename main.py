@@ -11929,10 +11929,32 @@ UNCLEAR_AVG_LOGPROB = -1.0
 LOOP_WORDS = 5
 
 
+# Ce que Whisper écrit sur du bruit sans un mot dit : des crédits de
+# sous-titres appris sur des vidéos, avec une confiance qui paraît normale.
+# Mesuré sur le RTX le 05/10 : « Sous-titres réalisés par l'Amara.org »
+# (−0,63), « Sous-titrage ST' 501 » (−0,66). Comparé en mots, sans accents.
+SUBTITLE_CREDITS = re.compile(
+    r"\b(?:sous titres? (?:realises? )?(?:par )?(?:la communaute )?(?:d )?(?:l )?amara org"
+    r"|sous titrage st(?: \d+)?"
+    r"|sous titrage societe radio canada"
+    r"|merci d avoir regarde cette video"
+    r"|subtitles by the amara org community"
+    r"|thanks for watching)\b"
+)
+
+
+def only_subtitle_credits(text: str) -> bool:
+    """Vrai si la transcription n'est faite que de crédits de sous-titres."""
+    words = " ".join(re.findall(r"[^\W_]+", fold_accents((text or "").casefold())))
+    return bool(words) and not SUBTITLE_CREDITS.sub(" ", words).strip()
+
+
 def dictation_unclear(text: str, avg_logprob: float | None) -> bool:
-    """Vrai si Whisper n'a pas compris la dictée : confiance trop basse, ou une
-    phrase reprise en boucle."""
+    """Vrai si Whisper n'a pas compris la dictée : confiance trop basse, une
+    phrase reprise en boucle, ou seulement des crédits de sous-titres."""
     if avg_logprob is not None and avg_logprob < UNCLEAR_AVG_LOGPROB:
+        return True
+    if only_subtitle_credits(text):
         return True
     words = re.findall(r"[^\W_]+", (text or "").casefold())
     seen: dict[tuple[str, ...], int] = {}
