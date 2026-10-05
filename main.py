@@ -12744,6 +12744,28 @@ def grouped_number_reformatted(dictated: str, written: str) -> bool:
     return any(digits(number) in grouped for number in PUNCTUATED_NUMBER.findall(written))
 
 
+FIRST_PERSON_POSSESSIVES = frozenset("mon ma mes notre nos".split())
+OTHER_POSSESSIVES = frozenset("votre vos ton ta tes son sa ses leur leurs".split())
+
+
+def person_changed(dictated: str, written: str) -> bool:
+    """« mon matricule » réécrit « votre matricule » : la personne a changé.
+
+    Mesuré sur le RTX le 05/10 : « Mon Matricule c'est pour le dossier de
+    bourse » est devenu « Votre matricule est pour le dossier de bourse ».
+    Un nom que l'élève a dit avec un possessif de la première personne ne
+    peut pas revenir avec celui d'une autre personne, sans jamais garder le
+    sien. Même règle sur le poste (`guard::person_changed`).
+    """
+    said, wrote = spoken_words(dictated), spoken_words(written)
+    owned = {said[i + 1] for i in range(len(said) - 1) if said[i] in FIRST_PERSON_POSSESSIVES}
+    for noun in owned:
+        before = {wrote[i - 1] for i in range(1, len(wrote)) if wrote[i] == noun}
+        if before & OTHER_POSSESSIVES and not before & FIRST_PERSON_POSSESSIVES:
+            return True
+    return False
+
+
 def rewrite_refusal(dictated: str, answer: str, style_id: str) -> str | None:
     """Pourquoi cette sortie ne doit pas remplacer la dictee, ou `None`.
 
@@ -12759,6 +12781,11 @@ def rewrite_refusal(dictated: str, answer: str, style_id: str) -> str | None:
         return "chatbot-answer"
     if assistant_sentence(dictated, text):
         return "chatbot-answer"
+    # Ce qui était à l'élève devient à quelqu'un d'autre. Un Style
+    # d'organisation peut tout réécrire : il y échappe.
+    person_guarded = style_id in GUARDED_STYLE_IDS or style_id == COURSE_NOTES_STYLE
+    if person_guarded and person_changed(dictated, text):
+        return "person-changed"
     # Les notes de cours ont leurs propres controles, plus stricts, et les
     # motifs du poste : les nombres y sont compares en chiffres comme en
     # lettres.
