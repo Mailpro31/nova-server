@@ -12766,13 +12766,24 @@ def person_changed(dictated: str, written: str) -> bool:
     return False
 
 
-def rewrite_refusal(dictated: str, answer: str, style_id: str) -> str | None:
+# Le Style que le poste envoie par défaut (`actions.rs`) : « sans Style »
+# est contrôlé comme lui.
+DEFAULT_REWRITE_STYLE = "default_improve_transcriptions"
+
+
+def rewrite_refusal(dictated: str, answer: str, style_id: str | None) -> str | None:
     """Pourquoi cette sortie ne doit pas remplacer la dictee, ou `None`.
 
     Les memes controles que le poste (`validate_rewrite`) : un serveur qui les
     ferait moins bien rendrait aux membres d'une organisation ce que le poste
     refuse ailleurs.
+
+    Sans Style (ancien poste, Style désactivé par l'organisation, appel direct
+    à l'API), les contrôles sont ceux du Style par défaut du poste : relevé
+    sur le RTX le 05/10, une requête sans Style n'avait ni le contrôle des
+    nombres ni celui de la personne.
     """
+    style_id = (style_id or "").strip() or DEFAULT_REWRITE_STYLE
     text = (answer or "").strip()
     if not text:
         return "empty-output"
