@@ -11385,6 +11385,148 @@ def command_text(text: str) -> str:
     """Le texte selectionne, delimite comme une matiere a traiter."""
     return f"<text>\n{text}\n</text>"
 
+
+# ──────────────── Ce qu'une commande a le droit de rendre ────────────────
+#
+# ## Le défaut que cette section corrige
+#
+# `/api/command` rendait la sortie du modèle telle quelle. Aucun des contrôles
+# de la reformulation (#64 à #91) ne s'y appliquait. Banc du RTX, 06/10, sur
+# 8780c3c :
+#
+# - quatre commandes sur un texte français répondaient en anglais, dont
+#   « Améliorer », qui rendait une traduction ;
+# - « Améliorer » perdait la moitié d'un message et changeait son destinataire ;
+# - « mets en liste à puces » remplaçait « rho » d'une formule par « puce »,
+#   un mot de la consigne. Un élève dys ne verrait pas cette erreur.
+#
+# Le serveur ne sait pas quelle commande tourne : il reçoit une consigne libre.
+# Il la classe donc d'après ses mots, et chaque sorte a ses contrôles :
+#
+#   traduire    la langue change, c'est le but : seule la phrase d'assistant
+#               est refusée ;
+#   réécrire    améliorer, corriger : même langue, mêmes nombres, mêmes mots
+#               pour l'essentiel, même personne ;
+#   condenser   expliquer, résumer : même langue, aucun nombre inventé ;
+#   autre       consigne libre : même langue, aucun nombre inventé, aucun mot
+#               de la consigne glissé dans le texte.
+#
+# Une sortie refusée n'est pas remplacée par le texte d'origine : l'élève
+# verrait « rien n'a changé » sans comprendre. Le poste affiche « Nova n'a pas
+# pu traiter cette demande », ce qui est vrai.
+
+COMMAND_LANGUAGE_NAMES = re.compile(
+    r"\b(?:translat\w*|tradui\w*|traduction|english|anglais|french|fran[cç]ais|"
+    r"spanish|espagnol|german|allemand|italian|italien|portuguese|portugais|"
+    r"dutch|n[ée]erlandais|chinese|chinois|japanese|japonais|arabic|arabe|"
+    r"russian|russe|korean|cor[ée]en)\b",
+    re.IGNORECASE,
+)
+COMMAND_REWRITE = re.compile(
+    r"\b(?:improve\w*|correct\w*|corrig\w*|am[ée]lior\w*|proofread\w*|"
+    r"spelling|orthograph\w*|grammar|grammaire|reformul\w*|r[ée][ée]cri\w*)\b",
+    re.IGNORECASE,
+)
+COMMAND_CONDENSE = re.compile(
+    r"\b(?:explain\w*|expliqu\w*|summar\w*|r[ée]sum\w*)\b", re.IGNORECASE,
+)
+# Des mots qu'une consigne et une réponse fidèle partagent sans rien inventer.
+COMMAND_SHARED_WORDS = frozenset(
+    "texte text liste list forme format phrase phrases point points partie "
+    "parties titre titres ligne lignes paragraphe paragraphes tableau resume "
+    "summary note notes".split()
+)
+LANGUAGE_NAMES_FOR_PROMPT = {"fr": "French", "en": "English"}
+
+
+def command_kind(instruction: str) -> str:
+    """`translate`, `rewrite`, `condense` ou `other`, d'après la consigne.
+
+    L'ordre compte : « Explain… Do not simply rephrase it » explique, et une
+    consigne qui nomme une langue traduit.
+    """
+    if COMMAND_LANGUAGE_NAMES.search(instruction or ""):
+        return "translate"
+    if COMMAND_CONDENSE.search(instruction or ""):
+        return "condense"
+    if COMMAND_REWRITE.search(instruction or ""):
+        return "rewrite"
+    return "other"
+
+
+def command_language_line(instruction: str, text: str) -> str:
+    """La langue de la réponse, dite au modèle quand la consigne ne la nomme pas.
+
+    « Answer in the language of the text » ne suffisait pas : le modèle du
+    RTX suivait la langue de la consigne système, l'anglais.
+    """
+    if command_kind(instruction) == "translate":
+        return ""
+    language = LANGUAGE_NAMES_FOR_PROMPT.get(dictation_language(text) or "")
+    if not language:
+        return ""
+    return f"\n\nThe text is written in {language}. Write the result in {language}."
+
+
+def _stem(word: str) -> str:
+    return word[:-1] if len(word) > 4 and word.endswith(("s", "x")) else word
+
+
+def instruction_word_leaked(instruction: str, text: str, answer: str) -> bool:
+    """Un mot de la consigne apparu dans la réponse sans être dans le texte.
+
+    « Mets ce texte sous forme de liste à puces » a rendu « vaut : puce fois V
+    fois L » à la place de « rho fois V fois L ».
+    """
+    stems = lambda value: {_stem(word) for word in content_words(value)}  # noqa: E731
+    leaked = stems(instruction) & stems(answer)
+    return bool(leaked - stems(text) - {_stem(word) for word in COMMAND_SHARED_WORDS})
+
+
+def command_refusal(instruction: str, text: str, answer: str) -> str | None:
+    """Pourquoi cette réponse ne doit pas être proposée à l'élève, ou `None`."""
+    output = (answer or "").strip()
+    if not output:
+        return "empty-output"
+    if assistant_sentence(text, output):
+        return "chatbot-answer"
+    kind = command_kind(instruction)
+    if kind == "translate":
+        return None
+    source_language = dictation_language(text)
+    written_language = dictation_language(output)
+    if source_language and written_language and source_language != written_language:
+        return "language-changed"
+    # Une réécriture garde les nombres ; une explication ou un résumé peut en
+    # omettre, jamais en inventer.
+    reason = facts_refusal(text, output, kind == "rewrite")
+    if reason:
+        return reason
+    if kind == "rewrite":
+        ratio = kept_word_ratio(text, output)
+        if ratio is not None and ratio < MIN_KEPT_WORDS:
+            return "text-not-kept"
+        if person_changed(text, output):
+            return "person-changed"
+    if kind in ("rewrite", "other") and instruction_word_leaked(instruction, text, output):
+        return "instruction-leaked"
+    return None
+
+
+async def run_command(task_type: TaskType, instruction: str, text: str,
+                      vocabulary: str) -> str:
+    """Le circuit d'une commande, sans la route HTTP : consigne, modèle,
+    contrôles. Les routes et le banc de mesure l'appellent tous deux."""
+    system_prompt = command_prompt(instruction, vocabulary) + command_language_line(
+        instruction, text)
+    answer = await execute_text(task_type, system_prompt, command_text(text))
+    reason = command_refusal(instruction, text, answer)
+    if reason:
+        observability.log("command.refused", level="warning", reason=reason,
+                          kind=command_kind(instruction))
+        raise HTTPException(422, {"code": "COMMAND_REFUSED", "reason": reason})
+    return answer
+
 @app.get("/api/vocabulary", dependencies=[Depends(product_capability("dictionary", "organization_vocabulary"))])
 def vocabulary(user: str = Depends(current_user)):
     with db() as conn:
@@ -13024,9 +13166,8 @@ async def command(body: CommandRequest, user: str = Depends(current_user),
                   account=Depends(current_account)):
     instruction = clean_required(body.instruction, "instruction", 2000)
     enforce_inference_quota("text", user, account_organization(account))
-    system_prompt = command_prompt(instruction, vocabulary_context(user))
-    return {"text": await execute_text(TaskType.VOICE_COMMAND, system_prompt,
-                                       command_text(body.text))}
+    return {"text": await run_command(TaskType.VOICE_COMMAND, instruction, body.text,
+                                      vocabulary_context(user))}
 
 class SkillRunRequest(BaseModel):
     skill_id: str = Field(max_length=MAX_INFERENCE_ID_CHARS)
@@ -13069,9 +13210,8 @@ async def run_skill(body: SkillRunRequest, user: str = Depends(current_user),
         # ce que son organisation prepare sans l'avoir publie.
         raise auth_error(404, "SKILL_NOT_AVAILABLE")
 
-    system_prompt = command_prompt(instruction, vocabulary_context(user))
-    return {"text": await execute_text(TaskType.AI_SKILL, system_prompt,
-                                       command_text(body.text)),
+    return {"text": await run_command(TaskType.AI_SKILL, instruction, body.text,
+                                      vocabulary_context(user)),
             "skill_id": body.skill_id}
 
 
