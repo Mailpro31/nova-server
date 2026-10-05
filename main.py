@@ -11178,6 +11178,27 @@ def protect_snippets(text: str, snippets) -> tuple[str, dict[str, str]]:
 ANNOUNCES_VALUE = (":", "-", "\u2013", "\u2014", "=", "(", "\u00ab", '"', ",")
 
 
+def keep_dictated_case(prefix: str, trigger: str) -> str:
+    """Le déclencheur juste avant le repère, avec la casse dictée.
+
+    Le modèle prend parfois le déclencheur pour une étiquette et lui met une
+    majuscule : « …confondre avec Mon adresse ». En milieu de phrase, la casse
+    dictée revient ; en début de phrase ou de ligne, la majuscule reste.
+    """
+    if not trigger or not prefix.casefold().endswith(trigger.casefold()):
+        return prefix
+    start = len(prefix) - len(trigger)
+    written = prefix[start:]
+    if written == trigger:
+        return prefix
+    before = prefix[:start].rstrip(" \t")
+    if not before or before.endswith(("\n", ".", "!", "?", "…")):
+        return prefix
+    if start > 0 and (prefix[start - 1].isalnum() or prefix[start - 1] == "_"):
+        return prefix
+    return prefix[:start] + trigger
+
+
 def restore_snippets(text: str, restores: dict[str, tuple[str, str]]) -> str | None:
     """Le texte avec ses snippets, ou `None` si le modele a perdu un repere.
 
@@ -11191,7 +11212,7 @@ def restore_snippets(text: str, restores: dict[str, tuple[str, str]]) -> str | N
     for marker, (trigger, content) in restores.items():
         while marker in text:
             index = text.index(marker)
-            prefix = text[:index].rstrip(" \t")
+            prefix = keep_dictated_case(text[:index].rstrip(" \t"), trigger)
             rest = text[index + len(marker):]
             last_word = re.split(r"\s", prefix)[-1].rstrip(string.punctuation) if prefix else ""
             trigger_word = trigger.split()[-1] if trigger.split() else ""
