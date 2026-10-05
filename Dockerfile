@@ -47,7 +47,7 @@ COPY migrations/ ./migrations/
 COPY scripts/bench_self_corrections.py ./scripts/
 # Le banc de reformulation, avec les consignes reelles des Styles du poste :
 # `docker compose exec api python scripts/bench_reformulation.py`.
-COPY scripts/bench_reformulation.py scripts/bench_style_prompts.json ./scripts/
+COPY scripts/bench_reformulation.py scripts/bench_style_prompts.json scripts/bench_transcription.py ./scripts/
 
 # Le mode Lab. Ces fichiers vivent dans l'image plutot que sur le poste
 # client : ils heritent ainsi de la verification de digest OCI que
