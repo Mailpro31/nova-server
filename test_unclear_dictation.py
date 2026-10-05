@@ -110,3 +110,33 @@ class UnclearRouteTests(AdminTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SubtitleCreditTests(unittest.TestCase):
+    """Mesuré sur le RTX le 05/10 (615a4ce) : sur du bruit, sans un mot dit,
+    Whisper écrit des crédits de sous-titres appris sur des vidéos, avec une
+    confiance qui paraît normale (−0,63, −0,66) : « Sous-titres réalisés par
+    l'Amara.org », « Sous-titrage ST' 501 ». Une dictée qui n'est QUE cela est
+    incomprise : rien n'est collé."""
+
+    def test_a_dictation_made_only_of_credits_is_unclear(self):
+        for heard in (
+            "Sous-titres réalisés par l'Amara.org",
+            "Sous-titres réalisés par la communauté d'Amara.org",
+            "Sous-titrage ST' 501",
+            "Sous-titrage Société Radio-Canada",
+            "Merci d'avoir regardé cette vidéo !",
+            "Subtitles by the Amara.org community",
+            "Thanks for watching!",
+        ):
+            with self.subTest(heard=heard):
+                self.assertTrue(main.dictation_unclear(heard, -0.63))
+
+    def test_real_dictations_that_mention_these_words_are_kept(self):
+        for said in (
+            "Les sous-titres de la vidéo sont en anglais.",
+            "Merci d'avoir regardé mon rapport.",
+            "Le site Amara.org propose des sous-titres participatifs pour les cours.",
+        ):
+            with self.subTest(said=said):
+                self.assertFalse(main.dictation_unclear(said, -0.3))
