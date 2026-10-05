@@ -11197,7 +11197,9 @@ def keep_dictated_case(prefix: str, trigger: str) -> str:
         return prefix
     start = len(prefix) - len(trigger)
     written = prefix[start:]
-    if written == trigger:
+    # Seule la majuscule ajoutée en tête est défaite : « IBAN » pour « iban »
+    # est une correction du modèle, et reste.
+    if written == trigger or written != trigger[:1].upper() + trigger[1:]:
         return prefix
     before = prefix[:start].rstrip(" \t")
     if not before or before.endswith(("\n", ".", "!", "?", "…")):
@@ -11205,6 +11207,26 @@ def keep_dictated_case(prefix: str, trigger: str) -> str:
     if start > 0 and (prefix[start - 1].isalnum() or prefix[start - 1] == "_"):
         return prefix
     return prefix[:start] + trigger
+
+
+def reattach_lost_markers(text: str, restores: dict[str, tuple[str, str]]) -> str:
+    """Un repère perdu par le modèle, remis juste derrière son déclencheur.
+
+    Mesuré sur le RTX le 05/10 : 6 fois sur 9, le modèle reformulait la
+    phrase en perdant `{{snippetN}}`, et toute la reformulation était jetée
+    au profit de la dictée brute, sans majuscule ni ponctuation. Si les mots
+    du déclencheur sont restés, une seule fois, le repère revient derrière
+    eux. Sinon le texte ne change pas, et la dictée brute est rendue.
+    """
+    for marker, (trigger, _content) in restores.items():
+        if marker in text or not trigger.strip():
+            continue
+        pattern = re.compile(rf"(?<!\w){re.escape(trigger.strip())}(?!\w)", re.IGNORECASE)
+        found = list(pattern.finditer(text))
+        if len(found) == 1:
+            end = found[0].end()
+            text = f"{text[:end]} {marker}{text[end:]}"
+    return text
 
 
 def restore_snippets(text: str, restores: dict[str, tuple[str, str]]) -> str | None:
@@ -11215,6 +11237,7 @@ def restore_snippets(text: str, restores: dict[str, tuple[str, str]]) -> str | N
     ajoute quand la phrase l'annonce deja, quand le modele a mis le repere sur sa
     propre ligne, ou quand il l'a deplace ailleurs dans la phrase.
     """
+    text = reattach_lost_markers(text, restores)
     if any(marker not in text for marker in restores):
         return None
     for marker, (trigger, content) in restores.items():

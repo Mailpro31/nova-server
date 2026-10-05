@@ -55,7 +55,8 @@ class SnippetProtectionTests(unittest.TestCase):
 
     def test_a_lost_marker_cannot_be_restored(self):
         protected, restores = main.protect_snippets("voici mon iban", self.ROWS)
-        self.assertIsNone(main.restore_snippets("Voici mon IBAN.", restores))
+        # Le déclencheur a disparu lui aussi : rien ne dit où remettre la valeur.
+        self.assertIsNone(main.restore_snippets("Voici le numéro.", restores))
 
     def test_expansion_is_longest_first(self):
         self.assertEqual(main.expand_snippets("mon adresse pro", self.ROWS),
@@ -153,10 +154,18 @@ class ReformulateSnippetTests(AdminTestCase):
 
     def test_a_lost_marker_returns_the_dictation_with_its_snippet(self):
         text, _ = self.reformulate("voici mon iban merci de faire le virement",
-                                   "Voici mon IBAN, merci de faire le virement.")
+                                   "Voici le numéro, merci de faire le virement.")
         self.assertEqual(
             text,
             "voici mon iban : FR76 3000 6000 0112 3456 7890 189 merci de faire le virement")
+
+    def test_a_lost_marker_behind_its_trigger_is_put_back(self):
+        """Mesuré sur le RTX le 05/10 : la reformulation est gardée."""
+        text, _ = self.reformulate("voici mon iban merci de faire le virement",
+                                   "Voici mon IBAN, merci de faire le virement.")
+        self.assertEqual(
+            text,
+            "Voici mon IBAN : FR76 3000 6000 0112 3456 7890 189, merci de faire le virement.")
 
     def test_a_refused_answer_returns_the_dictation_with_its_snippet(self):
         text, _ = self.reformulate("ecris a mon mail pour le partiel de l'ipsa",
