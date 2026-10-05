@@ -12,8 +12,9 @@ au propre et la valeur exacte. Sinon, rien ne change : la dictée brute.
 """
 
 import unittest
+from unittest.mock import patch
 
-from test_main import AdminTestCase  # noqa: F401
+from test_main import AdminTestCase
 
 import main
 
@@ -23,8 +24,8 @@ ROWS = [{"trigger": "mon numéro étudiant, mon matricule", "content": "21458732
 
 
 def restored(dictated: str, model_output: str):
-    _, restores = main.protect_snippets(dictated, ROWS)
-    return main.restore_snippets(model_output, restores)
+    protected, restores = main.protect_snippets(dictated, ROWS)
+    return main.restore_snippets(model_output, restores, dictated=protected)
 
 
 class SnippetMarkerRepairTests(unittest.TestCase):
@@ -55,3 +56,47 @@ class SnippetMarkerRepairTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RepairNeverLetsAnInventedNumberThroughTests(AdminTestCase):
+    """Mesuré sur le RTX le 05/10, après #85 : avec un Style sans contrôle des
+    nombres, le modèle remplaçait le repère par « 25% », #85 remettait le
+    repère, et l'élève recevait « …mon numéro étudiant : 21458732 25% pour
+    l'inscription au partiel. ». Avant #85, la dictée brute, juste.
+    Le repère n'est remis que si la sortie n'invente ni nombre ni date."""
+
+    def reformulate(self, text, answer, style_id):
+        token = self.sign_in("etudiant@example.com")
+        self.client.post("/api/snippets", headers=self.auth(token),
+                         json={"trigger": "mon numéro étudiant, mon matricule",
+                               "content": "21458732"})
+
+        async def engine(task_type, instruction, message):
+            return answer
+
+        with patch.object(main, "execute_text", engine):
+            response = self.client.post(
+                "/api/reformulate", headers=self.auth(token),
+                json={"text": text, "style_id": style_id, "style_prompt": "Mets au propre."})
+        self.assertEqual(response.status_code, 200, response.text)
+        return response.json()["text"]
+
+    def test_an_invented_number_sends_back_the_dictation(self):
+        dictated = "bonjour je vous envoie mon numéro étudiant pour l'inscription au partiel"
+        for style_id in ("perso_notes", "nova_style_everyday"):
+            with self.subTest(style_id=style_id):
+                text = self.reformulate(
+                    dictated,
+                    "Bonjour, je vous envoie mon numéro étudiant 25% pour l'inscription au partiel.",
+                    style_id)
+                self.assertNotIn("25", text)
+                self.assertIn("21458732", text)
+
+    def test_a_clean_repair_is_still_kept(self):
+        text = self.reformulate(
+            "bonjour je vous envoie mon numéro étudiant pour l'inscription au partiel",
+            "Bonjour, je vous envoie mon numéro étudiant pour l'inscription au partiel.",
+            "perso_notes")
+        self.assertEqual(
+            text,
+            "Bonjour, je vous envoie mon numéro étudiant : 21458732 pour l'inscription au partiel.")
