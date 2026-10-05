@@ -11920,6 +11920,30 @@ def only_hesitations(text: str) -> bool:
     return all(word in HESITATIONS or STRETCHED_SOUND.search(word) for word in words)
 
 
+# Sous ce seuil, Whisper lui-même rejette un passage (sa « température de
+# repli ») : il devine. Mesuré sur les dictées de Sash le 05/10 : −0,20 et
+# −0,47 pour des dictées justes, −1,18 pour du charabia.
+UNCLEAR_AVG_LOGPROB = -1.0
+# Une phrase de cinq mots reprise mot pour mot : la boucle d'un modèle qui
+# invente (« D'accord, un peu d'alcool pour ma prosse en PIX » ×5).
+LOOP_WORDS = 5
+
+
+def dictation_unclear(text: str, avg_logprob: float | None) -> bool:
+    """Vrai si Whisper n'a pas compris la dictée : confiance trop basse, ou une
+    phrase reprise en boucle."""
+    if avg_logprob is not None and avg_logprob < UNCLEAR_AVG_LOGPROB:
+        return True
+    words = re.findall(r"[^\W_]+", (text or "").casefold())
+    seen: dict[tuple[str, ...], int] = {}
+    for i in range(len(words) - LOOP_WORDS + 1):
+        phrase = tuple(words[i:i + LOOP_WORDS])
+        if phrase in seen and i - seen[phrase] >= LOOP_WORDS:
+            return True
+        seen.setdefault(phrase, i)
+    return False
+
+
 async def transcribe_audio(
     file: UploadFile, user: str, task_type: TaskType, max_bytes: int,
     language: str | None = None,
@@ -11945,12 +11969,20 @@ async def transcribe_audio(
             file.filename or "audio.wav",
             prompt=hint,
             language=language,
+            confidence=task_type == TaskType.TRANSCRIPTION_REALTIME,
         )
     except AIRuntimeError as error:
         raise runtime_http_error(error, task_type) from error
     count_usage(user, "transcription", result.duration_seconds or 0.0)
     if is_hint_echo(result.text, hint) or only_hesitations(result.text):
         return {"text": ""}
+    # Une dictée que Whisper n'a pas comprise ne se colle pas : le poste le dit
+    # à l'élève (« parlez un peu plus fort »). Un fichier importé, long, n'est
+    # pas jugé ainsi : un passage douteux ne doit pas faire perdre le reste.
+    dictated = task_type == TaskType.TRANSCRIPTION_REALTIME
+    if dictated and dictation_unclear(result.text, result.avg_logprob):
+        observability.log("transcription.unclear", level="info")
+        return {"text": "", "unclear": True}
     return {"text": result.text}
 
 

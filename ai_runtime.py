@@ -176,6 +176,9 @@ class SpeechInferenceRequest:
     # Texte d'amorce : le vocabulaire attendu, écrit comme il doit l'être. Il
     # oriente l'orthographe des mots rares ; il ne remplace rien.
     prompt: str | None = None
+    # Demander à Whisper sa confiance (`avg_logprob` de chaque passage), pour
+    # ne pas coller une dictée qu'il n'a pas comprise.
+    confidence: bool = False
 
 
 @dataclass(frozen=True)
@@ -185,6 +188,25 @@ class SpeechInferenceResult:
     duration_seconds: float | None
     latency_ms: int
     backend: dict[str, Any]
+    # Confiance moyenne de Whisper, pondérée par la longueur de chaque passage ;
+    # `None` quand le moteur ne la donne pas.
+    avg_logprob: float | None = None
+
+
+def segments_confidence(segments: Any) -> float | None:
+    """La confiance moyenne des passages, pondérée par leur longueur."""
+    if not isinstance(segments, list):
+        return None
+    total = weight = 0.0
+    for segment in segments:
+        if not isinstance(segment, dict):
+            continue
+        logprob = segment.get("avg_logprob")
+        text = segment.get("text") if isinstance(segment.get("text"), str) else ""
+        if isinstance(logprob, (int, float)) and text.strip():
+            total += float(logprob) * len(text)
+            weight += len(text)
+    return total / weight if weight else None
 
 
 @dataclass(frozen=True)
@@ -552,7 +574,7 @@ class WhisperCompatibleSpeechBackend:
             data["language"] = request.language
         if request.prompt:
             data["prompt"] = request.prompt
-        if request.timestamps:
+        if request.timestamps or request.confidence:
             data["response_format"] = "verbose_json"
         started = time.monotonic()
         try:
@@ -590,6 +612,7 @@ class WhisperCompatibleSpeechBackend:
                 duration_seconds=float(duration) if isinstance(duration, (int, float)) else None,
                 latency_ms=round((time.monotonic() - started) * 1000),
                 backend={"adapter": self.adapter_name},
+                avg_logprob=segments_confidence(body.get("segments")),
             )
         except (ValueError, json.JSONDecodeError) as error:
             raise AIRuntimeError(AI_RUNTIME_FAILED) from error
@@ -924,6 +947,7 @@ class OrganizationAIRouter:
         timestamps: bool = False,
         request_id: str | None = None,
         prompt: str | None = None,
+        confidence: bool = False,
     ) -> SpeechInferenceResult:
         if task_type not in SPEECH_TASKS:
             raise AIRuntimeError(AI_RUNTIME_CONFIG_INVALID)
@@ -937,6 +961,7 @@ class OrganizationAIRouter:
             timestamps,
             timeout,
             prompt,
+            confidence,
         )
         await self.speech_capacity.acquire()
         try:
