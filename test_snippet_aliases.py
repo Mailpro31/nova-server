@@ -49,7 +49,7 @@ class SnippetAliasTests(unittest.TestCase):
 
     def test_the_ways_of_saying_it_are_listed_once_each(self):
         self.assertEqual(
-            main.snippet_triggers(" a , b|  c,,a "), ["a", "b", "c"])
+            main.snippet_triggers(" a b , c d|  e f,,A B "), ["a b", "c d", "e f"])
         self.assertEqual(main.snippet_triggers("mon lien visio"), ["mon lien visio"])
 
     def test_an_empty_way_is_ignored(self):
