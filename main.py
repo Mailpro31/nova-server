@@ -11102,17 +11102,25 @@ def snippet_pattern(trigger: str) -> re.Pattern:
     return re.compile(rf"(?<!\w){re.escape(trigger.strip())}(?!\w)", re.IGNORECASE)
 
 
-SNIPPET_TRIGGER_SEPARATORS = re.compile(r"[,|]")
+def comma_ways(part: str) -> list[str]:
+    """Une virgule ne sépare deux façons de dire que si chacune a au moins deux
+    mots : « mon matricule, mon numéro étudiant ». « Cordialement, Sasha
+    Martin » reste une seule phrase, sinon « cordialement » dit seul
+    déclencherait le snippet. Même règle sur le poste (`comma_ways`)."""
+    pieces = part.split(",")
+    phrases = all(len(piece.split()) != 1 for piece in pieces)
+    return pieces if len(pieces) > 1 and phrases else [part]
 
 
 def snippet_triggers(trigger: str | None) -> list[str]:
     """Les façons de dire un snippet : « mon matricule, mon numéro IPSA ».
 
     Un élève dys ne formule pas pareil d'un jour à l'autre ; chaque façon,
-    séparée par une virgule ou une barre verticale, insère le même contenu.
+    séparée par une barre verticale, ou par une virgule entre des phrases
+    d'au moins deux mots, insère le même contenu.
     """
     ways: list[str] = []
-    for way in SNIPPET_TRIGGER_SEPARATORS.split(trigger or ""):
+    for way in (piece for part in (trigger or "").split("|") for piece in comma_ways(part)):
         way = way.strip()
         if way and way.casefold() not in (known.casefold() for known in ways):
             ways.append(way)
@@ -12102,7 +12110,9 @@ ASSISTANT_SENTENCES = (
     "votre demande semble", "demande semble incomplète", "pourriez vous préciser",
     "pouvez vous préciser", "je n ai pas compris votre", "je ne comprends pas votre",
     "en tant qu assistant", "en tant qu ia", "en tant que modèle",
-    "voulez vous que je", "souhaitez vous que je", "n hésitez pas à me",
+    "voulez vous que je", "souhaitez vous que je",
+    # « N'hésitez pas à me contacter » est une formule d'e-mail ordinaire.
+    "n hésitez pas à me demander", "n hésitez pas à me poser",
     "le texte fourni", "la transcription fournie", "la dictée fournie",
     "your request seems", "could you clarify", "could you please clarify",
     "as an ai", "as an assistant", "would you like me to", "feel free to ask me",
@@ -12110,16 +12120,25 @@ ASSISTANT_SENTENCES = (
 )
 
 
-def spoken_words(text: str) -> str:
-    """Le texte en mots minuscules, séparés par une espace, bornés par des espaces."""
-    return " " + " ".join(re.findall(r"[^\W_]+", (text or "").casefold())) + " "
+def spoken_words(text: str) -> list[str]:
+    """Les mots du texte, en minuscules et sans accents."""
+    return re.findall(r"[^\W_]+", fold_accents((text or "").casefold()))
 
 
 def assistant_sentence(dictated: str, written: str) -> bool:
-    """Une phrase d'assistant dans la sortie, que l'élève n'a pas dictée."""
-    said, wrote = spoken_words(dictated), spoken_words(written)
-    return any(f" {sentence} " in wrote and f" {sentence} " not in said
-               for sentence in ASSISTANT_SENTENCES)
+    """Une phrase d'assistant dans la sortie, que l'élève n'a pas dictée.
+
+    L'élève l'a dite si tous ses mots sont dans la dictée, dans n'importe quel
+    ordre : « est-ce que vous pourriez préciser » devient légitimement
+    « Pourriez-vous préciser » dans un e-mail.
+    """
+    said = set(spoken_words(dictated))
+    wrote = f" {' '.join(spoken_words(written))} "
+    for sentence in ASSISTANT_SENTENCES:
+        needle = spoken_words(sentence)
+        if f" {' '.join(needle)} " in wrote and not all(word in said for word in needle):
+            return True
+    return False
 FRENCH_MARKERS = frozenset(
     "le la les des une un est et que qui pour dans sur avec pas vous nous je tu "
     "il elle on mon ma mes ton ta de du au aux ce cette merci avant après".split()
