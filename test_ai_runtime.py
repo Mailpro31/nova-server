@@ -573,7 +573,11 @@ class InferenceEndpointTests(AdminTestCase):
                 json={"text": "draft", "style_prompt": "improve"},
             )
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["text"], "fake:reformulation")
+        # Sans Style, les contrôles du Style par défaut s'appliquent : le faux
+        # moteur répond « fake:reformulation », qui ne reprend rien de la
+        # dictée, et l'élève reçoit donc « draft ». Le moteur est appelé une
+        # fois et compté une fois.
+        self.assertEqual(response.json()["text"], "draft")
         self.assertEqual(len(router.text_backend.requests), 1)
         with main.db() as conn:
             row = conn.execute(
