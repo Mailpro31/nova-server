@@ -11209,7 +11209,8 @@ def keep_dictated_case(prefix: str, trigger: str) -> str:
     return prefix[:start] + trigger
 
 
-def reattach_lost_markers(text: str, restores: dict[str, tuple[str, str]]) -> str:
+def reattach_lost_markers(text: str, restores: dict[str, tuple[str, str]],
+                          dictated: str | None = None) -> str:
     """Un repère perdu par le modèle, remis juste derrière son déclencheur.
 
     Mesuré sur le RTX le 05/10 : 6 fois sur 9, le modèle reformulait la
@@ -11217,7 +11218,18 @@ def reattach_lost_markers(text: str, restores: dict[str, tuple[str, str]]) -> st
     au profit de la dictée brute, sans majuscule ni ponctuation. Si les mots
     du déclencheur sont restés, une seule fois, le repère revient derrière
     eux. Sinon le texte ne change pas, et la dictée brute est rendue.
+
+    **Jamais sans la dictée, et jamais sur une sortie qui invente.** Mesuré
+    aussi sur le RTX après #85 : avec un Style sans contrôle des nombres, le
+    modèle avait remplacé le repère par « 25% », et la réparation livrait
+    « mon numéro étudiant : 21458732 25% ». Une sortie qui ajoute un nombre ou
+    une date absents de la dictée n'est donc jamais réparée : la dictée brute
+    reste la réponse.
     """
+    if dictated is None or not any(marker not in text for marker in restores):
+        return text
+    if facts_refusal(dictated, text, False):
+        return text
     for marker, (trigger, _content) in restores.items():
         if marker in text or not trigger.strip():
             continue
@@ -11229,7 +11241,8 @@ def reattach_lost_markers(text: str, restores: dict[str, tuple[str, str]]) -> st
     return text
 
 
-def restore_snippets(text: str, restores: dict[str, tuple[str, str]]) -> str | None:
+def restore_snippets(text: str, restores: dict[str, tuple[str, str]],
+                     dictated: str | None = None) -> str | None:
     """Le texte avec ses snippets, ou `None` si le modele a perdu un repere.
 
     La valeur est annoncee par « : » quand le repere suit les mots du
@@ -11237,7 +11250,7 @@ def restore_snippets(text: str, restores: dict[str, tuple[str, str]]) -> str | N
     ajoute quand la phrase l'annonce deja, quand le modele a mis le repere sur sa
     propre ligne, ou quand il l'a deplace ailleurs dans la phrase.
     """
-    text = reattach_lost_markers(text, restores)
+    text = reattach_lost_markers(text, restores, dictated)
     if any(marker not in text for marker in restores):
         return None
     for marker, (trigger, content) in restores.items():
@@ -12895,7 +12908,8 @@ async def reformulate(body: ReformulateRequest, user: str = Depends(current_user
                               style=style_id or "", reason=outcome.reason)
         return fallback
     result = outcome.text
-    restored = restore_snippets(enforce_vocabulary(result, vocabulary), snippet_restores)
+    restored = restore_snippets(
+        enforce_vocabulary(result, vocabulary), snippet_restores, dictated=source_text)
     if restored is None:
         # Le modele a perdu un repere : le snippet manquerait au texte.
         observability.log("reformulation.snippet_lost", level="warning", style=style_id or "")
