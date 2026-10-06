@@ -95,7 +95,10 @@ class RefusedOutputsTests(unittest.TestCase):
                   "nombre de Reynolds est inférieur à 2 300 ;\n  - Il est turbulent si le nombre "
                   "de Reynolds est supérieur à 4 000.\n- Le partielle se déroulera le **15 "
                   "novembre** à **14 h** en salle **B204**.")
-        self.assertEqual(main.command_refusal(LIST, COURS, listed), "instruction-leaked")
+        # « Le partielle » ne nomme plus l'examen non plus : l'un ou l'autre motif.
+        self.assertIn(main.command_refusal(LIST, COURS, listed),
+                      ("instruction-leaked", "exam-lost"))
+        self.assertTrue(main.instruction_word_leaked(LIST, COURS, listed))
 
     def test_an_invented_number_is_refused(self):
         self.assertEqual(
@@ -126,6 +129,65 @@ class RefusedOutputsTests(unittest.TestCase):
 
     def test_an_empty_answer_is_refused(self):
         self.assertEqual(main.command_refusal(SUMMARIZE, COURS, "  "), "empty-output")
+
+
+class SecondBenchTests(unittest.TestCase):
+    """Banc du RTX sur e737ddc (#92), sorties brutes du modèle mot pour mot."""
+
+    def test_a_summary_that_keeps_the_date_but_loses_the_exam_is_refused(self):
+        # « Le partiel » devenu « La partie », date gardée.
+        self.assertEqual(
+            main.command_refusal(
+                SUMMARIZE, COURS,
+                "Le Reynolds vaut rho fois V fois L divisé par mu. Dans la plupart des cas, "
+                "l'écoulement dans une conduite est laminaire sous 2 300 et turbulent au-dessus "
+                "de 4 000. La partie se déroulera le 15 novembre à 14 heures dans la salle B204."),
+            "exam-lost")
+
+    def test_a_summary_may_leave_the_exam_out_entirely(self):
+        self.assertIsNone(main.command_refusal(
+            SUMMARIZE, COURS, "Laminaire sous 2 300, turbulent au-dessus de 4 000."))
+
+    def test_a_summary_longer_than_the_text_is_refused(self):
+        self.assertEqual(
+            main.command_refusal(
+                SUMMARIZE, MESSAGE,
+                "Je n'ai pas pu rendre mon devoir de mécanique hier, parce que mon ordinateur "
+                "est tombé en panne pendant la soirée. Je peux vous l'envoyer avant vendredi 18 h, "
+                "sans faute."),
+            "summary-not-shorter")
+
+    def test_an_explanation_may_be_longer_than_the_text(self):
+        self.assertIsNone(main.command_refusal(
+            EXPLAIN, "Le Reynolds vaut rho fois V fois L divisé par mu.",
+            "Le nombre de Reynolds compare l'inertie d'un fluide à sa viscosité. Rho est la "
+            "masse volumique, V la vitesse, L une longueur caractéristique et mu la viscosité."))
+
+    def test_zero_minutes_are_not_an_invented_number(self):
+        self.assertIsNone(main.command_refusal(
+            IMPROVE, MESSAGE,
+            "Je n'ai pas pu rendre mon devoir de mécanique hier, car mon ordinateur est tombé en "
+            "panne. Je peux vous l'envoyer avant vendredi, 18 h 00."))
+
+    def test_the_raw_refused_outputs_stay_refused(self):
+        for instruction, text, raw, reason in (
+            (SUMMARIZE, MESSAGE,
+             "Je ne peux pas rendre mon devoir de mécanique aujourd'hui car mon ordinateur est "
+             "hors service. Il sera envoyé avant le vendredi à minuit.", "number-lost"),
+            (IMPROVE, MESSAGE,
+             "Je ne peux pas rendre mon devoir de mécanique hier car mon ordinateur est tombé en "
+             "panne. Je peux le faire avant vendredi à minuit.", "number-lost"),
+            (IMPROVE, FAUTES,
+             "je m'excuse pour avoir oublié d'enregistrer mes notes pendant la classe de "
+             "thermodynamique. si vous pouvez me les envoyer avant jeudi, cela serait grandement "
+             "apprécié.", "text-not-kept"),
+        ):
+            with self.subTest(raw=raw[:30]):
+                self.assertIsNotNone(main.command_refusal(instruction, text, raw))
+
+    def test_formulas_are_to_be_copied_as_written(self):
+        self.assertIn("Copy formulas, symbols and units exactly as they are written",
+                      main.command_prompt(LIST, ""))
 
 
 class AcceptedOutputsTests(unittest.TestCase):
