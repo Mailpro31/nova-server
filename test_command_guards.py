@@ -235,6 +235,69 @@ class AcceptedOutputsTests(unittest.TestCase):
             "broke down. I can send it before Friday at 6 PM."))
 
 
+# La nouvelle consigne d'Améliorer du poste (nova-desktop d5ee348).
+MINIMAL = ("Correct the spelling, grammar and punctuation of the following text. Keep every "
+           "word that is correctly spelled, in the same order; do not add, remove or reword "
+           "ideas, and keep who the text is addressed to. Keep the same language. Return only "
+           "the corrected text.")
+
+
+class ThirdBenchTests(unittest.TestCase):
+    """Banc du RTX sur 6112404 : sorties brutes, mot pour mot."""
+
+    def test_je_m_oublie_and_on_instead_of_quelqu_un_are_refused(self):
+        self.assertEqual(
+            main.command_refusal(
+                MINIMAL, FAUTES,
+                "je m'oublie de prendre mes notes pendant le cours de thermodynamique. "
+                "Est-ce qu'on pourrait me les envoyer avant jeudi ?"),
+            "person-changed")
+
+    def test_vous_instead_of_quelqu_un_is_refused(self):
+        self.assertIsNotNone(main.command_refusal(
+            IMPROVE, FAUTES,
+            "je m'excuse pour avoir oublié d'apporter mes notes pendant la classe de "
+            "thermodynamique. serait-il possible que vous m'en fassiez parvenir avant jeudi ?"))
+
+    def test_a_correction_may_restore_a_missing_apostrophe(self):
+        # « jai » devient « j'ai » : un « j' » de plus, aucun pronom perdu.
+        self.assertIsNone(main.command_refusal(
+            MINIMAL, FAUTES,
+            "J'ai oublié de prendre mes notes pendant le cours de thermo, est-ce que quelqu'un "
+            "peut me les envoyer avant jeudi ?"))
+        self.assertIsNone(main.command_refusal(
+            SPELLING, FAUTES,
+            "J'ai oublié de prendre mes notes pendant le cours de thermodynamique. Est-ce que "
+            "quelqu'un pourrait m'en envoyer avant jeudi ?"))
+
+    def test_losing_the_addressee_is_refused(self):
+        self.assertTrue(main.pronouns_swapped(
+            MESSAGE,
+            "Je n'ai pas pu rendre mon devoir de mécanique hier, car mon ordinateur est tombé en "
+            "panne. Il pourra être envoyé avant vendredi 18 h."))
+
+    def test_a_preamble_is_an_assistant_answer(self):
+        self.assertEqual(
+            main.command_refusal(
+                MINIMAL, MESSAGE,
+                "Le texte correcte serait : \"Je n'ai pas pu rendre mon devoir de mécanique hier "
+                "parce que mon ordinateur est tombé en panne. Je peux vous l'envoyer avant "
+                "vendredi 18 h.\""),
+            "chatbot-answer")
+        self.assertEqual(
+            main.command_refusal(LIST, COURS, "Voici la liste à puces :\n- Le nombre de Reynolds."),
+            "chatbot-answer")
+
+    def test_a_heading_from_the_text_is_not_a_preamble(self):
+        self.assertIsNone(main.command_refusal(
+            SUMMARIZE, "Liste des courses : du pain, du lait, des œufs et du beurre pour demain.",
+            "Liste des courses : pain, lait, œufs."))
+        self.assertIsNone(main.command_refusal(
+            LIST, COURS,
+            "Reynolds :\n- vaut rho fois V fois L divisé par mu ;\n- laminaire sous 2 300 ;\n"
+            "- turbulent au-dessus de 4 000 ;\n- partiel le 15 novembre à 14 h, salle B204."))
+
+
 class CommandRouteTests(AdminTestCase):
     def post(self, answer, instruction=SUMMARIZE, text=COURS, path="/api/command"):
         token = self.sign_in("etudiant@example.com")
