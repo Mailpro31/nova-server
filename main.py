@@ -23,6 +23,7 @@ import string
 import time
 import unicodedata
 import uuid
+from collections import Counter
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -11448,7 +11449,13 @@ ZERO_MINUTES = re.compile(r"\b(\d{1,2})\s?(?:h|:)\s?00\b", re.IGNORECASE)
 COMMAND_SHARED_WORDS = frozenset(
     "texte text liste list forme format phrase phrases point points partie "
     "parties titre titres ligne lignes paragraphe paragraphes tableau resume "
-    "summary note notes".split()
+    "summary note notes "
+    # Des mots-outils : « sous forme de liste » ne glisse pas « sous » dans
+    # « laminaire sous 2 300 ».
+    "sous dans avec pour sans mets mettre fais faire donne donner cette comme "
+    "plus moins tout tous toute toutes chaque entre vers chez apres avant puis "
+    "aussi bien tres seulement rien autre autres your with this that from into "
+    "make write give each about only".split()
 )
 LANGUAGE_NAMES_FOR_PROMPT = {"fr": "French", "en": "English"}
 
@@ -11522,7 +11529,7 @@ def command_refusal(instruction: str, text: str, answer: str) -> str | None:
     output = (answer or "").strip()
     if not output:
         return "empty-output"
-    if assistant_sentence(text, output):
+    if assistant_sentence(text, output) or answer_preamble(text, output):
         return "chatbot-answer"
     kind = command_kind(instruction)
     if kind == "translate":
@@ -11550,11 +11557,69 @@ def command_refusal(instruction: str, text: str, answer: str) -> str | None:
         ratio = kept_word_ratio(text, output)
         if ratio is not None and ratio < MIN_KEPT_WORDS:
             return "text-not-kept"
-        if person_changed(text, output):
+        if person_changed(text, output) or pronouns_swapped(text, output):
             return "person-changed"
     if kind in ("rewrite", "other") and instruction_word_leaked(instruction, text, output):
         return "instruction-leaked"
     return None
+
+
+# « Le texte correcte serait : "…" », « Voici la liste à puces : » — le modèle
+# présente sa réponse au lieu de la donner. Banc du RTX sur 6112404.
+ANSWER_PREAMBLE = re.compile(r"^\s*([^\n:]{3,80}?)\s*:\s*(?:\n|[\"«“]|$)")
+PREAMBLE_WORDS = frozenset(
+    "voici voila here texte text corrige corrigee correcte correct corrected "
+    "version resultat result resume summary liste list traduction translation "
+    "explication explanation reponse answer".split()
+)
+
+
+def answer_preamble(text: str, answer: str) -> bool:
+    """La réponse commence par une présentation d'elle-même, absente du texte."""
+    found = ANSWER_PREAMBLE.match(answer or "")
+    if not found:
+        return False
+    head = fold_accents(found.group(1).lower())
+    if not set(re.findall(r"[a-z]+", head)) & PREAMBLE_WORDS:
+        return False
+    return head.strip() not in fold_accents((text or "").lower())
+
+
+# Les pronoms qui disent qui parle et à qui. « quelqu'un peut me les envoyer »
+# corrigé en « on pourrait me les envoyer » : le destinataire change, sans
+# qu'aucun possessif ne bouge, et `person_changed` ne le voit pas. « j'ai
+# oublié » devenu « je m'oublie » ajoute un pronom que l'élève n'a pas écrit.
+PERSON_PRONOUNS = {
+    "je": "je", "j": "je", "jai": "je", "me": "me", "m": "me", "moi": "moi",
+    "tu": "tu", "te": "te", "t": "te", "toi": "toi", "on": "on", "nous": "nous",
+    "vous": "vous", "quelquun": "quelquun", "i": "i", "you": "you", "we": "we",
+    "someone": "someone", "somebody": "someone", "anyone": "anyone",
+}
+
+
+def _person_pronouns(value: str) -> Counter:
+    folded = fold_accents((value or "").lower()).replace("’", "'")
+    folded = re.sub(r"quelqu\s*'\s*un", "quelquun", folded)
+    return Counter(PERSON_PRONOUNS[word] for word in re.findall(r"[a-z]+", folded)
+                   if word in PERSON_PRONOUNS)
+
+
+def pronouns_swapped(text: str, answer: str) -> bool:
+    """Un pronom de personne est apparu pendant qu'un autre disparaissait.
+
+    Une correction peut ajouter un pronom oublié (« jai » → « j'ai » compte
+    déjà comme « je ») ou en retirer un en trop ; elle ne remplace pas une
+    personne par une autre.
+    """
+    said, wrote = _person_pronouns(text), _person_pronouns(answer)
+    if wrote - said and said - wrote:
+        return True
+    # « Je peux vous l'envoyer » réécrit « Il pourra être envoyé » : le
+    # destinataire disparaît sans qu'aucun pronom n'arrive à sa place.
+    return any(said[word] and not wrote[word] for word in ADDRESSEE_PRONOUNS)
+
+
+ADDRESSEE_PRONOUNS = ("vous", "tu", "te", "toi", "quelquun", "you", "someone", "anyone")
 
 
 async def run_command(task_type: TaskType, instruction: str, text: str,
