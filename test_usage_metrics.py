@@ -161,6 +161,25 @@ class UsageHistoryTests(unittest.TestCase):
         self.assertEqual(months, 0, "un mois de l'an 2000 ne se conserve pas")
         self.assertEqual(removed, 2)
 
+    def test_the_daily_usage_is_kept_ninety_days_only(self):
+        """Une ligne par personne et par jour de dictée : écrite à chaque
+        dictée, lue par rien, elle n'était jamais purgée. Décision de Sash le
+        06/10 : 90 jours, comme le détail horaire."""
+        recent = time.strftime("%Y-%m-%d", time.gmtime(time.time() - 10 * DAY))
+        old = time.strftime("%Y-%m-%d", time.gmtime(time.time() - 120 * DAY))
+        with main.db() as conn:
+            for day in (recent, old):
+                conn.execute(
+                    "INSERT INTO usage(email, day, transcriptions) VALUES (?,?,?)",
+                    ("a@ecole.example", day, 3),
+                )
+
+        main.purge_usage()
+
+        with main.db() as conn:
+            days = [row[0] for row in conn.execute("SELECT day FROM usage").fetchall()]
+        self.assertEqual(days, [recent])
+
     def test_two_samples_in_the_same_second_do_not_break_the_round(self):
         sample = usage_metrics.sample_host(0.0)
         main.record_host_sample(sample)
