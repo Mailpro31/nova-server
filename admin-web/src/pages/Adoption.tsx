@@ -45,6 +45,9 @@ function CountCells({
   minPeople: number;
   regular: boolean;
 }) {
+  if (!counts.measured) {
+    return <td colSpan={regular ? 4 : 3}>{t.adoption.notMeasured}</td>;
+  }
   if (counts.masked) {
     return <td colSpan={regular ? 4 : 3}>{t.adoption.masked(minPeople)}</td>;
   }
@@ -87,6 +90,11 @@ export function Adoption() {
               )}
 
               <Notice>{t.adoption.maskRule(report.min_people)}</Notice>
+              <Notice>
+                {report.measured_from
+                  ? t.adoption.measuredFrom(report.measured_from)
+                  : t.adoption.notMeasuredYet}
+              </Notice>
 
               <h4>{t.adoption.byWeek}</h4>
               <table className="usage-members">
@@ -102,7 +110,10 @@ export function Adoption() {
                 <tbody>
                   {[...report.weeks].reverse().map((week) => (
                     <tr key={week.week_start}>
-                      <td>{weekLabel(week.week_start)}</td>
+                      <td>
+                        {weekLabel(week.week_start)}
+                        {week.partial && ` ${t.adoption.partial}`}
+                      </td>
                       <CountCells counts={week} minPeople={report.min_people} regular />
                     </tr>
                   ))}
@@ -125,7 +136,10 @@ export function Adoption() {
                   <tbody>
                     {[...report.months].reverse().map((month) => (
                       <tr key={month.month}>
-                        <td>{monthLabel(month.month)}</td>
+                        <td>
+                          {monthLabel(month.month)}
+                          {month.partial && ` ${t.adoption.partial}`}
+                        </td>
                         <CountCells
                           counts={month}
                           minPeople={report.min_people}

@@ -19,12 +19,27 @@ const MASKED = {
   reformulations: null,
   audio_minutes: null,
   masked: true,
+  measured: true,
+  partial: false,
+};
+
+const UNMEASURED = {
+  people: null,
+  regular_people: null,
+  dictations: null,
+  reformulations: null,
+  audio_minutes: null,
+  masked: false,
+  measured: false,
+  partial: false,
 };
 
 const REPORT: AdoptionReport = {
   min_people: 3,
   regular_days: 3,
+  measured_from: "2026-09-29",
   weeks: [
+    { week_start: "2026-09-21", ...UNMEASURED },
     {
       week_start: "2026-09-28",
       people: 4,
@@ -33,6 +48,8 @@ const REPORT: AdoptionReport = {
       reformulations: 30,
       audio_minutes: 45.5,
       masked: false,
+      measured: true,
+      partial: true,
     },
     { week_start: "2026-10-05", ...MASKED },
   ],
@@ -44,6 +61,8 @@ const REPORT: AdoptionReport = {
       reformulations: 60,
       audio_minutes: 110,
       masked: false,
+      measured: true,
+      partial: false,
     },
   ],
 };
@@ -56,16 +75,19 @@ describe("adoption", () => {
 
   test("la dernière semaine lisible saute une semaine masquée", () => {
     expect(latestWeek(REPORT)?.week_start).toBe("2026-09-28");
-    expect(latestWeek({ ...REPORT, weeks: [REPORT.weeks[1]] })).toBeNull();
+    expect(latestWeek({ ...REPORT, weeks: [REPORT.weeks[2]] })).toBeNull();
+    // Une semaine non mesurée n'est jamais « la dernière semaine ».
+    expect(latestWeek({ ...REPORT, weeks: [REPORT.weeks[0]] })).toBeNull();
   });
 
   test("le CSV dit qu'une période est masquée, sans zéro inventé", () => {
     const lines = adoptionCsv(REPORT).split("\n");
     expect(lines[0]).toBe(
-      "periode;debut;personnes;personnes_regulieres;dictees;reformulations;minutes_dictees;masque",
+      "periode;debut;personnes;personnes_regulieres;dictees;reformulations;minutes_dictees;remarque",
     );
-    expect(lines[1]).toBe("semaine;2026-09-28;4;2;120;30;45.5;");
-    expect(lines[2]).toBe("semaine;2026-10-05;;;;;;moins de 3 personnes");
-    expect(lines[3]).toBe("mois;2026-09;5;;300;60;110;");
+    expect(lines[1]).toBe("semaine;2026-09-21;;;;;;non mesuré");
+    expect(lines[2]).toBe("semaine;2026-09-28;4;2;120;30;45.5;partiel");
+    expect(lines[3]).toBe("semaine;2026-10-05;;;;;;moins de 3 personnes");
+    expect(lines[4]).toBe("mois;2026-09;5;;300;60;110;");
   });
 });
