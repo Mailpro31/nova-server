@@ -3265,6 +3265,9 @@ def decode_jwt_claims(token: str) -> dict:
 # sans que personne ne s'en serve.
 USAGE_HOURLY_RETENTION_DAYS = 90
 USAGE_MONTHLY_RETENTION_DAYS = 730
+# Le compte par personne et par jour (`usage`) : 90 jours, comme l'horaire.
+# Décision de Sash, 06/10.
+USAGE_DAILY_RETENTION_DAYS = 90
 HOST_SAMPLE_RETENTION_DAYS = 90
 
 
@@ -3413,6 +3416,9 @@ def purge_usage(now: float | None = None) -> int:
     month_limit = time.strftime(
         "%Y-%m", time.gmtime(stamp - USAGE_MONTHLY_RETENTION_DAYS * 86400)
     )
+    day_limit = time.strftime(
+        "%Y-%m-%d", time.gmtime(stamp - USAGE_DAILY_RETENTION_DAYS * 86400)
+    )
     removed = 0
     with db() as conn:
         removed += conn.execute(
@@ -3420,6 +3426,12 @@ def purge_usage(now: float | None = None) -> int:
         ).rowcount or 0
         removed += conn.execute(
             "DELETE FROM usage_monthly WHERE month < ?", (month_limit,)
+        ).rowcount or 0
+        # Une ligne par personne et par jour de dictée, que rien ne lit : elle
+        # n'était jamais purgée et gardait sans limite les jours où chaque
+        # élève a dicté.
+        removed += conn.execute(
+            "DELETE FROM usage WHERE day < ?", (day_limit,)
         ).rowcount or 0
     return removed
 
