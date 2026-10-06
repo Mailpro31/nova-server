@@ -5,6 +5,7 @@
  * compilateur qui le dira, pas un écran vide en production.
  */
 
+import type { AdoptionReport } from "./adoption";
 import type { UsageMetrics } from "./usageMetrics";
 import { ApiClient } from "./api";
 import type {
@@ -736,6 +737,11 @@ export class ControlPlane {
    * ne le demande donc que lorsque l'administrateur ouvre cette section, pas
    * a chaque rafraichissement de la page.
    */
+  /** L'adoption par semaine et par mois : des comptes, aucun nom. */
+  adoption() {
+    return this.client.request<AdoptionReport>("/api/control/organization/adoption");
+  }
+
   usageMetrics(hours: number, members = false) {
     const query = new URLSearchParams({ hours: String(hours) });
     if (members) query.set("members", "true");

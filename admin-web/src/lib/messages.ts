@@ -942,6 +942,27 @@ export const t = {
       "This detail names members. Each time it is opened, the reading is written to the administration journal. Tell the people concerned that their usage is measured.",
     member: "Member",
   },
+  adoption: {
+    title: "Adoption",
+    description:
+      "How many people use Nova each week, how many come back, and how much they dictate. Counts only, never names: this page can be shared in a report.",
+    latestWeek: "Latest week",
+    people: "People",
+    regularPeople: (days: number) => `Regular (${days}+ days)`,
+    dictations: "Dictations",
+    minutes: "Minutes dictated",
+    week: "Week",
+    month: "Month",
+    byWeek: "By week (last 12 weeks)",
+    byMonth: "By month",
+    // Dit avant les chiffres : un tiret dans le tableau ne doit pas se lire
+    // comme un zéro.
+    maskRule: (min: number) =>
+      `A week or month in which fewer than ${min} people dictated is hidden. When you know who takes part in a pilot, a count of one or two people is their own usage.`,
+    masked: (min: number) => `Hidden: fewer than ${min} people`,
+    empty: "No dictation recorded yet.",
+    exportCsv: "Export the report (CSV)",
+  },
   limits: {
     title: "Limits",
     lead: "Limits that apply to every member of this organization.",

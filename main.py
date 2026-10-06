@@ -14916,6 +14916,135 @@ def usage_summary(timeline: list[dict]) -> dict:
     }
 
 
+# ──────────────── L'adoption, pour la direction et la CTI ────────────────
+#
+# Le suivi d'usage ci-dessus sert au diagnostic : heure par heure, sur 24 h à
+# 31 jours. Rendre compte d'un semestre demande autre chose : combien de
+# personnes se servent de Nova chaque semaine, combien y reviennent, combien
+# elles dictent. Le rapport est fait de comptes, sans aucun nom, et ne lit que
+# ce que le serveur garde déjà : le détail horaire (90 jours) pour les
+# semaines, la trace mensuelle (2 ans) pour les mois.
+#
+# Une semaine ou un mois où une ou deux personnes seulement ont dicté est
+# masqué. Quand on sait qui fait partie d'un pilote, « 1 personne, 40
+# dictées » est l'usage de cette personne.
+
+ADOPTION_WEEKS = 12
+ADOPTION_MIN_PEOPLE = 3
+# Trois jours de dictée dans la semaine : une personne qui revient, et non un
+# essai isolé.
+ADOPTION_REGULAR_DAYS = 3
+
+
+def _adoption_counts(people: set, regular: int | None, transcriptions: int,
+                     reformulations: int, audio_seconds: float) -> dict:
+    count = len(people)
+    if 0 < count < ADOPTION_MIN_PEOPLE:
+        return {"people": None, "regular_people": None, "dictations": None,
+                "reformulations": None, "audio_minutes": None, "masked": True}
+    return {
+        "people": count,
+        "regular_people": regular,
+        "dictations": transcriptions + reformulations,
+        "reformulations": reformulations,
+        "audio_minutes": round(audio_seconds / 60, 1),
+        "masked": False,
+    }
+
+
+def adoption_report(now: float | None = None) -> dict:
+    """Les semaines et les mois d'usage, en comptes, sans nom.
+
+    Construit hors de la route pour être mesuré sans connexion, comme
+    `run_command` : la route n'ajoute que l'autorisation. Les semaines
+    commencent le lundi (UTC). Comme le reste du suivi d'usage, le rapport
+    couvre le serveur entier : en mode dédié, c'est l'établissement.
+    """
+    stamp = time.time() if now is None else now
+    today = time.gmtime(stamp)
+    this_monday = stamp - today.tm_wday * 86400
+    first_monday = this_monday - (ADOPTION_WEEKS - 1) * 7 * 86400
+    starts = [time.strftime("%Y-%m-%d", time.gmtime(first_monday + i * 7 * 86400))
+              for i in range(ADOPTION_WEEKS)]
+    since = f"{starts[0]}T00"
+
+    with db() as conn:
+        hours = conn.execute(
+            """SELECT email, hour, transcriptions, reformulations, audio_seconds
+               FROM usage_hourly WHERE hour >= ?""",
+            (since,),
+        ).fetchall()
+        recent = conn.execute(
+            """SELECT email, substr(hour, 1, 7) AS month,
+                      SUM(transcriptions) AS transcriptions,
+                      SUM(reformulations) AS reformulations,
+                      SUM(audio_seconds) AS audio_seconds
+               FROM usage_hourly GROUP BY email, substr(hour, 1, 7)""",
+        ).fetchall()
+        older = conn.execute(
+            "SELECT email, month, transcriptions, reformulations, audio_seconds "
+            "FROM usage_monthly"
+        ).fetchall()
+
+    def week_of(hour: str) -> str | None:
+        day = hour[:10]
+        found = None
+        for start in starts:
+            if start <= day:
+                found = start
+        return found
+
+    weeks: dict[str, dict] = {
+        start: {"people": set(), "days": {}, "t": 0, "r": 0, "a": 0.0} for start in starts
+    }
+    for row in hours:
+        start = week_of(row["hour"])
+        if start is None:
+            continue
+        week = weeks[start]
+        week["people"].add(row["email"])
+        week["days"].setdefault(row["email"], set()).add(row["hour"][:10])
+        week["t"] += row["transcriptions"] or 0
+        week["r"] += row["reformulations"] or 0
+        week["a"] += row["audio_seconds"] or 0.0
+
+    months: dict[str, dict] = {}
+    for row in [*older, *recent]:
+        month = months.setdefault(row["month"], {"people": set(), "t": 0, "r": 0, "a": 0.0})
+        month["people"].add(row["email"])
+        month["t"] += row["transcriptions"] or 0
+        month["r"] += row["reformulations"] or 0
+        month["a"] += row["audio_seconds"] or 0.0
+
+    return {
+        "min_people": ADOPTION_MIN_PEOPLE,
+        "regular_days": ADOPTION_REGULAR_DAYS,
+        "weeks": [
+            {"week_start": start, **_adoption_counts(
+                week["people"],
+                sum(1 for days in week["days"].values() if len(days) >= ADOPTION_REGULAR_DAYS),
+                week["t"], week["r"], week["a"])}
+            for start, week in weeks.items()
+        ],
+        "months": [
+            {"month": key, **_adoption_counts(
+                month["people"], None, month["t"], month["r"], month["a"])}
+            for key, month in sorted(months.items())
+        ],
+    }
+
+
+@app.get("/api/control/organization/adoption")
+def control_read_adoption(
+    principal: AdminPrincipal = Depends(
+        require_admin_capability(CAPABILITY_DIAGNOSTICS_READ)
+    ),
+):
+    """L'adoption par semaine et par mois. Des comptes, aucun nom : rien
+    n'est inscrit au journal, comme pour les totaux du suivi d'usage."""
+    return adoption_report()
+
+
 @app.get("/api/control/organization/usage-metrics")
 def control_read_usage_metrics(
     hours: int = 24,
