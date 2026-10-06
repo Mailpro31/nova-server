@@ -33,6 +33,7 @@ import { Identity } from "./pages/Identity";
 import { Learn } from "./pages/Learn";
 import { Limits } from "./pages/Limits";
 import { UsageMetrics } from "./pages/UsageMetrics";
+import { Adoption } from "./pages/Adoption";
 import { Members } from "./pages/Members";
 import { Packages } from "./pages/Packages";
 import { Provisioning } from "./pages/Provisioning";
@@ -54,6 +55,7 @@ const PAGES = [
   { path: "packages", label: t.nav.packages, element: <Packages /> },
   { path: "limits", label: t.nav.limits, element: <Limits /> },
   { path: "usage", label: t.usageMetrics.title, element: <UsageMetrics /> },
+  { path: "adoption", label: t.adoption.title, element: <Adoption /> },
   { path: "deployment", label: t.nav.deployment, element: <Deployment /> },
   { path: "configuration", label: t.nav.configuration, element: <Configuration /> },
   { path: "security", label: t.nav.security, element: <Security /> },
