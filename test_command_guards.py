@@ -298,6 +298,34 @@ class ThirdBenchTests(unittest.TestCase):
             "- turbulent au-dessus de 4 000 ;\n- partiel le 15 novembre à 14 h, salle B204."))
 
 
+class EnglishNumberWordsTests(unittest.TestCase):
+    """Banc du RTX sur 6112404 : « 3 » corrigé en « three » était refusé."""
+
+    def test_a_number_written_in_english_words_keeps_its_value(self):
+        self.assertIsNone(main.command_refusal(
+            MINIMAL, ANGLAIS,
+            "The lab report is due on March 12. Each group of three students must measure "
+            "the flow rate at five different pressures."))
+
+    def test_a_changed_english_number_is_still_refused(self):
+        self.assertIsNotNone(main.command_refusal(
+            MINIMAL, ANGLAIS,
+            "The lab report is due on March 12. Each group of four students must measure "
+            "the flow rate at five different pressures."))
+
+    def test_one_is_not_a_number(self):
+        self.assertEqual(main.command_numbers("the one who came, no one else", True),
+                         "the one who came, no one else")
+
+    def test_french_words_are_never_read_as_english_numbers(self):
+        self.assertEqual(main.command_numbers("le four est chaud", False), "le four est chaud")
+        self.assertIsNone(main.command_refusal(
+            SUMMARIZE,
+            "Le four de la cantine chauffe à 250 degrés pendant que le cours de thermique "
+            "explique la conduction, la convection et le rayonnement en détail.",
+            "Le four chauffe à 250 degrés ; conduction, convection, rayonnement."))
+
+
 class CommandRouteTests(AdminTestCase):
     def post(self, answer, instruction=SUMMARIZE, text=COURS, path="/api/command"):
         token = self.sign_in("etudiant@example.com")

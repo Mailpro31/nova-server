@@ -11524,6 +11524,33 @@ def exam_lost(text: str, answer: str) -> bool:
     return False
 
 
+# Les nombres anglais en lettres. Le lecteur des nombres (`spoken_numbers`) ne
+# connaît que le français : banc du RTX sur 6112404, « Each group of 3
+# students… at 5 different pressures » corrigé en « three… five » était refusé
+# pour un nombre perdu, alors que la valeur n'avait pas changé. « one » n'y est
+# pas : « the one who », « no one » ne sont pas des nombres.
+ENGLISH_NUMBER_WORDS = {
+    "zero": 0, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
+    "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12, "thirteen": 13,
+    "fourteen": 14, "fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18,
+    "nineteen": 19, "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50,
+    "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90, "hundred": 100,
+    "thousand": 1000,
+}
+ENGLISH_NUMBER_WORD = re.compile(
+    r"\b(" + "|".join(ENGLISH_NUMBER_WORDS) + r")\b", re.IGNORECASE)
+
+
+def command_numbers(text: str, english: bool) -> str:
+    """Le texte prêt pour le contrôle des nombres d'une commande : « 18 h 00 »
+    lu « 18 h », et, en anglais, les nombres en lettres écrits en chiffres."""
+    text = ZERO_MINUTES.sub(r"\1 h", text or "")
+    if not english:
+        return text
+    return ENGLISH_NUMBER_WORD.sub(
+        lambda found: str(ENGLISH_NUMBER_WORDS[found.group(1).lower()]), text)
+
+
 def command_refusal(instruction: str, text: str, answer: str) -> str | None:
     """Pourquoi cette réponse ne doit pas être proposée à l'élève, ou `None`."""
     output = (answer or "").strip()
@@ -11540,8 +11567,11 @@ def command_refusal(instruction: str, text: str, answer: str) -> str | None:
         return "language-changed"
     # Une réécriture garde les nombres ; une explication ou un résumé peut en
     # omettre, jamais en inventer.
-    reason = facts_refusal(ZERO_MINUTES.sub(r"\1 h", text),
-                           ZERO_MINUTES.sub(r"\1 h", output), kind == "rewrite")
+    # « le four », « six » sont aussi du français : les nombres anglais en
+    # lettres ne sont lus que dans un texte qui n'est pas français.
+    english = source_language != "fr"
+    reason = facts_refusal(command_numbers(text, english), command_numbers(output, english),
+                           kind == "rewrite")
     if reason:
         return reason
     if exam_lost(text, output):
