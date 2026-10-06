@@ -960,6 +960,13 @@ export const t = {
     maskRule: (min: number) =>
       `A week or month in which fewer than ${min} people dictated is hidden. When you know who takes part in a pilot, a count of one or two people is their own usage.`,
     masked: (min: number) => `Hidden: fewer than ${min} people`,
+    // Une période d'avant le premier relevé n'est pas un zéro : elle est
+    // inconnue, et l'écran le dit.
+    notMeasured: "Not measured yet",
+    partial: "(partial)",
+    measuredFrom: (day: string) =>
+      `Usage is measured from ${day}. Earlier weeks are shown as not measured, and the week or month in which measurement began is marked partial.`,
+    notMeasuredYet: "Nothing has been measured on this server yet.",
     empty: "No dictation recorded yet.",
     exportCsv: "Export the report (CSV)",
   },

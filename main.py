@@ -14936,12 +14936,15 @@ ADOPTION_MIN_PEOPLE = 3
 ADOPTION_REGULAR_DAYS = 3
 
 
+_ADOPTION_EMPTY = {"people": None, "regular_people": None, "dictations": None,
+                   "reformulations": None, "audio_minutes": None}
+
+
 def _adoption_counts(people: set, regular: int | None, transcriptions: int,
-                     reformulations: int, audio_seconds: float) -> dict:
+                     reformulations: int, audio_seconds: float, partial: bool) -> dict:
     count = len(people)
     if 0 < count < ADOPTION_MIN_PEOPLE:
-        return {"people": None, "regular_people": None, "dictations": None,
-                "reformulations": None, "audio_minutes": None, "masked": True}
+        return {**_ADOPTION_EMPTY, "masked": True, "measured": True, "partial": partial}
     return {
         "people": count,
         "regular_people": regular,
@@ -14949,7 +14952,17 @@ def _adoption_counts(people: set, regular: int | None, transcriptions: int,
         "reformulations": reformulations,
         "audio_minutes": round(audio_seconds / 60, 1),
         "masked": False,
+        "measured": True,
+        "partial": partial,
     }
+
+
+# Une période d'avant le premier relevé n'a pas « 0 personne » : elle n'a pas
+# été mesurée. RTX, b855ac6 : le relevé horaire a commencé le 29/09 sur ce
+# serveur, et les semaines d'avant affichaient 0 alors qu'il y avait eu des
+# dictées. Une direction y aurait lu « personne ne s'en sert ».
+_ADOPTION_UNMEASURED = {**_ADOPTION_EMPTY, "masked": False, "measured": False,
+                        "partial": False}
 
 
 def adoption_report(now: float | None = None) -> dict:
@@ -14985,6 +14998,14 @@ def adoption_report(now: float | None = None) -> dict:
             "SELECT email, month, transcriptions, reformulations, audio_seconds "
             "FROM usage_monthly"
         ).fetchall()
+        first_hour = conn.execute("SELECT MIN(hour) FROM usage_hourly").fetchone()[0]
+        first_month = conn.execute("SELECT MIN(month) FROM usage_monthly").fetchone()[0]
+
+    # Le premier jour mesuré. Un mois replié l'a été en entier : il compte dès
+    # son premier jour. Sans aucune ligne, rien n'est mesuré.
+    beginnings = [day for day in (first_hour and first_hour[:10],
+                                  first_month and f"{first_month}-01") if day]
+    measured_from = min(beginnings) if beginnings else None
 
     def week_of(hour: str) -> str | None:
         day = hour[:10]
@@ -15016,19 +15037,27 @@ def adoption_report(now: float | None = None) -> dict:
         month["r"] += row["reformulations"] or 0
         month["a"] += row["audio_seconds"] or 0.0
 
+    def week_entry(index: int, start: str, week: dict) -> dict:
+        end = time.strftime("%Y-%m-%d", time.gmtime(first_monday + (index * 7 + 6) * 86400))
+        if measured_from is None or end < measured_from:
+            return {"week_start": start, **_ADOPTION_UNMEASURED}
+        return {"week_start": start, **_adoption_counts(
+            week["people"],
+            sum(1 for days in week["days"].values() if len(days) >= ADOPTION_REGULAR_DAYS),
+            week["t"], week["r"], week["a"], partial=start < measured_from)}
+
     return {
         "min_people": ADOPTION_MIN_PEOPLE,
         "regular_days": ADOPTION_REGULAR_DAYS,
-        "weeks": [
-            {"week_start": start, **_adoption_counts(
-                week["people"],
-                sum(1 for days in week["days"].values() if len(days) >= ADOPTION_REGULAR_DAYS),
-                week["t"], week["r"], week["a"])}
-            for start, week in weeks.items()
-        ],
+        "measured_from": measured_from,
+        "weeks": [week_entry(index, start, week)
+                  for index, (start, week) in enumerate(weeks.items())],
         "months": [
             {"month": key, **_adoption_counts(
-                month["people"], None, month["t"], month["r"], month["a"])}
+                month["people"], None, month["t"], month["r"], month["a"],
+                # Commencé en cours de mois : le mois n'est pas complet.
+                partial=bool(measured_from) and key == measured_from[:7]
+                and not measured_from.endswith("-01"))}
             for key, month in sorted(months.items())
         ],
     }

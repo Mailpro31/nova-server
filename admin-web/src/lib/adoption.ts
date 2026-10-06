@@ -14,6 +14,10 @@ export interface AdoptionCounts {
   reformulations: number | null;
   audio_minutes: number | null;
   masked: boolean;
+  /** Faux pour une période d'avant le premier relevé : ses comptes sont inconnus, pas nuls. */
+  measured: boolean;
+  /** Vrai pour la période où le relevé a commencé : elle n'est pas complète. */
+  partial: boolean;
 }
 
 export interface AdoptionWeek extends AdoptionCounts {
@@ -27,6 +31,8 @@ export interface AdoptionMonth extends AdoptionCounts {
 export interface AdoptionReport {
   min_people: number;
   regular_days: number;
+  /** Le premier jour mesuré (« 2026-09-29 »), ou `null` si rien ne l'est encore. */
+  measured_from: string | null;
   weeks: AdoptionWeek[];
   months: AdoptionMonth[];
 }
@@ -52,7 +58,7 @@ export function monthLabel(month: string): string {
 export function latestWeek(report: AdoptionReport): AdoptionWeek | null {
   for (let index = report.weeks.length - 1; index >= 0; index -= 1) {
     const week = report.weeks[index];
-    if (!week.masked && (week.people ?? 0) > 0) return week;
+    if (week.measured && !week.masked && (week.people ?? 0) > 0) return week;
   }
   return null;
 }
@@ -61,6 +67,15 @@ function cell(value: string | number | null | undefined): string {
   if (value === null || value === undefined) return "";
   const text = String(value);
   return /[",;\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+/** Ce qu'une période a de particulier, dit en clair dans le CSV. */
+function note(counts: AdoptionCounts, minPeople: number): string {
+  if (!counts.measured) return "non mesuré";
+  const parts = [];
+  if (counts.partial) parts.push("partiel");
+  if (counts.masked) parts.push(`moins de ${minPeople} personnes`);
+  return parts.join(", ");
 }
 
 /**
@@ -78,7 +93,7 @@ export function adoptionCsv(report: AdoptionReport): string {
     "dictees",
     "reformulations",
     "minutes_dictees",
-    "masque",
+    "remarque",
   ];
   const row = (kind: string, start: string, counts: AdoptionCounts) =>
     [
@@ -89,7 +104,7 @@ export function adoptionCsv(report: AdoptionReport): string {
       counts.dictations,
       counts.reformulations,
       counts.audio_minutes,
-      counts.masked ? `moins de ${report.min_people} personnes` : "",
+      note(counts, report.min_people),
     ]
       .map(cell)
       .join(";");

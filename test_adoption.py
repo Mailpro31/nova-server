@@ -51,10 +51,47 @@ class AdoptionReportTests(unittest.TestCase):
         self.assertEqual(len(report["weeks"]), 12)
         self.assertEqual(report["weeks"][-1]["week_start"], "2026-10-05")
         self.assertEqual(report["weeks"][0]["week_start"], "2026-07-20")
-        self.assertEqual(report["weeks"][-1]["people"], 0)
-        self.assertFalse(report["weeks"][-1]["masked"])
+        # Rien n'a encore été mesuré : on ne sait pas dire « personne ».
+        self.assertFalse(report["weeks"][-1]["measured"])
+        self.assertIsNone(report["weeks"][-1]["people"])
         self.assertEqual(report["months"], [])
         self.assertEqual(report["min_people"], 3)
+
+    def test_weeks_before_the_measure_began_are_not_zero(self):
+        """RTX, b855ac6 : le relevé horaire a commencé le 29/09 ; les semaines
+        d'avant affichaient « 0 personne » alors qu'il y avait eu des dictées."""
+        start = NOW - 7 * DAY  # mercredi 30 septembre, semaine du 28
+        for email in ("a@ecole.example", "b@ecole.example", "c@ecole.example"):
+            insert_hour(email, start)
+        weeks = {week["week_start"]: week for week in main.adoption_report(NOW)["weeks"]}
+        before = weeks["2026-09-21"]
+        self.assertFalse(before["measured"])
+        self.assertIsNone(before["people"])
+        self.assertIsNone(before["dictations"])
+        first = weeks["2026-09-28"]
+        self.assertTrue(first["measured"])
+        self.assertTrue(first["partial"])
+        self.assertEqual(first["people"], 3)
+        current = weeks["2026-10-05"]
+        self.assertTrue(current["measured"])
+        self.assertFalse(current["partial"])
+        # Mesurée et vide : là, zéro est la vérité.
+        self.assertEqual(current["people"], 0)
+
+    def test_a_partial_week_with_one_person_is_also_masked(self):
+        insert_hour("a@ecole.example", NOW - 7 * DAY)
+        week = {w["week_start"]: w for w in main.adoption_report(NOW)["weeks"]}["2026-09-28"]
+        self.assertTrue(week["masked"])
+        self.assertTrue(week["partial"])
+        self.assertIsNone(week["people"])
+
+    def test_the_month_in_which_the_measure_began_is_partial(self):
+        for email in ("a@ecole.example", "b@ecole.example", "c@ecole.example"):
+            insert_hour(email, NOW - 7 * DAY)
+            insert_hour(email, NOW - HOUR)
+        months = {m["month"]: m for m in main.adoption_report(NOW)["months"]}
+        self.assertTrue(months["2026-09"]["partial"])
+        self.assertFalse(months["2026-10"]["partial"])
 
     def test_a_week_counts_people_regular_people_and_dictations(self):
         monday = NOW - 2 * DAY
