@@ -11551,6 +11551,74 @@ def command_numbers(text: str, english: bool) -> str:
         lambda found: str(ENGLISH_NUMBER_WORDS[found.group(1).lower()]), text)
 
 
+# ── Une formule reprise doit l'être telle quelle ──
+#
+# Banc du RTX sur 0ff7a2a à 2795421 : « Le nombre de Reynolds vaut rho fois V
+# fois L divisé par mu » expliqué en « le nombre de Reynolds (rho) multiplié
+# par V (la vitesse) multiplié par L… divisé par mu ». Rho devient le nom du
+# nombre, et la formule que l'élève révisera est fausse.
+#
+# Seules la multiplication et la division servent à reconnaître une formule :
+# « fois », « multiplié par » et « divisé par » ne s'emploient guère ailleurs,
+# alors que « plus » et « moins » sont partout (« plus rapide »).
+FORMULA_TIMES = re.compile(r"\bmultipli[ée]e?s?\s+par\b|\bfois\b|\btimes\b|[×*·]", re.IGNORECASE)
+FORMULA_DIVIDED = re.compile(r"\bdivis[ée]e?s?\s+par\b|\bdivided\s+by\b|[÷/]", re.IGNORECASE)
+# Une précision entre parenthèses (« V (la vitesse) ») n'est pas un terme de la
+# formule : la réponse en ajoute, le texte rarement.
+FORMULA_GLOSS = re.compile(r"\([^()]*[a-zA-Zàâçéèêëîïôûùüÿ]{2,}[^()]*\)")
+FORMULA_TOKEN = re.compile(r"[*/]|[^\W_]+(?:[²³¹⁰-⁹]+)?", re.UNICODE)
+
+
+def formula_chains(text: str, strip_glosses: bool) -> list[tuple[str, ...]]:
+    """Les suites « terme opérateur terme… » d'un texte, en jetons normalisés :
+    « rho fois V fois L divisé par mu » → (rho, *, v, *, l, /, mu)."""
+    value = text or ""
+    if strip_glosses:
+        value = FORMULA_GLOSS.sub(" ", value)
+    value = FORMULA_TIMES.sub(" * ", value)
+    value = FORMULA_DIVIDED.sub(" / ", value)
+    # Une ponctuation coupe la formule : « … par mu. En dessous… ».
+    chains: list[tuple[str, ...]] = []
+    for piece in re.split(r"[.,;:!?\n]", value):
+        tokens = [token.lower() for token in FORMULA_TOKEN.findall(piece)]
+        index = 0
+        while index < len(tokens):
+            if tokens[index] in "*/" or index + 2 >= len(tokens) or tokens[index + 1] not in ("*", "/"):
+                index += 1
+                continue
+            chain = [tokens[index]]
+            index += 1
+            while (index + 1 < len(tokens) and tokens[index] in ("*", "/")
+                   and tokens[index + 1] not in ("*", "/")):
+                chain += [tokens[index], tokens[index + 1]]
+                index += 2
+            chains.append(tuple(chain))
+    return chains
+
+
+def _contains(chain: tuple[str, ...], part: tuple[str, ...]) -> bool:
+    return any(chain[i:i + len(part)] == part for i in range(len(chain) - len(part) + 1))
+
+
+def formula_changed(text: str, answer: str) -> bool:
+    """La réponse reprend une formule du texte, mais pas telle quelle.
+
+    Une suite de la réponse qui partage au moins deux termes avec une formule
+    du texte doit en être un morceau intact. Une réponse qui ne cite pas la
+    formule, ou qui l'écrit en symboles (« ρVL/μ »), n'est pas jugée.
+    """
+    source = formula_chains(text, strip_glosses=False)
+    if not source:
+        return False
+    for written in formula_chains(answer, strip_glosses=True):
+        terms = {token for token in written if token not in ("*", "/")}
+        for chain in source:
+            shared = terms & {token for token in chain if token not in ("*", "/")}
+            if len(shared) >= 2 and not _contains(chain, written):
+                return True
+    return False
+
+
 def command_refusal(instruction: str, text: str, answer: str) -> str | None:
     """Pourquoi cette réponse ne doit pas être proposée à l'élève, ou `None`."""
     output = (answer or "").strip()
@@ -11576,6 +11644,8 @@ def command_refusal(instruction: str, text: str, answer: str) -> str | None:
         return reason
     if exam_lost(text, output):
         return "exam-lost"
+    if formula_changed(text, output):
+        return "formula-changed"
     # Un résumé plus long que le texte n'en est pas un : il paraphrase, et ce
     # qu'il ajoute n'a pas été dit (« dans la plupart des cas »). Une sélection
     # de quelques mots ne se résume pas : la règle n'y a pas de sens.

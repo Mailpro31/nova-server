@@ -326,6 +326,50 @@ class EnglishNumberWordsTests(unittest.TestCase):
             "Le four chauffe à 250 degrés ; conduction, convection, rayonnement."))
 
 
+class FormulaTests(unittest.TestCase):
+    """Banc du RTX, 0ff7a2a à 2795421 : Expliquer recopiait mal la formule."""
+
+    RTX_EXPLAIN = (
+        "Ce texte décrit la loi des nombres de Reynolds. Il dit que le nombre de Reynolds (rho) "
+        "multiplié par V (la vitesse) multiplié par L (l'épaisseur) divisé par mu (la viscosité), "
+        "donne un résultat qui détermine si l'écoulement dans une conduite est laminaire ou "
+        "turbulent. Si ce nombre est inférieur à 2 300, l'écoulement est laminaire et au-dessus "
+        "de 4 000, il est turbulent. La partie du texte mentionne également les dates et lieux "
+        "d'un événement scientifique.")
+
+    def test_the_rtx_explanation_with_a_wrong_formula_is_refused(self):
+        self.assertEqual(main.command_refusal(EXPLAIN, COURS, self.RTX_EXPLAIN),
+                         "formula-changed")
+
+    def test_a_formula_reordered_is_refused(self):
+        self.assertTrue(main.formula_changed("Delta = b² − 4 × a × c",
+                                             "Delta vaut b² moins 4 fois c fois a"))
+
+    def test_a_faithful_formula_passes(self):
+        for answer in (
+            "Le nombre de Reynolds vaut rho fois V fois L divisé par mu : rho est la masse "
+            "volumique, V la vitesse.",
+            # Une précision entre parenthèses ne change pas la formule.
+            "Le nombre de Reynolds vaut rho (la masse volumique) fois V (la vitesse) fois L "
+            "divisé par mu.",
+            # Un morceau intact de la formule.
+            "On multiplie V fois L, puis on tient compte de la viscosité mu.",
+            # Écrite en symboles : non jugée.
+            "Re = ρVL/μ compare l'inertie à la viscosité.",
+            # Pas de formule citée.
+            "Le nombre de Reynolds compare l'inertie d'un fluide à sa viscosité.",
+        ):
+            with self.subTest(answer=answer[:30]):
+                self.assertFalse(main.formula_changed(COURS, answer))
+
+    def test_ordinary_words_are_not_formulas(self):
+        self.assertFalse(main.formula_changed(
+            COURS, "Il faut relire le cours deux fois avant le partiel du 15/11."))
+        self.assertFalse(main.formula_changed(
+            "Le cours est sur https://moodle.ipsa.fr/course/view.php",
+            "Le cours : https://moodle.ipsa.fr/course/view.php"))
+
+
 class CommandRouteTests(AdminTestCase):
     def post(self, answer, instruction=SUMMARIZE, text=COURS, path="/api/command"):
         token = self.sign_in("etudiant@example.com")
