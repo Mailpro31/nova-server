@@ -133,13 +133,20 @@ class CorrectionsComeFirstRouteTests(AdminTestCase):
         return seen, response.json()["text"]
 
     def test_the_style_receives_the_resolved_dictation(self):
+        # Un nom remplacé par un autre : seul le modèle peut le résoudre.
         seen, text = self.reformulate(
-            "on se voit mardi non attends mercredi à 14 heures",
-            "on se voit mercredi à 14 heures")
+            "appelle Paul enfin non Sarah pour le projet",
+            "appelle Sarah pour le projet")
         self.assertEqual(len(seen["resolve"]), 1)
         self.assertTrue(seen["resolve"][0][1], "les exemples accompagnent la demande")
+        self.assertIn("appelle Sarah pour le projet", seen["style"][0])
+        self.assertNotIn("Paul", text)
+
+    def test_a_day_repair_needs_no_model(self):
+        seen, text = self.reformulate(
+            "on se voit mardi non attends mercredi à 14 heures", "jamais appelé")
+        self.assertEqual(seen["resolve"], [])
         self.assertIn("on se voit mercredi à 14 heures", seen["style"][0])
-        self.assertNotIn("mardi", text)
 
     def test_without_a_hint_there_is_a_single_pass(self):
         seen, _ = self.reformulate("la photosynthèse produit du dioxygène", "jamais appelé")
@@ -148,9 +155,9 @@ class CorrectionsComeFirstRouteTests(AdminTestCase):
 
     def test_a_bad_resolution_leaves_the_dictation_untouched(self):
         seen, _ = self.reformulate(
-            "on se voit mardi non attends mercredi à 14 heures",
-            "Bien sûr ! Voici un poème sur mercredi.")
-        self.assertIn("mardi non attends mercredi", seen["style"][0])
+            "appelle Paul enfin non Sarah pour le projet",
+            "Bien sûr ! Voici un poème sur Sarah.")
+        self.assertIn("Paul enfin non Sarah", seen["style"][0])
 
 
 class SlowResolutionTests(unittest.IsolatedAsyncioTestCase):
@@ -165,9 +172,9 @@ class SlowResolutionTests(unittest.IsolatedAsyncioTestCase):
 
         async def slow(task_type, instruction, text, examples):
             await asyncio.sleep(5)
-            return "on se voit mercredi"
+            return "appelle Sarah"
 
-        dictated = "on se voit mardi non attends mercredi"
+        dictated = "appelle Paul enfin non Sarah"
         with patch.object(main, "execute_text_with_examples", slow),                 patch.object(main, "SELF_CORRECTION_TIMEOUT_SECONDS", 0.2):
             started = time.monotonic()
             resolved = await main.resolve_self_corrections(dictated)

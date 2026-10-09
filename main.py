@@ -12740,8 +12740,34 @@ async def execute_text_with_examples(
     return result.text
 
 
+# Une reprise simple se résout sans modèle : un jour, un mois ou un nombre
+# remplacé par un autre de même sorte. « On se voit mardi, non attend,
+# mercredi » restait tel quel au test de Sash (07/10) : le passage par le
+# modèle, borné à 4 s, n'avait rien changé.
+_WEEKDAYS = "lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche"
+_MONTHS = ("janvier|février|fevrier|mars|avril|mai|juin|juillet|août|aout|septembre|"
+           "octobre|novembre|décembre|decembre")
+_NUMBER = r"\d+(?:[.,]\d+)?\s?(?:h(?:\d\d)?|heures?|min|%|€)?"
+# Un « non » seul peut être une réponse (« Tu viens mardi ? Non, mercredi
+# aussi ») : la reprise demande un mot qui l'annonce.
+_REPAIR = r"\s*,?\s*(?:(?:non|euh)\s*,?\s*)?(?:attends?|pardon|plut[oô]t|enfin)\s*,?\s*"
+SIMPLE_REPAIRS = tuple(
+    re.compile(rf"\b({kind})\b{_REPAIR}(?=\b({kind})\b)", re.IGNORECASE)
+    for kind in (_WEEKDAYS, _MONTHS)
+) + (re.compile(rf"(?<![\w,.])({_NUMBER}){_REPAIR}(?=\d)", re.IGNORECASE),)
+
+
+def resolve_simple_repairs(text: str) -> str:
+    """« mardi, non attends, mercredi » → « mercredi » ; « 10 h, pardon, 11 h »
+    → « 11 h ». Seule la valeur abandonnée et les mots de la reprise partent."""
+    for pattern in SIMPLE_REPAIRS:
+        text = pattern.sub("", text)
+    return text
+
+
 async def resolve_self_corrections(text: str) -> str:
     """La dictée, avec seulement la version que l'élève retient."""
+    text = resolve_simple_repairs(text)
     if not has_self_correction_hint(text):
         return text
     examples = tuple(
@@ -13199,6 +13225,17 @@ def person_changed(dictated: str, written: str) -> bool:
 DEFAULT_REWRITE_STYLE = "default_improve_transcriptions"
 
 
+LATEX_MARKUP = re.compile(
+    r"\\[()\[\]]|\\(?:frac|sqrt|cdot|times|alpha|beta|delta|Delta|rho|mu|pi|sum|int|"
+    r"partial|infty|leq|geq|neq|mathrm|text|left|right)\b|\^\{|_\{|\$[^$\n]+\$"
+)
+
+
+def latex_added(dictated: str, text: str) -> bool:
+    """La sortie contient du balisage LaTeX que la dictée n'avait pas."""
+    return bool(LATEX_MARKUP.search(text or "")) and not LATEX_MARKUP.search(dictated or "")
+
+
 def rewrite_refusal(dictated: str, answer: str, style_id: str | None) -> str | None:
     """Pourquoi cette sortie ne doit pas remplacer la dictee, ou `None`.
 
@@ -13225,6 +13262,16 @@ def rewrite_refusal(dictated: str, answer: str, style_id: str | None) -> str | N
     person_guarded = style_id in GUARDED_STYLE_IDS or style_id == COURSE_NOTES_STYLE
     if person_guarded and person_changed(dictated, text):
         return "person-changed"
+    # « Je dois rendre le rapport » réécrit « Vous devez rendre le rapport »
+    # (test de Sash, 07/10). Les Styles qui corrigent ne changent pas qui parle ;
+    # les notes de cours, qui peuvent tourner « je vais montrer » en « on
+    # montre », n'y sont pas soumises.
+    if style_id in GUARDED_STYLE_IDS and pronouns_swapped(dictated, text):
+        return "person-changed"
+    # Du code LaTeX que l'élève n'a pas dicté : « la dérivée de x au carré »
+    # devenue « \( x^2 \) », illisible dans Word (test de Sash, 07/10).
+    if latex_added(dictated, text):
+        return "latex-added"
     # Les notes de cours ont leurs propres controles, plus stricts, et les
     # motifs du poste : les nombres y sont compares en chiffres comme en
     # lettres.
