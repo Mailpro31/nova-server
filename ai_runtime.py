@@ -94,6 +94,9 @@ AI_RUNTIME_FAILED = "AI_RUNTIME_FAILED"
 AI_MODEL_NOT_READY = "AI_MODEL_NOT_READY"
 AI_RUNTIME_CONFIG_INVALID = "AI_RUNTIME_CONFIG_INVALID"
 AI_PROMPT_TOO_LONG = "AI_PROMPT_TOO_LONG"
+# Un enregistrement vide ou illisible : c'est la requête qui est fausse, pas
+# le serveur qui est en panne (banc du RTX, 09/10 : un 502 le faisait croire).
+AI_AUDIO_INVALID = "INVALID_AUDIO"
 
 # Un moteur borne `prompt + max_tokens` par sa fenetre. Demander la sortie
 # du profil sans regarder ce que le prompt a deja consomme produit une
@@ -119,7 +122,11 @@ _FALLBACK_MESSAGE_OVERHEAD_TOKENS = 8
 # bout. Le plafond existe pour qu'un deploiement ne puisse pas transformer la
 # porte en salle d'attente sans fin : au-dela, mieux vaut un refus franc, que le
 # poste sait traiter, qu'une requete qui pend.
-DEFAULT_QUEUE_WAIT_SECONDS = 3.0
+# Une dictée prend environ 0,5 s sur la carte : 8 s d'attente servent une
+# file de 16. Avec 3 s et 4 places, 10 dictées simultanées donnaient 5 refus
+# (banc du RTX, 09/10), et le poste passait en silence sur son moteur local.
+DEFAULT_QUEUE_WAIT_SECONDS = 8.0
+DEFAULT_MAX_QUEUE = 16
 MIN_QUEUE_WAIT_SECONDS = 0.05
 MAX_QUEUE_WAIT_SECONDS = 15.0
 
@@ -597,6 +604,9 @@ class WhisperCompatibleSpeechBackend:
             raise AIRuntimeError(AI_RUNTIME_BUSY, retry_after=1)
         if response.status_code == 425:
             raise AIRuntimeError(AI_RUNTIME_STARTING, retry_after=2)
+        if response.status_code in {400, 415, 422}:
+            _log_engine_refusal(self.adapter_name, response)
+            raise AIRuntimeError(AI_AUDIO_INVALID)
         if response.status_code != 200:
             _log_engine_refusal(self.adapter_name, response)
             raise AIRuntimeError(AI_RUNTIME_FAILED)
@@ -1191,7 +1201,7 @@ def router_from_environment() -> OrganizationAIRouter:
         == "true",
         max_concurrent_text=int(os.getenv("NOVA_AI_MAX_CONCURRENT_TEXT", "2")),
         max_concurrent_speech=int(os.getenv("NOVA_AI_MAX_CONCURRENT_SPEECH", "1")),
-        max_queue=int(os.getenv("NOVA_AI_MAX_QUEUE", "4")),
+        max_queue=int(os.getenv("NOVA_AI_MAX_QUEUE", str(DEFAULT_MAX_QUEUE))),
         queue_wait_seconds=float(
             os.getenv("NOVA_AI_QUEUE_WAIT_SECONDS", str(DEFAULT_QUEUE_WAIT_SECONDS))
         ),

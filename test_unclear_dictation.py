@@ -70,6 +70,28 @@ class UnclearDecisionTests(unittest.TestCase):
             "Donc, on passe à l'alphao et à l'alphao pour ma proposant X. "
             "Au moins, on passe à l'alphao et à l'alphao pour ma proposant X.", -0.63))
 
+    def test_a_sentence_repeated_back_to_back_is_a_loop(self):
+        # Une phrase reprise juste après elle-même, au bout d'une dictée juste :
+        # la boucle ne couvre pas la moitié des mots, mais elle se suit.
+        text = ("La portance dépend de la vitesse et de la surface de l'aile. "
+                "Le coefficient de portance augmente avec l'incidence jusqu'au "
+                "décrochage. Merci beaucoup de votre attention merci beaucoup de votre attention.")
+        self.assertTrue(main.dictation_unclear(text, -0.3))
+
+    def test_a_formula_said_twice_in_a_course_is_not_a_loop(self):
+        # Mesuré sur le RTX le 09/10 (défaut 1) : une dictée de cours juste,
+        # confiance −0,2, était entièrement bloquée parce que « le nombre de
+        # Reynolds vaut » revenait deux fois, loin l'une de l'autre.
+        for text in (
+            "Le nombre de Reynolds vaut rho V L sur mu. En dessous de 2300 le "
+            "régime est laminaire. Au-dessus de 4000 le régime est turbulent, et "
+            "entre les deux le nombre de Reynolds vaut une zone de transition.",
+            "La vitesse de l'écoulement est mesurée au tube de Pitot. Plus loin, "
+            "la vitesse de l'écoulement est mesurée au fil chaud.",
+        ):
+            with self.subTest(text=text[:40]):
+                self.assertFalse(main.dictation_unclear(text, -0.2))
+
     def test_ordinary_repetitions_are_not_a_loop(self):
         for text in (
             "La fonction f et la fonction g sont continues.",

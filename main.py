@@ -51,6 +51,7 @@ import scim
 import secrets_provider
 from ai_runtime import (
     ADVANCED_MINIMUM_VRAM_GB,
+    AI_AUDIO_INVALID,
     AI_MODEL_NOT_READY,
     AI_PROMPT_TOO_LONG,
     AI_RUNTIME_BUSY,
@@ -66,6 +67,7 @@ from ai_runtime import (
     detect_hardware,
     recommend_profile,
     router_from_environment,
+    DEFAULT_MAX_QUEUE,
 )
 
 # ---------------------------------------------------------------- config
@@ -6984,6 +6986,10 @@ class AIRuntimeConfigUpdateRequest(BaseModel):
     max_queue: int | None = None
 
 
+# La file du réglage automatique : une classe qui dicte en même temps.
+AUTO_MAX_QUEUE = DEFAULT_MAX_QUEUE
+
+
 def validate_ai_runtime_update(body: AIRuntimeConfigUpdateRequest) -> dict:
     try:
         profile = ModelProfile(body.profile.strip().lower())
@@ -6999,7 +7005,7 @@ def validate_ai_runtime_update(body: AIRuntimeConfigUpdateRequest) -> dict:
     if mode not in {"auto", "manual"}:
         raise auth_error(400, "AI_RUNTIME_CONCURRENCY_MODE_INVALID")
     if mode == "auto":
-        text, speech, queue = 2, 1, 4
+        text, speech, queue = 2, 1, AUTO_MAX_QUEUE
     else:
         text = body.max_concurrent_text
         speech = body.max_concurrent_speech
@@ -12185,6 +12191,7 @@ def runtime_http_error(error: AIRuntimeError, task_type: TaskType) -> HTTPExcept
         # fenetre du moteur. C'est la requete qu'il faut reduire, pas le
         # serveur qu'il faut reessayer : 413, jamais 502.
         AI_PROMPT_TOO_LONG: 413,
+        AI_AUDIO_INVALID: 400,
     }
     detail = {"code": error.code, "task_type": task_type.value}
     if error.retry_after is not None:
@@ -12319,14 +12326,54 @@ def dictation_unclear(text: str, avg_logprob: float | None) -> bool:
         return True
     if only_subtitle_credits(text):
         return True
-    words = re.findall(r"[^\W_]+", (text or "").casefold())
-    seen: dict[tuple[str, ...], int] = {}
-    for i in range(len(words) - LOOP_WORDS + 1):
-        phrase = tuple(words[i:i + LOOP_WORDS])
-        if phrase in seen and i - seen[phrase] >= LOOP_WORDS:
+    return repeats_in_a_loop(re.findall(r"[^\W_]+", (text or "").casefold()))
+
+
+def repeats_in_a_loop(words: list[str]) -> bool:
+    """Une boucle de Whisper : un passage d'au moins `LOOP_WORDS` mots repris
+    juste après lui-même, ou un passage d'au moins `2 * LOOP_WORDS` mots
+    repris à l'identique, où que ce soit.
+
+    Une même formule dite deux fois n'en est pas une : dans un cours, « le
+    nombre de Reynolds vaut » revient. L'ancienne règle bloquait alors toute
+    la dictée (mesuré sur le RTX le 09/10, confiance −0,25 sur 93 s).
+    """
+    count = len(words)
+    for period in range(LOOP_WORDS, count // 2 + 1):
+        for start in range(count - 2 * period + 1):
+            if words[start:start + period] == words[start + period:start + 2 * period]:
+                return True
+    long_passage = 2 * LOOP_WORDS
+    seen: set[tuple[str, ...]] = set()
+    for i in range(count - long_passage + 1):
+        passage = tuple(words[i:i + long_passage])
+        if passage in seen:
             return True
-        seen.setdefault(phrase, i)
+        seen.add(passage)
     return False
+
+
+# Les premiers octets des formats audio courants. Un WAV commence par
+# « RIFF » ; le poste n'envoie que cela, un import peut envoyer les autres.
+_AUDIO_SIGNATURES = (b"RIFF", b"OggS", b"fLaC", b"ID3", b"\x1a\x45\xdf\xa3", b"#!AMR")
+
+
+def looks_like_audio(audio: bytes) -> bool:
+    """Vrai si l'enregistrement commence comme un fichier audio connu.
+
+    Un fichier vide, des octets au hasard ou un texte déguisé en .wav
+    partaient jusqu'au moteur, qui répondait 502 (banc du RTX, 09/10).
+    """
+    if len(audio) <= 4:
+        return False
+    if audio.startswith(_AUDIO_SIGNATURES):
+        return True
+    if audio.startswith(b"FORM") and audio[8:12] in {b"AIFF", b"AIFC"}:
+        return True
+    if audio[4:8] == b"ftyp":
+        return True
+    # Trame MPEG (MP3, AAC) : onze bits de synchronisation à 1.
+    return audio[0] == 0xFF and audio[1] & 0xE0 == 0xE0
 
 
 async def transcribe_audio(
@@ -12340,6 +12387,8 @@ async def transcribe_audio(
     choisir entre gêner l'une et laisser l'autre sans protection.
     """
     audio = await read_bounded_upload(file, max_bytes)
+    if not looks_like_audio(audio):
+        raise runtime_http_error(AIRuntimeError(AI_AUDIO_INVALID), task_type)
     # L'amorce est un bonus : une base indisponible ne doit pas rendre le poste
     # muet — la dictée part alors sans indice, comme avant.
     try:
