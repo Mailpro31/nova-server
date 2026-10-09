@@ -26,7 +26,7 @@ from unittest.mock import patch
 from test_main import AdminTestCase  # noqa: F401
 
 import main
-from ai_runtime import TextInferenceResult
+from ai_runtime import AI_RUNTIME_UNAVAILABLE, AIRuntimeError, TextInferenceResult
 
 main.init_db()
 
@@ -186,6 +186,25 @@ class ReformulateSnippetTests(AdminTestCase):
                       "style_prompt": "Message court."})
         self.assertEqual(response.json()["text"],
                          "voici mon iban : FR76 3000 6000 0112 3456 7890 189")
+
+
+    def test_a_stopped_text_engine_returns_the_dictation_with_its_snippet(self):
+        """Test 8 du RTX (09/10) : modèle de texte arrêté 2 min 15, les 95
+        reformulations envoyées pendant ce temps répondaient 503. Le poste
+        collait alors sa transcription brute : « mon iban » sans sa valeur."""
+        token = self.sign_in(EMAIL)
+
+        async def generate(task_type, input_text, instruction, **_):
+            raise AIRuntimeError(AI_RUNTIME_UNAVAILABLE)
+
+        with patch.object(main.ORGANIZATION_AI_ROUTER, "generate", generate):
+            response = self.client.post(
+                "/api/reformulate", headers=self.auth(token),
+                json={"text": "voici mon iban pour l'ipsa", "style_id": "nova_style_messages",
+                      "style_prompt": "Message court."})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["text"],
+                         "voici mon iban : FR76 3000 6000 0112 3456 7890 189 pour l'IPSA")
 
 
 if __name__ == "__main__":

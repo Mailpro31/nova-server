@@ -13404,6 +13404,11 @@ async def rewrite_dictation(
     return RewriteOutcome(result, "ok", resolved)
 
 
+# Les réponses de `runtime_http_error` qui disent que le moteur ne peut pas
+# répondre maintenant, et non que la requête est fausse.
+ENGINE_FAILURE_STATUSES = frozenset({429, 502, 503, 504})
+
+
 # --- reformulation (proxy vers LLM, API OpenAI-compatible)
 @app.post("/api/reformulate")
 async def reformulate(body: ReformulateRequest, user: str = Depends(current_user),
@@ -13451,7 +13456,19 @@ async def reformulate(body: ReformulateRequest, user: str = Depends(current_user
     # Le temps que la personne attend reellement, y compris la file. C'est
     # celui-la qui doit tenir sous cinq secondes, pas celui du moteur seul.
     started = time.monotonic()
-    outcome = await rewrite_dictation(source_text, system_prompt, task_type, style_id)
+    try:
+        outcome = await rewrite_dictation(source_text, system_prompt, task_type, style_id)
+    except HTTPException as error:
+        # Le modèle de texte arrêté, saturé ou en retard (`runtime_http_error`) :
+        # la dictée est rendue avec ses snippets et son vocabulaire. L'erreur
+        # faisait coller au poste sa transcription brute, « mon iban » sans sa
+        # valeur (test 8 du RTX, 09/10 : 95 reformulations en 503 pendant un
+        # redémarrage du modèle).
+        if error.status_code not in ENGINE_FAILURE_STATUSES or not isinstance(error.detail, dict):
+            raise
+        observability.log("reformulation.engine_unavailable", level="warning",
+                          style=style_id or "", code=error.detail.get("code", ""))
+        return fallback
     count_usage(
         user, "reformulation",
         latency_ms=(time.monotonic() - started) * 1000.0,
