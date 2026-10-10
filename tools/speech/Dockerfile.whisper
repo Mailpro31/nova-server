@@ -4,6 +4,8 @@
 # docker-compose.yml) : faster-whisper, CUDA et FastAPI y sont, rien de plus à
 # télécharger. Seul le réglage du décodage change : faisceau de 5 et repli de
 # température, au lieu d'une température fixée à 0.
+# Sur le serveur de test, la même image porte le nom nova-local/speech:2026.09.05.1
+# (relevé par le RTX le 11/10) : `--build-arg BASE=nova-local/speech:2026.09.05.1`.
 ARG BASE=fedirz/faster-whisper-server:latest-cuda
 FROM ${BASE}
 ENV SPEECH_ENGINE=faster_whisper \
@@ -15,5 +17,6 @@ ENV SPEECH_ENGINE=faster_whisper \
     PORT=8000
 COPY app.py /nova-speech/app.py
 EXPOSE 8000
-ENTRYPOINT []
-CMD ["python", "/nova-speech/app.py"]
+# Le Python de l'image est celui de son environnement virtuel : /usr/bin/python3
+# n'a ni FastAPI ni faster-whisper. L'entrée de l'image (CUDA) est gardée.
+CMD ["/root/faster-whisper-server/.venv/bin/python", "/nova-speech/app.py"]
