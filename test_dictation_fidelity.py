@@ -76,6 +76,11 @@ class SimpleRepairTests(unittest.TestCase):
              "On se retrouve à 11 h devant l'amphi."),
             ("Rendez-vous en mars, plutôt avril.", "Rendez-vous en avril."),
             ("Le TD est jeudi, enfin vendredi.", "Le TD est vendredi."),
+            # Banc du RTX sur d6c929f (09/10) : l'article répété empêchait la
+            # reprise d'une date ou d'une heure.
+            ("Le partiel est le 12 mars, pardon, le 13 mars.", "Le partiel est le 13 mars."),
+            ("Le cours finit à 10 h, pardon, à 11 h.", "Le cours finit à 11 h."),
+            ("Rendu le 1er avril, enfin le 2 avril.", "Rendu le 2 avril."),
         ):
             with self.subTest(said=said):
                 self.assertEqual(main.resolve_simple_repairs(said), kept)
@@ -86,6 +91,10 @@ class SimpleRepairTests(unittest.TestCase):
             "Il a dit non au voyage de mardi.",
             "Le chapitre 2, non attends, le chapitre 5.",
             "Le partiel dure 2 heures et demie.",
+            # Une date reprise par un simple nombre perdrait son mois : le
+            # modèle s'en charge.
+            "Le partiel est le 12 mars, pardon, le 13.",
+            "Fais 20 pompes, attends 30 secondes, puis recommence.",
         ):
             with self.subTest(said=said):
                 self.assertEqual(main.resolve_simple_repairs(said), said)
