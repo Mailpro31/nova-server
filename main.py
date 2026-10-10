@@ -4,10 +4,12 @@ Serveur de transcription + reformulation on-premise pour établissements.
 Auth : email académique + code à 6 chiffres.
 Confidentialité : seuls des COMPTEURS d'usage sont stockés, jamais le contenu.
 """
+import array
 import asyncio
 import csv
 from dataclasses import dataclass
 import io
+import math
 import os
 import urllib.parse
 import random
@@ -24,6 +26,7 @@ import string
 import time
 import unicodedata
 import uuid
+import wave
 from collections import Counter
 from contextlib import contextmanager
 from pathlib import Path
@@ -12137,6 +12140,43 @@ DICTATION_LIMIT_TOLERANCE_SECONDS = 5
 _WAV_HEADER_PROBE_BYTES = 64 * 1024
 
 
+# Sous ce niveau, au moment le plus fort de l'enregistrement, personne n'a
+# parlé : un micro coupé ou une pièce silencieuse. Une voix basse en classe
+# reste bien au-dessus (vers −45 dBFS).
+SILENT_PEAK_DBFS = -58.0
+# Le niveau se mesure par tranches de 30 ms, comme un détecteur de parole.
+LEVEL_WINDOW_SECONDS = 0.03
+
+
+def wav_peak_dbfs(audio: bytes) -> float | None:
+    """Le niveau efficace du moment le plus fort d'un WAV 16 bits, en dBFS.
+
+    `None` si l'enregistrement ne se lit pas comme un WAV 16 bits : il n'est
+    alors pas jugé ici, et le moteur décide.
+    """
+    try:
+        with wave.open(io.BytesIO(audio), "rb") as recording:
+            if recording.getsampwidth() != 2 or recording.getnframes() == 0:
+                return None
+            window = max(1, int(recording.getframerate() * LEVEL_WINDOW_SECONDS)) \
+                * recording.getnchannels()
+            frames = recording.readframes(recording.getnframes())
+    except (wave.Error, EOFError):
+        return None
+    samples = array.array("h")
+    samples.frombytes(frames[: len(frames) - len(frames) % 2])
+    if not samples:
+        return None
+    loudest = max(
+        sum(sample * sample for sample in samples[start:start + window])
+        / len(samples[start:start + window])
+        for start in range(0, len(samples), window)
+    )
+    if loudest == 0:
+        return -math.inf
+    return 20 * math.log10(math.sqrt(loudest) / 32768)
+
+
 def wav_duration_seconds(header: bytes) -> float | None:
     """La duree annoncee par l'en-tete d'un WAV, ou `None` si on ne sait pas.
 
@@ -12298,6 +12338,9 @@ UNCLEAR_AVG_LOGPROB = -1.0
 # Une phrase de cinq mots reprise mot pour mot : la boucle d'un modèle qui
 # invente (« D'accord, un peu d'alcool pour ma prosse en PIX » ×5).
 LOOP_WORDS = 5
+# Au-dessus, Whisper est sûr de ce qu'il a entendu (−0,20 et −0,25 pour des
+# dictées justes, −0,63 pour une boucle inventée, mesurés le 05/10 et le 09/10).
+CONFIDENT_AVG_LOGPROB = -0.5
 
 
 # Ce que Whisper écrit sur du bruit sans un mot dit : des crédits de
@@ -12327,10 +12370,16 @@ def dictation_unclear(text: str, avg_logprob: float | None) -> bool:
         return True
     if only_subtitle_credits(text):
         return True
-    return repeats_in_a_loop(re.findall(r"[^\W_]+", (text or "").casefold()))
+    # Une phrase dite deux fois de suite avec une bonne confiance, c'est
+    # l'élève qui se répète : la boucle demande alors une troisième copie
+    # (banc du RTX sur f28a759, 11/10 : 124 s de dictées justes, confiance
+    # −0,22, bloquées par une phrase répétée).
+    confident = avg_logprob is not None and avg_logprob > CONFIDENT_AVG_LOGPROB
+    return repeats_in_a_loop(
+        re.findall(r"[^\W_]+", (text or "").casefold()), copies=3 if confident else 2)
 
 
-def repeats_in_a_loop(words: list[str]) -> bool:
+def repeats_in_a_loop(words: list[str], copies: int = 2) -> bool:
     """Une boucle de Whisper : un passage d'au moins `LOOP_WORDS` mots repris
     juste après lui-même, ou un passage d'au moins `2 * LOOP_WORDS` mots
     repris à l'identique, où que ce soit.
@@ -12340,17 +12389,19 @@ def repeats_in_a_loop(words: list[str]) -> bool:
     la dictée (mesuré sur le RTX le 09/10, confiance −0,25 sur 93 s).
     """
     count = len(words)
-    for period in range(LOOP_WORDS, count // 2 + 1):
-        for start in range(count - 2 * period + 1):
-            if words[start:start + period] == words[start + period:start + 2 * period]:
+    for period in range(LOOP_WORDS, count // copies + 1):
+        for start in range(count - copies * period + 1):
+            first = words[start:start + period]
+            if all(words[start + k * period:start + (k + 1) * period] == first
+                   for k in range(1, copies)):
                 return True
     long_passage = 2 * LOOP_WORDS
-    seen: set[tuple[str, ...]] = set()
+    seen: Counter = Counter()
     for i in range(count - long_passage + 1):
         passage = tuple(words[i:i + long_passage])
-        if passage in seen:
+        seen[passage] += 1
+        if seen[passage] >= copies:
             return True
-        seen.add(passage)
     return False
 
 
@@ -12390,6 +12441,14 @@ async def transcribe_audio(
     audio = await read_bounded_upload(file, max_bytes)
     if not looks_like_audio(audio):
         raise runtime_http_error(AIRuntimeError(AI_AUDIO_INVALID), task_type)
+    # Un silence ne devient jamais du texte : Whisper y écrit des crédits de
+    # sous-titres, Canary « Je ne sais pas. » (banc du RTX, 11/10), et Cohere ne
+    # rend pas de confiance qui permettrait de le voir après coup.
+    if task_type == TaskType.TRANSCRIPTION_REALTIME:
+        peak = wav_peak_dbfs(audio)
+        if peak is not None and peak < SILENT_PEAK_DBFS:
+            observability.log("transcription.silent", level="info")
+            return {"text": "", "unclear": True}
     # L'amorce est un bonus : une base indisponible ne doit pas rendre le poste
     # muet — la dictée part alors sans indice, comme avant.
     try:
