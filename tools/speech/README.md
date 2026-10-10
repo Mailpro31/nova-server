@@ -19,15 +19,16 @@ Banc v2 du RTX, le 11/10 : 21 dictées de Sash, voix réelle, vocabulaire de cou
 |---|---|---|
 | Cohere Transcribe 03-2026 Q5_K_M | 8,9 % | 67/71 |
 | whisper-large-v3-french | 10,5 % | 63/71 |
-| turbo, faisceau 5 et repli de température | 11,7 % | 62/71 |
+| turbo, faisceau 5, sur le processeur (int8) | 11,7 % | 62/71 |
 | Canary-1B-v2 Q8_0 | 12,1 % | 61/71 |
 | **turbo derrière faster-whisper-server (le service jusqu'ici)** | **23,5 %** | **51/71** |
 
 Le même modèle turbo fait deux fois plus d'erreurs derrière
-`faster-whisper-server`. Ce serveur fixe la température à 0 : un passage raté
-n'est jamais retenté. Le moteur `faster_whisper` de ce service garde les
-réglages par défaut de faster-whisper, c'est-à-dire un faisceau de 5 et un
-repli de température.
+`faster-whisper-server` que sur le banc du RTX. Ce n'est **pas** la température :
+avec une température fixée à 0, le banc rend des sorties identiques (vérifié
+le 11/10). Restent la carte et `int8_float16`, la lecture de l'audio par le
+serveur et la version de faster-whisper. Ce service, lancé sur le processeur
+puis sur la carte, sert à trancher : il décode comme le banc.
 
 Inventions sur des silences et des bruits :
 - les Whisper n'en ont fait aucune ;
