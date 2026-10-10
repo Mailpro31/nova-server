@@ -71,12 +71,26 @@ class UnclearDecisionTests(unittest.TestCase):
             "Au moins, on passe à l'alphao et à l'alphao pour ma proposant X.", -0.63))
 
     def test_a_sentence_repeated_back_to_back_is_a_loop(self):
-        # Une phrase reprise juste après elle-même, au bout d'une dictée juste :
-        # la boucle ne couvre pas la moitié des mots, mais elle se suit.
+        # Une phrase reprise juste après elle-même, au bout d'une dictée : avec
+        # une confiance faible, c'est le modèle qui boucle ; trois copies le
+        # sont toujours.
         text = ("La portance dépend de la vitesse et de la surface de l'aile. "
                 "Le coefficient de portance augmente avec l'incidence jusqu'au "
                 "décrochage. Merci beaucoup de votre attention merci beaucoup de votre attention.")
-        self.assertTrue(main.dictation_unclear(text, -0.3))
+        self.assertTrue(main.dictation_unclear(text, -0.63))
+        self.assertTrue(main.dictation_unclear(
+            text + " merci beaucoup de votre attention.", -0.3))
+
+    def test_a_sentence_repeated_by_a_confident_student_is_kept(self):
+        # Banc du RTX sur f28a759 (11/10) : les 21 dictées v2 bout à bout,
+        # confiance −0,22, étaient bloquées par une phrase dite deux fois.
+        said = ("Le moteur turbofan sépare le flux primaire du flux secondaire. "
+                "Le moteur turbofan sépare le flux primaire du flux secondaire. "
+                "La matrice est inversible si son déterminant est différent de zéro.")
+        self.assertFalse(main.dictation_unclear(said, -0.22))
+        # Sans confiance, ou une confiance faible, deux copies restent une boucle.
+        self.assertTrue(main.dictation_unclear(said, -0.63))
+        self.assertTrue(main.dictation_unclear(said, None))
 
     def test_a_formula_said_twice_in_a_course_is_not_a_loop(self):
         # Mesuré sur le RTX le 09/10 (défaut 1) : une dictée de cours juste,
