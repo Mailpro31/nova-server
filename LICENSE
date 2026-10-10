@@ -1,0 +1,38 @@
+Nova Organisation — serveur
+Copyright © 2026 Sash (Mailpro31). Tous droits réservés.
+
+Ce dépôt est public pour que les établissements, leurs DSI et leurs
+délégués à la protection des données puissent lire le code qui traite les
+données de leurs élèves. Il n'est pas sous licence libre.
+
+Sans accord écrit préalable du titulaire des droits, il est interdit de
+copier, modifier, distribuer, vendre, héberger pour un tiers ou exploiter
+tout ou partie de ce logiciel, y compris sous forme de service.
+
+Seuls sont permis la consultation du code sur GitHub et sa copie (fork)
+sur GitHub, dans les limites des conditions d'utilisation de GitHub.
+
+Pour une licence d'utilisation, contacter le titulaire des droits par le
+dépôt GitHub Mailpro31/nova-server.
+
+Les composants tiers inclus ou utilisés (bibliothèques, modèles, images
+Docker) restent sous leur propre licence.
+
+---
+
+Nova Organisation — server
+Copyright © 2026 Sash (Mailpro31). All rights reserved.
+
+This repository is public so that schools, their IT departments and their
+data protection officers can read the code that handles their students'
+data. It is not open source.
+
+Without the prior written consent of the copyright holder, you may not
+copy, modify, distribute, sell, host for a third party or otherwise
+exploit all or part of this software, including as a service.
+
+Viewing the code on GitHub and forking it on GitHub are permitted only to
+the extent required by the GitHub Terms of Service.
+
+Third-party components included or used (libraries, models, Docker images)
+remain under their own licences.
