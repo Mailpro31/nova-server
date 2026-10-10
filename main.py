@@ -12751,10 +12751,24 @@ _NUMBER = r"\d+(?:[.,]\d+)?\s?(?:h(?:\d\d)?|heures?|min|%|€)?"
 # Un « non » seul peut être une réponse (« Tu viens mardi ? Non, mercredi
 # aussi ») : la reprise demande un mot qui l'annonce.
 _REPAIR = r"\s*,?\s*(?:(?:non|euh)\s*,?\s*)?(?:attends?|pardon|plut[oô]t|enfin)\s*,?\s*"
-SIMPLE_REPAIRS = tuple(
+# Une date complète, article compris : « le 12 mars », « le 1er avril ».
+_DATE = rf"(?:(?:le|l')\s*)?\d{{1,2}}(?:er)?\s+(?:{_MONTHS})\b"
+# L'article ou la préposition que l'élève répète avec la valeur reprise :
+# « à 10 h, pardon, à 11 h » (banc du RTX sur d6c929f, 09/10).
+_LEAD = r"(?:à|a|le|la)\s+"
+SIMPLE_REPAIRS = (
+    # La date d'abord, reprise par une date complète seulement : « le 12 mars,
+    # pardon, le 13 » perdrait son mois, et reste au modèle.
+    re.compile(rf"(?<!\w)({_DATE}){_REPAIR}(?={_DATE})", re.IGNORECASE),
+) + tuple(
     re.compile(rf"\b({kind})\b{_REPAIR}(?=\b({kind})\b)", re.IGNORECASE)
     for kind in (_WEEKDAYS, _MONTHS)
-) + (re.compile(rf"(?<![\w,.])({_NUMBER}){_REPAIR}(?=\d)", re.IGNORECASE),)
+) + (
+    # « à 10 h, pardon, à 11 h » : l'article est repris avec la valeur. Sans
+    # article répété (« à 10 h, non attends, 11 h »), il reste.
+    re.compile(rf"(?<![\w,.])({_LEAD}{_NUMBER}){_REPAIR}(?={_LEAD}\d)", re.IGNORECASE),
+    re.compile(rf"(?<![\w,.])({_NUMBER}){_REPAIR}(?=\d)", re.IGNORECASE),
+)
 
 
 def resolve_simple_repairs(text: str) -> str:
