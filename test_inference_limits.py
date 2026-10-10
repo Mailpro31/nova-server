@@ -364,7 +364,7 @@ class AudioSizeTests(InferenceLimitTestCase):
         with patch.object(main, "MAX_TRANSCRIBE_AUDIO_BYTES", 2048):
             response = self.client.post(
                 "/api/transcribe", headers=headers,
-                files={"file": ("a.wav", b"R" * 2048, "audio/wav")},
+                files={"file": ("a.wav", b"RIFF" + b"R" * 2044, "audio/wav")},
             )
         self.assertEqual(response.status_code, 200)
 
@@ -411,7 +411,7 @@ class AudioSizeTests(InferenceLimitTestCase):
             response = self.client.post(
                 "/api/transcribe", headers=headers,
                 files={"file": ("enregistrement-au-nom-tres-long.wav",
-                                b"R" * 2048, "audio/wav")},
+                                b"RIFF" + b"R" * 2044, "audio/wav")},
             )
         self.assertEqual(response.status_code, 200)
 
