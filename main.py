@@ -11,6 +11,7 @@ import io
 import os
 import urllib.parse
 import random
+import difflib
 import re
 import base64
 import hashlib
@@ -13201,6 +13202,59 @@ def has_personal_value_marker(text: str) -> bool:
     return any(not marker.startswith("nvxlex") for marker in PERSONAL_VALUE_MARKER.findall(text or ""))
 
 
+# Les mots qu'un Style fidèle peut faire disparaître sans rien perdre : ceux
+# d'une formule ou d'un nombre, écrits ensuite en symboles et en chiffres
+# (« x au carré égale deux x » → « x² = 2x »).
+FAITHFUL_SYMBOL_WORDS = frozenset((
+    "carre carres cube cubes egale egal egalent plus moins fois divise divisee "
+    "racine puissance demi demie tiers quart quarts pourcent pour cent virgule "
+    "inferieur superieur different environ degres degre"
+).split())
+# « être » et « avoir » conjugués : une faute d'accord ou de temps corrigée
+# (« sa a était bon » → « ça a été bon ») ne retire aucun contenu.
+FAITHFUL_AUXILIARY_WORDS = frozenset((
+    "etre etait etaient etais etions etiez sera seront serait seraient serai "
+    "sommes etes suis avoir avait avaient avais avions aviez aura auront aurait "
+    "auraient aurai avons avez"
+).split())
+# Une correction d'orthographe garde l'essentiel du mot : « intégre » →
+# « intègre », « place » → « Laplace », « secondes » → « seconde ».
+FAITHFUL_SPELLING_SIMILARITY = 0.75
+
+
+def faithful_word_dropped(dictated: str, text: str) -> bool:
+    """Un Style fidèle a-t-il fait disparaître un mot de contenu dicté ?
+
+    Banc v2 du RTX (11/10) : « dans un triangle rectangle » devenait « dans
+    un rectangle », et le texte collé avait plus d'erreurs que la
+    transcription brute. Un mot corrigé en un mot très proche (orthographe),
+    une hésitation, un nombre ou un mot de formule ne comptent pas.
+    """
+    # Les repères de snippets et de lexique (`{{snippet0}}`) ont leur propre
+    # contrôle : ils ne sont pas des mots dictés.
+    unmarked = lambda value: re.sub(r"\{\{[^{}]*\}\}", " ", value or "")  # noqa: E731
+    written = content_words(unmarked(text))
+    source = content_words(unmarked(dictated))
+    # Une correction donne un mot nouveau : « rectangle », déjà dicté, ne peut
+    # pas être l'orthographe corrigée de « triangle ».
+    # Les mots courts comptent aussi : « était » corrigé en « été ».
+    folded = lambda value: "".join(  # noqa: E731
+        char for char in unicodedata.normalize("NFD", value)
+        if unicodedata.category(char) != "Mn")
+    said_words = {folded(word) for word in dictation_words(unmarked(dictated))}
+    new_words = {folded(word) for word in dictation_words(unmarked(text))} - said_words
+    ignored = (COURSE_FILLER_WORDS | COURSE_NUMBER_WORDS | FAITHFUL_SYMBOL_WORDS
+               | FAITHFUL_AUXILIARY_WORDS)
+    for word in source - written - ignored:
+        if not any(
+            difflib.SequenceMatcher(None, word, other).ratio() >= FAITHFUL_SPELLING_SIMILARITY
+            or (min(len(word), len(other)) >= 4 and (word in other or other in word))
+            for other in new_words
+        ):
+            return True
+    return False
+
+
 def faithful_content_added(dictated: str, text: str) -> bool:
     """Un Style fidele a-t-il ajoute du contenu ?"""
     written = course_words(text)
@@ -13299,7 +13353,9 @@ def latex_added(dictated: str, text: str) -> bool:
     return bool(LATEX_MARKUP.search(text or "")) and not LATEX_MARKUP.search(dictated or "")
 
 
-def rewrite_refusal(dictated: str, answer: str, style_id: str | None) -> str | None:
+def rewrite_refusal(
+    dictated: str, answer: str, style_id: str | None, resolved: str | None = None,
+) -> str | None:
     """Pourquoi cette sortie ne doit pas remplacer la dictee, ou `None`.
 
     Les memes controles que le poste (`validate_rewrite`) : un serveur qui les
@@ -13376,6 +13432,11 @@ def rewrite_refusal(dictated: str, answer: str, style_id: str | None) -> str | N
         return reason
     if style_id in FAITHFUL_STYLE_IDS and faithful_content_added(dictated, text):
         return "content-added"
+    # Ce qu'une reprise abandonne peut partir : la comparaison se fait avec la
+    # dictée telle que le Style l'a reçue, reprises résolues.
+    if style_id in FAITHFUL_STYLE_IDS and faithful_word_dropped(
+            resolve_simple_repairs(resolved or dictated), text):
+        return "content-dropped"
     return None
 
 
@@ -13412,7 +13473,7 @@ async def rewrite_dictation(
     if answer_repeats_instruction(system_prompt, result):
         # Le modèle a rendu le gabarit au lieu de la dictée.
         return RewriteOutcome(None, "template_echo", resolved)
-    refusal = rewrite_refusal(source_text, result, style_id)
+    refusal = rewrite_refusal(source_text, result, style_id, resolved=resolved)
     if refusal:
         return RewriteOutcome(None, refusal, resolved)
     return RewriteOutcome(result, "ok", resolved)
