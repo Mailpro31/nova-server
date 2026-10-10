@@ -22,14 +22,30 @@ concurrency:
   group: tests-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+# Ou tournent les tests. Sans variable, les machines de GitHub, comme avant.
+# Avec les variables du depot `NOVA_CI_LINUX_RUNNER` et `NOVA_CI_WINDOWS_RUNNER`
+# (l'etiquette d'un runner auto-heberge, par exemple `nova-rtx-linux`), le
+# poste de test de Sash : ses minutes ne sont pas facturees. Le 09/10, une
+# facturation en echec a bloque toute la CI de ce depot prive, master compris.
+#
+# Un runner auto-heberge n'est sur que sur un depot prive : sur un depot public,
+# n'importe quelle PR pourrait executer son code sur cette machine.
+
 jobs:
   pytest:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+        include:
+          - os: ubuntu-latest
+            runner: ${{ vars.NOVA_CI_LINUX_RUNNER || 'ubuntu-latest' }}
+          - os: windows-latest
+            runner: ${{ vars.NOVA_CI_WINDOWS_RUNNER || 'windows-latest' }}
+    name: pytest (${{ matrix.os }})
+    runs-on: ${{ matrix.runner }}
+    # La suite prend 13 a 28 minutes sur un poste de bureau, contre moins sur
+    # les machines de GitHub.
+    timeout-minutes: 60
     # bash partout, y compris sous Windows. Le shell par defaut du runner
     # Windows est PowerShell 7 : il ajoute ses modules a PSModulePath, que
     # Python transmet ensuite au powershell.exe (5.1) des tests du Lab, qui ne
