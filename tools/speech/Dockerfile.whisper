@@ -1,0 +1,19 @@
+# Le service de transcription avec le moteur faster-whisper. Voir README.md.
+#
+# Il part de l'image que le serveur utilise déjà (`whisper` dans
+# docker-compose.yml) : faster-whisper, CUDA et FastAPI y sont, rien de plus à
+# télécharger. Seul le réglage du décodage change : faisceau de 5 et repli de
+# température, au lieu d'une température fixée à 0.
+ARG BASE=fedirz/faster-whisper-server:latest-cuda
+FROM ${BASE}
+ENV SPEECH_ENGINE=faster_whisper \
+    SPEECH_MODEL=large-v3-turbo \
+    SPEECH_DEVICE=cuda \
+    SPEECH_COMPUTE_TYPE=int8_float16 \
+    SPEECH_BEAM_SIZE=5 \
+    SPEECH_DEFAULT_LANGUAGE=fr \
+    PORT=8000
+COPY app.py /nova-speech/app.py
+EXPOSE 8000
+ENTRYPOINT []
+CMD ["python", "/nova-speech/app.py"]

@@ -9,6 +9,7 @@ import importlib.util
 import io
 import os
 import sys
+import types
 import unittest
 import wave
 from unittest.mock import patch
@@ -19,7 +20,7 @@ from fastapi.testclient import TestClient
 import ai_runtime
 
 _SPEC = importlib.util.spec_from_file_location(
-    "speech_gguf_app", os.path.join(os.path.dirname(__file__), "tools", "speech-gguf", "app.py"))
+    "speech_service_app", os.path.join(os.path.dirname(__file__), "tools", "speech", "app.py"))
 speech = importlib.util.module_from_spec(_SPEC)
 sys.modules[_SPEC.name] = speech
 _SPEC.loader.exec_module(speech)
@@ -114,6 +115,69 @@ class SpeechServiceTests(unittest.TestCase):
         client = TestClient(speech.create_app(engine))
         response = client.post("/v1/audio/transcriptions", files={"file": ("a.wav", wav(0.5))})
         self.assertEqual(response.status_code, 425)
+
+
+class FakeWhisperModel:
+    """Le strict nécessaire de `faster_whisper.WhisperModel`."""
+
+    instances = []
+
+    def __init__(self, model, device, compute_type):
+        self.loaded = (model, device, compute_type)
+        self.calls = []
+        FakeWhisperModel.instances.append(self)
+
+    def transcribe(self, audio, **options):
+        self.calls.append(options)
+        segment = types.SimpleNamespace(start=0.0, end=1.2, text=" La portance augmente.",
+                                        avg_logprob=-0.21)
+        return iter([segment]), types.SimpleNamespace(language="fr")
+
+
+class FasterWhisperEngineTests(unittest.TestCase):
+    def setUp(self):
+        fake_numpy = types.SimpleNamespace(
+            float32="float32", frombuffer=lambda data, dtype: ("pcm", len(data)))
+        fake_whisper = types.SimpleNamespace(__version__="1.test", WhisperModel=FakeWhisperModel)
+        patcher = patch.dict(sys.modules, {"numpy": fake_numpy, "faster_whisper": fake_whisper})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        FakeWhisperModel.instances.clear()
+
+    def test_the_engine_is_chosen_by_the_environment(self):
+        with patch.dict(os.environ, {"SPEECH_ENGINE": "faster_whisper",
+                                     "SPEECH_MODEL": "large-v3-turbo",
+                                     "SPEECH_COMPUTE_TYPE": "int8_float16"}):
+            engine = speech.engine_from_environment()
+        self.assertIsInstance(engine, speech.FasterWhisperEngine)
+        engine.load()
+        self.assertEqual(FakeWhisperModel.instances[0].loaded,
+                         ("large-v3-turbo", "auto", "int8_float16"))
+
+    def test_decoding_keeps_the_beam_and_the_temperature_fallback(self):
+        # Le banc du RTX : faisceau 5 et repli de température, jamais une
+        # température fixée à 0 comme derrière faster-whisper-server.
+        engine = speech.FasterWhisperEngine("large-v3-turbo")
+        engine.load()
+        transcript = engine.transcribe(speech.pcm16_to_float(bytes(32000), 1), "fr")
+        options = FakeWhisperModel.instances[0].calls[0]
+        self.assertEqual(options["beam_size"], 5)
+        self.assertEqual(options["language"], "fr")
+        self.assertNotIn("temperature", options)
+        self.assertEqual(transcript.text, "La portance augmente.")
+
+    def test_the_confidence_reaches_the_nova_server(self):
+        engine = speech.FasterWhisperEngine("large-v3-turbo")
+        engine.load()
+        client = TestClient(speech.create_app(engine))
+        body = client.post("/v1/audio/transcriptions", files={"file": ("a.wav", wav(1.0))},
+                           data={"response_format": "verbose_json", "language": "fr"}).json()
+        self.assertAlmostEqual(ai_runtime.segments_confidence(body["segments"]), -0.21)
+
+    def test_transcribe_cpp_stays_the_default(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("SPEECH_ENGINE", None)
+            self.assertIsInstance(speech.engine_from_environment(), speech.TranscribeCppEngine)
 
 
 class NovaServerCompatibilityTests(unittest.TestCase):
