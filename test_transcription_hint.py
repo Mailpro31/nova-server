@@ -123,19 +123,36 @@ class TranscribeRouteTests(AdminTestCase):
         self.assertEqual(response.status_code, 200, response.text)
         return response.json()["text"], seen
 
-    def test_the_member_s_vocabulary_reaches_the_engine(self):
+    def test_by_default_the_engine_gets_no_hint(self):
+        # Banc v2 du RTX (11/10) : l'amorce dégradait les deux Whisper.
         add_shared("ipsa", "IPSA")
         add_personal("eleve@example.com", "Aero 3", "Aéro 3")
 
         _, seen = self.dictate("bonjour")
 
+        self.assertIsNone(seen.get("prompt"))
+
+    def test_the_member_s_vocabulary_reaches_the_engine_when_enabled(self):
+        add_shared("ipsa", "IPSA")
+        add_personal("eleve@example.com", "Aero 3", "Aéro 3")
+
+        with patch.object(main, "SPEECH_HINT_ENABLED", True):
+            _, seen = self.dictate("bonjour")
+
         self.assertIn("IPSA", seen.get("prompt") or "")
         self.assertIn("Aéro 3", seen.get("prompt") or "")
 
     def test_the_engine_gets_no_hint_when_there_is_no_vocabulary(self):
-        _, seen = self.dictate("bonjour")
+        with patch.object(main, "SPEECH_HINT_ENABLED", True):
+            _, seen = self.dictate("bonjour")
         self.assertIsNone(seen.get("prompt"))
 
+    def test_the_vocabulary_is_still_applied_after_transcription(self):
+        add_shared("ipsa", "IPSA")
+        text, _ = self.dictate("le projet de l'ipsa")
+        self.assertIn("IPSA", text)
+
+    @patch.object(main, "SPEECH_HINT_ENABLED", True)
     def test_an_echoed_hint_comes_back_as_an_empty_dictation(self):
         add_shared("ipsa", "IPSA")
         add_personal("eleve@example.com", "Aero 3", "Aéro 3")

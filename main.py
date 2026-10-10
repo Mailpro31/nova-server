@@ -12200,6 +12200,14 @@ def runtime_http_error(error: AIRuntimeError, task_type: TaskType) -> HTTPExcept
     return HTTPException(status_by_code.get(error.code, 502), detail)
 
 
+# L'amorce de lexique envoyée au moteur de transcription. Coupée par défaut :
+# mesurée trois fois, elle dégrade la transcription. Banc du 05/10 : erreurs
+# 0,27 → 0,30. Banc v2 du RTX (11/10, 21 dictées de Sash, décodage correct) :
+# turbo 0,117 → 0,142, whisper-large-v3-french 0,105 → 0,121, alors même que
+# le lexique contenait des mots du banc. Le vocabulaire reste appliqué après
+# la transcription, de façon déterministe (`enforce_vocabulary`).
+SPEECH_HINT_ENABLED = os.getenv("NOVA_SPEECH_HINT", "false").strip().lower() == "true"
+
 # Ce que le moteur lit de l'amorce. Whisper n'en garde que ~224 jetons ; 400
 # caractères de français y tiennent avec de la marge, et un dépassement serait
 # tronqué en silence par le moteur, pas refusé.
@@ -12379,7 +12387,7 @@ def looks_like_audio(audio: bytes) -> bool:
 
 async def transcribe_audio(
     file: UploadFile, user: str, task_type: TaskType, max_bytes: int,
-    language: str | None = None,
+    language: str | None = None, organization_id: str | None = None,
 ) -> dict:
     """Shared speech service; authorization remains route-specific.
 
@@ -12392,11 +12400,12 @@ async def transcribe_audio(
         raise runtime_http_error(AIRuntimeError(AI_AUDIO_INVALID), task_type)
     # L'amorce est un bonus : une base indisponible ne doit pas rendre le poste
     # muet — la dictée part alors sans indice, comme avant.
-    try:
-        hint = transcription_hint(user)
-    except Exception:  # noqa: BLE001 — la dictée d'abord
-        observability.log("transcription_hint_unavailable", level="warning")
-        hint = None
+    hint = None
+    if SPEECH_HINT_ENABLED:
+        try:
+            hint = transcription_hint(user)
+        except Exception:  # noqa: BLE001 — la dictée d'abord
+            observability.log("transcription_hint_unavailable", level="warning")
     try:
         result = await ORGANIZATION_AI_ROUTER.transcribe(
             task_type,
@@ -12418,7 +12427,15 @@ async def transcribe_audio(
     if dictated and dictation_unclear(result.text, result.avg_logprob):
         observability.log("transcription.unclear", level="info")
         return {"text": "", "unclear": True}
-    return {"text": result.text}
+    # Le vocabulaire de l'élève et de l'école, appliqué à l'identique : il ne
+    # passe plus par l'amorce du moteur (`SPEECH_HINT_ENABLED`), et une dictée
+    # collée sans reformulation doit l'avoir aussi.
+    try:
+        vocabulary = dictation_vocabulary(user, organization_id)
+    except Exception:  # noqa: BLE001 — la dictée d'abord
+        observability.log("transcription_vocabulary_unavailable", level="warning")
+        vocabulary = []
+    return {"text": enforce_vocabulary(result.text, vocabulary)}
 
 
 @app.post("/api/transcribe")
@@ -12455,6 +12472,7 @@ async def transcribe(
     return await transcribe_audio(
         file, user, TaskType.TRANSCRIPTION_REALTIME, MAX_TRANSCRIBE_AUDIO_BYTES,
         language=requested_language(language),
+        organization_id=account_organization(account),
     )
 
 
@@ -12480,7 +12498,8 @@ async def transcribe_import(
     reject_oversized_declaration(content_length, MAX_IMPORT_AUDIO_BYTES)
     enforce_inference_quota("import", user, account_organization(account))
     return await transcribe_audio(
-        file, user, TaskType.TRANSCRIPTION_FILE, MAX_IMPORT_AUDIO_BYTES
+        file, user, TaskType.TRANSCRIPTION_FILE, MAX_IMPORT_AUDIO_BYTES,
+        organization_id=account_organization(account),
     )
 
 class RewriteTruncated(Exception):
