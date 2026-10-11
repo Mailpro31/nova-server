@@ -92,6 +92,15 @@ class UnclearDecisionTests(unittest.TestCase):
         self.assertTrue(main.dictation_unclear(said, -0.63))
         self.assertTrue(main.dictation_unclear(said, None))
 
+    def test_a_repeated_syllable_alone_is_not_a_dictation(self):
+        # Turbo en GGUF sur la carte du RTX (11/10) : « Lalalala. » sur un « euh ».
+        for heard in ("Lalalala.", "nanana", "Tatata !"):
+            with self.subTest(heard=heard):
+                self.assertTrue(main.only_hesitations(heard))
+        for said in ("Papa arrive.", "Le bonbon", "Lalalala, c'est la chanson du TD.", "ananas"):
+            with self.subTest(said=said):
+                self.assertFalse(main.only_hesitations(said))
+
     def test_a_lone_thanks_heard_on_a_breath_is_unclear(self):
         # Témoin du RTX (11/10) : « Merci. » sur un souffle, confiance −0,46.
         for heard in ("Merci.", "Merci beaucoup !", "merci à vous"):
