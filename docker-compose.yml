@@ -65,7 +65,8 @@ x-nova-environment: &nova-environment
     # la configuration du deploiement : aucun endpoint produit ne les connait.
     # Le serveur n'invente plus de modele par defaut — un deploiement qui n'en
     # declare pas obtient AI_MODEL_NOT_READY, jamais un choix silencieux.
-    NOVA_WHISPER_URL: "http://whisper:8000"
+    # `http://speech-gguf:8000` pour le service GGUF ci-dessous.
+    NOVA_WHISPER_URL: "${NOVA_WHISPER_URL:-http://whisper:8000}"
     NOVA_WHISPER_MODEL: "${NOVA_WHISPER_MODEL:-large-v3-turbo}"
     NOVA_LLM_URL: "http://llm:8000/v1"
     NOVA_LLM_MODEL: "${NOVA_LLM_MODEL:-Qwen/Qwen2.5-14B-Instruct}"
@@ -212,6 +213,39 @@ services:
               capabilities: [gpu]
     volumes:
       - nova-models:/root/.cache/huggingface
+
+  # La transcription par transcribe.cpp (tools/speech), au format de
+  # faster-whisper-server. En service sur le serveur de test depuis le 11/10
+  # avec Whisper large-v3-turbo GGUF Q8_0 : 0,101 d'erreurs normalisées sur les
+  # dictées de Sash, contre 0,134 pour le même turbo derrière `whisper`, et
+  # 0 invention sur des silences et des bruits.
+  #
+  # Pour l'utiliser : poser le fichier GGUF (NOVA_SPEECH_GGUF_PATH), puis
+  #   NOVA_WHISPER_URL=http://speech-gguf:8000
+  #   docker compose --profile speech-gguf up -d speech-gguf api
+  # et arrêter `whisper`, dont la carte n'a plus besoin. Retour arrière :
+  # retirer NOVA_WHISPER_URL et relancer `whisper`.
+  speech-gguf:
+    build:
+      context: tools/speech
+      args:
+        CUDA_ARCH: "${NOVA_SPEECH_CUDA_ARCH:-75}"
+    environment:
+      SPEECH_ENGINE: transcribe_cpp
+      SPEECH_BACKEND: "${NOVA_SPEECH_BACKEND:-cuda}"
+      SPEECH_MODEL_PATH: /models/speech.gguf
+      SPEECH_MODEL_NAME: "${NOVA_SPEECH_GGUF_NAME:-whisper-large-v3-turbo-q8_0}"
+      SPEECH_DEFAULT_LANGUAGE: fr
+    volumes:
+      - "${NOVA_SPEECH_GGUF_PATH:-./models/speech.gguf}:/models/speech.gguf:ro"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+    restart: unless-stopped
+    profiles: ["speech-gguf"]
 
   llm:
     image: vllm/vllm-openai:latest
