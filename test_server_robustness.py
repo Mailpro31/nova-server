@@ -129,5 +129,54 @@ class InvalidAudioRouteTests(AdminTestCase):
         self.assertEqual(response.status_code, 400, response.text)
 
 
+class StoppedTextEngineTests(unittest.TestCase):
+    """Test 8 du RTX sur 472bc3a (11/10) : modèle de texte arrêté, la dictée
+    revenait au bout de 11,8 s. Un conteneur arrêté ne se résout plus, et
+    chaque appel attendait avant d'échouer ; une reformulation en fait deux."""
+
+    def router(self):
+        backend = ai_runtime.FakeTextInferenceBackend(status=ai_runtime.EngineStatus.UNAVAILABLE)
+        router = ai_runtime.OrganizationAIRouter(
+            backend, ai_runtime.FakeSpeechInferenceBackend())
+        return router, backend
+
+    def generate(self, router):
+        with self.assertRaises(AIRuntimeError) as raised:
+            asyncio.run(router.generate(ai_runtime.TaskType.REFORMULATION, "bonjour", "Corrige."))
+        return raised.exception.code
+
+    def test_a_stopped_engine_is_not_called_again_right_away(self):
+        router, backend = self.router()
+        self.assertEqual(self.generate(router), ai_runtime.AI_RUNTIME_UNAVAILABLE)
+        self.assertEqual(self.generate(router), ai_runtime.AI_RUNTIME_UNAVAILABLE)
+        self.assertEqual(len(backend.requests), 1)
+
+    def test_the_engine_is_tried_again_after_the_pause(self):
+        router, backend = self.router()
+        self.generate(router)
+        backend.status = ai_runtime.EngineStatus.READY
+        with patch.object(ai_runtime.time, "monotonic",
+                          return_value=router._text_down_until + 0.1):
+            result = asyncio.run(
+                router.generate(ai_runtime.TaskType.REFORMULATION, "bonjour", "Corrige."))
+        self.assertEqual(result.text, "fake:reformulation")
+
+    def test_connecting_to_an_engine_is_bounded(self):
+        seen = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["timeout"] = request.extensions.get("timeout", {})
+            return httpx.Response(200, json={"text": "bonjour", "segments": []})
+
+        adapter = ai_runtime.WhisperCompatibleSpeechBackend(
+            "http://whisper", "large-v3-turbo", transport=httpx.MockTransport(handler))
+        request = ai_runtime.SpeechInferenceRequest(
+            "r1", ai_runtime.TaskType.TRANSCRIPTION_REALTIME, wav(), "a.wav", "fr", False,
+            10.0, None, True)
+        asyncio.run(adapter.transcribe(request))
+        self.assertEqual(seen["timeout"].get("connect"), ai_runtime.ENGINE_CONNECT_TIMEOUT_SECONDS)
+        self.assertEqual(seen["timeout"].get("read"), 10.0)
+
+
 if __name__ == "__main__":
     unittest.main()

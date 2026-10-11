@@ -125,6 +125,14 @@ _FALLBACK_MESSAGE_OVERHEAD_TOKENS = 8
 # Une dictée prend environ 0,5 s sur la carte : 8 s d'attente servent une
 # file de 16. Avec 3 s et 4 places, 10 dictées simultanées donnaient 5 refus
 # (banc du RTX, 09/10), et le poste passait en silence sur son moteur local.
+# Le temps d'établir la connexion avec un moteur, résolution du nom comprise.
+# Un conteneur arrêté ne se résout plus, et l'attente par défaut se comptait en
+# secondes à chaque appel (test 8 du RTX, 11/10 : 11,8 s pour rendre la dictée).
+ENGINE_CONNECT_TIMEOUT_SECONDS = 2.0
+# Après un moteur de texte injoignable, le temps pendant lequel on ne le
+# rappelle pas : la dictée est rendue tout de suite, sans attendre un nouvel
+# échec. Il est retenté ensuite, et repart seul quand il revient.
+TEXT_ENGINE_DOWN_SECONDS = 10.0
 DEFAULT_QUEUE_WAIT_SECONDS = 8.0
 DEFAULT_MAX_QUEUE = 16
 MIN_QUEUE_WAIT_SECONDS = 0.05
@@ -462,7 +470,9 @@ class OpenAICompatibleTextBackend:
         started = time.monotonic()
         try:
             async with httpx.AsyncClient(
-                timeout=request.timeout_seconds, transport=self.transport
+                timeout=httpx.Timeout(
+                    request.timeout_seconds, connect=ENGINE_CONNECT_TIMEOUT_SECONDS),
+                transport=self.transport
             ) as client:
                 payload["max_tokens"] = await self._bounded_output_tokens(
                     client, payload["messages"], request.options.max_output_tokens
@@ -586,7 +596,9 @@ class WhisperCompatibleSpeechBackend:
         started = time.monotonic()
         try:
             async with httpx.AsyncClient(
-                timeout=request.timeout_seconds, transport=self.transport
+                timeout=httpx.Timeout(
+                    request.timeout_seconds, connect=ENGINE_CONNECT_TIMEOUT_SECONDS),
+                transport=self.transport
             ) as client:
                 response = await client.post(
                     f"{self.base_url}/v1/audio/transcriptions",
@@ -826,6 +838,7 @@ class OrganizationAIRouter:
         custom_options: TextInferenceOptions | None = None,
     ):
         self.text_backend = text_backend
+        self._text_down_until = 0.0
         self.speech_backend = speech_backend
         # Les valeurs de `custom`, si et seulement si le deploiement les a
         # declarees. Elles ne sont pas modifiables par une API : ce sont des
@@ -936,6 +949,8 @@ class OrganizationAIRouter:
             timeout,
             examples,
         )
+        if time.monotonic() < self._text_down_until:
+            raise AIRuntimeError(AI_RUNTIME_UNAVAILABLE)
         await self.text_capacity.acquire()
         try:
             try:
@@ -944,6 +959,10 @@ class OrganizationAIRouter:
                 )
             except asyncio.TimeoutError as error:
                 raise AIRuntimeError(AI_RUNTIME_TIMEOUT) from error
+            except AIRuntimeError as error:
+                if error.code == AI_RUNTIME_UNAVAILABLE:
+                    self._text_down_until = time.monotonic() + TEXT_ENGINE_DOWN_SECONDS
+                raise
         finally:
             await self.text_capacity.release()
 
