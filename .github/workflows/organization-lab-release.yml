@@ -60,6 +60,10 @@ jobs:
               "tier": p["id"].removeprefix("LAB_GPU_").lower().replace("_", "-"),
               "speech_model": p["speech_model"],
               "speech_compute_type": p["speech_compute_type"],
+              # Vide pour un palier encore sur faster-whisper.
+              "speech_engine": p.get("speech_engine", ""),
+              "speech_gguf_url": p.get("speech_gguf_url", ""),
+              "speech_gguf_sha256": p.get("speech_gguf_sha256", ""),
               "text_model": p["text_model"],
           } for p in retenus]
           print("matrix=" + json.dumps({"include": entrees}))
@@ -82,7 +86,24 @@ jobs:
       - uses: docker/setup-buildx-action@v4
       - uses: docker/login-action@v4
         with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
+      # transcribe.cpp (speech-gguf.Dockerfile) quand le profil le demande : le
+      # serveur de test transcrit ainsi depuis le 11/10, 0,101 d'erreurs
+      # normalisees contre 0,134 pour faster-whisper. Le modele GGUF est verifie
+      # par son empreinte pendant la construction. Meme port, meme etiquette :
+      # le compose de l'installateur ne change pas.
+      - id: build-gguf
+        if: matrix.speech_engine == 'transcribe_cpp'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: tools/organization-lab/images/speech-gguf.Dockerfile
+          push: true
+          build-args: |
+            GGUF_URL=${{ matrix.speech_gguf_url }}
+            GGUF_SHA256=${{ matrix.speech_gguf_sha256 }}
+          tags: ghcr.io/mailpro31/nova-quick-lab-speech:${{ inputs.version }}-${{ matrix.tier }}
       - id: build
+        if: matrix.speech_engine != 'transcribe_cpp'
         uses: docker/build-push-action@v7
         with:
           context: .
