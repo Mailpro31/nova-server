@@ -48,8 +48,20 @@ def test_profiles_cover_all_vram_without_overlap():
 def test_rtx_2060_does_not_receive_14b():
     profile = select(6144)
     assert "14B" not in profile["text_model"]
-    assert profile["speech_model"] != "large-v3-turbo"
     assert profile["max_concurrent_text"] == 1
+
+
+def test_a_6gb_card_gets_the_measured_transcriber():
+    # Banc v2 du RTX (11/10), RTX 2060 6 Go : turbo int8_float16 fait 0,134
+    # d'erreurs normalisées, small 0,231, et turbo tient à côté de vLLM 0.55
+    # avec 783 Mio de marge au pic. Une école avec une carte de 6 à 12 Go
+    # recevait small ou medium.
+    for vram in (6144, 8192, 12288):
+        profile = select(vram)
+        assert profile["speech_model"] == "large-v3-turbo", vram
+        assert profile["speech_compute_type"] == "int8_float16", vram
+    # 4 Go : turbo ne tient pas à côté du modèle de texte ; small plutôt que tiny.
+    assert select(4096)["speech_model"] == "small"
 
 
 def test_distribution_has_no_customer_github_or_huggingface_dependency():
