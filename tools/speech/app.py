@@ -46,6 +46,8 @@ from fastapi.responses import JSONResponse
 SAMPLE_RATE = 16000
 MAX_AUDIO_BYTES = int(os.getenv("SPEECH_MAX_AUDIO_BYTES", str(200 * 1024 * 1024)))
 DEFAULT_LANGUAGE = os.getenv("SPEECH_DEFAULT_LANGUAGE", "fr") or None
+# En dessous, aucun mot ne peut avoir été dit.
+MIN_AUDIO_SECONDS = 0.05
 
 
 @dataclass
@@ -264,9 +266,15 @@ def create_app(engine=None) -> FastAPI:
         except AudioUnreadable as error:
             raise HTTPException(400, "invalid audio") from error
         started = time.monotonic()
-        transcript = await asyncio.to_thread(
-            engine.transcribe, pcm, (language or DEFAULT_LANGUAGE))
         duration = len(pcm) / SAMPLE_RATE
+        if duration < MIN_AUDIO_SECONDS:
+            # Un WAV réduit à son en-tête : transcribe.cpp lève « empty PCM
+            # buffer » (500, puis 502 côté Nova ; relevé par le RTX le 11/10),
+            # faster-whisper rendait un texte vide. Rien à transcrire.
+            transcript = Transcript("", language or DEFAULT_LANGUAGE)
+        else:
+            transcript = await asyncio.to_thread(
+                engine.transcribe, pcm, (language or DEFAULT_LANGUAGE))
         if response_format != "verbose_json":
             return {"text": transcript.text}
         return {
