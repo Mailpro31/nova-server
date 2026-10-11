@@ -1144,3 +1144,18 @@ def test_the_readme_names_the_override_as_the_way_to_customise():
     # Et l'avertissement qui explique pourquoi editer le fichier genere echoue.
     assert "rewrite it" in readme or "rewrites it" in readme, (
         "le README doit dire que le fichier genere est reecrit")
+
+
+def test_every_gpu_tier_ships_a_pinned_and_verified_gguf_transcriber():
+    # Le serveur de test transcrit par transcribe.cpp depuis le 11/10 (0,101
+    # d'erreurs normalisées, contre 0,134 pour faster-whisper). Une image n'est
+    # construite qu'avec le fichier mesuré : révision fixe et empreinte.
+    import re
+    for profile in manifest()["profiles"]:
+        if not profile.get("gpu"):
+            continue
+        assert profile["speech_engine"] == "transcribe_cpp", profile["id"]
+        assert re.fullmatch(
+            r"https://huggingface\.co/[\w.-]+/[\w.-]+/resolve/[0-9a-f]{40}/[\w.-]+\.gguf",
+            profile["speech_gguf_url"]), profile["id"]
+        assert re.fullmatch(r"[0-9a-f]{64}", profile["speech_gguf_sha256"]), profile["id"]
