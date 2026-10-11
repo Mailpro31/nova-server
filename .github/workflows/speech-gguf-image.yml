@@ -1,0 +1,52 @@
+name: Speech GGUF image (test)
+
+# Construit l'image de transcription GGUF d'un palier sous une etiquette de
+# TEST, sans rien publier aux ecoles. Le RTX la lance sur sa carte avant que la
+# publication Organization Lab ne passe a cette image : une image qui se
+# construit n'est pas encore une image qui transcrit.
+
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: GGUF a cuire dans l'image
+        required: true
+        default: turbo-q8
+        type: choice
+        options: [turbo-q8, small-q8]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v5
+      - name: Reclaim runner space for the CUDA image
+        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup
+      - id: model
+        run: |
+          set -euo pipefail
+          case "${{ inputs.model }}" in
+            turbo-q8)
+              echo "url=https://huggingface.co/handy-computer/whisper-large-v3-turbo-gguf/resolve/ceea6c8a94a21ab85be244d311e874a39344dbf5/whisper-large-v3-turbo-Q8_0.gguf" >> "$GITHUB_OUTPUT"
+              echo "sha=b2e30cc286bc9f3aba4db9099fc7403543497c05ce7100d0d83091ddfd25a183" >> "$GITHUB_OUTPUT" ;;
+            small-q8)
+              echo "url=https://huggingface.co/handy-computer/whisper-small-gguf/resolve/a2073177cb69bd74b9ca9460b852d17fbfd5d68c/whisper-small-Q8_0.gguf" >> "$GITHUB_OUTPUT"
+              echo "sha=9b9c8811bbcc82a7766f0fb0925614bdacb0923b2cc630daeac17108b655b860" >> "$GITHUB_OUTPUT" ;;
+          esac
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: tools/organization-lab/images/speech-gguf.Dockerfile
+          push: true
+          build-args: |
+            GGUF_URL=${{ steps.model.outputs.url }}
+            GGUF_SHA256=${{ steps.model.outputs.sha }}
+          tags: ghcr.io/mailpro31/nova-quick-lab-speech-gguf:test-${{ inputs.model }}-${{ github.sha }}
