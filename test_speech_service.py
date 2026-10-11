@@ -97,6 +97,18 @@ class SpeechServiceTests(unittest.TestCase):
         ffmpeg.assert_called_once()
         self.assertEqual(self.engine.calls, [(8000, "fr")])
 
+    def test_a_header_only_wav_gives_an_empty_text_without_the_engine(self):
+        # Relevé par le RTX le 11/10 : transcribe.cpp levait « empty PCM buffer ».
+        for seconds in (0.0, 0.02):
+            with self.subTest(seconds=seconds):
+                response = self.client.post(
+                    "/v1/audio/transcriptions", files={"file": ("a.wav", wav(seconds))},
+                    data={"response_format": "verbose_json"})
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertEqual(response.json()["text"], "")
+                self.assertEqual(response.json()["segments"], [])
+        self.assertEqual(self.engine.calls, [])
+
     def test_stereo_16k_is_downmixed(self):
         pcm = speech.decode_audio(wav(1.0, 16000, channels=2))
         self.assertEqual(len(pcm), 16000)
