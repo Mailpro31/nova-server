@@ -12354,6 +12354,9 @@ HESITATIONS = frozenset(
     "euh heu hum hm hmm mm mmh mhm uh um mm-hmm".split()
 )
 STRETCHED_SOUND = re.compile(r"(.)\1{3,}")
+# Une syllabe répétée, seule : « Lalalala. » écrit par turbo (transcribe.cpp)
+# sur un « euh » (mesuré sur la carte du RTX le 11/10).
+REPEATED_SYLLABLE = re.compile(r"(..?)\1{2,}")
 
 
 def requested_language(value: str | None) -> str | None:
@@ -12365,7 +12368,10 @@ def requested_language(value: str | None) -> str | None:
 def only_hesitations(text: str) -> bool:
     """Vrai si la transcription n'a que des hésitations ou de la ponctuation."""
     words = re.findall(r"[^\W\d_]+(?:-[^\W\d_]+)*", (text or "").casefold())
-    return all(word in HESITATIONS or STRETCHED_SOUND.search(word) for word in words)
+    return all(
+        word in HESITATIONS or STRETCHED_SOUND.search(word) or REPEATED_SYLLABLE.fullmatch(word)
+        for word in words
+    )
 
 
 # Sous ce seuil, Whisper lui-même rejette un passage (sa « température de

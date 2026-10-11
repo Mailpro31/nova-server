@@ -180,6 +180,53 @@ class FasterWhisperEngineTests(unittest.TestCase):
             self.assertIsInstance(speech.engine_from_environment(), speech.TranscribeCppEngine)
 
 
+class UnsupportedRequest(Exception):
+    """Le nom de l'erreur de transcribe_cpp quand un modèle refuse une option."""
+
+
+class FakeGgufSession:
+    def __init__(self, calls, refuse_segments):
+        self.calls, self.refuse_segments = calls, refuse_segments
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def run(self, pcm, timestamps, language):
+        self.calls.append(timestamps)
+        if timestamps == "segment" and self.refuse_segments:
+            raise UnsupportedRequest("unsupported timestamp granularity")
+        return types.SimpleNamespace(text=" La portance augmente.", language=language,
+                                     segments=[])
+
+
+class TranscribeCppEngineTests(unittest.TestCase):
+    """Mesuré sur la carte du RTX le 11/10 : Cohere refuse les horodatages par
+    passage, et le service répondait 502 à toutes les dictées."""
+
+    def engine(self, refuse_segments):
+        engine = speech.TranscribeCppEngine("/models/speech.gguf")
+        calls = []
+        engine._model = types.SimpleNamespace(
+            session=lambda: FakeGgufSession(calls, refuse_segments))
+        return engine, calls
+
+    def test_a_model_without_segment_timestamps_still_transcribes(self):
+        engine, calls = self.engine(refuse_segments=True)
+        pcm = speech.pcm16_to_float(bytes(3200), 1)
+        self.assertEqual(engine.transcribe(pcm, "fr").text, "La portance augmente.")
+        self.assertEqual(engine.transcribe(pcm, "fr").text, "La portance augmente.")
+        # Le refus n'est payé qu'une fois.
+        self.assertEqual(calls, ["segment", "none", "none"])
+
+    def test_a_model_with_segments_keeps_them(self):
+        engine, calls = self.engine(refuse_segments=False)
+        engine.transcribe(speech.pcm16_to_float(bytes(3200), 1), "fr")
+        self.assertEqual(calls, ["segment"])
+
+
 class NovaServerCompatibilityTests(unittest.TestCase):
     """Le vrai adaptateur du serveur Nova, branché sur ce service."""
 

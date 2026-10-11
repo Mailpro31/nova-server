@@ -123,6 +123,10 @@ class TranscribeCppEngine:
         self._model = None
         self._lock = threading.Lock()
         self.error: str | None = None
+        # Cohere Transcribe ne rend pas d'horodatage par passage : il répond
+        # « unsupported timestamp granularity » (UnsupportedRequest). Mesuré
+        # sur la carte du RTX le 11/10 : 100 % de 502 avant ce repli.
+        self._timestamps = "segment"
 
     @property
     def ready(self) -> bool:
@@ -140,7 +144,14 @@ class TranscribeCppEngine:
 
     def transcribe(self, pcm: array.array, language: str | None) -> Transcript:
         with self._lock, self._model.session() as session:
-            result = session.run(pcm, timestamps="segment", language=language)
+            try:
+                result = session.run(pcm, timestamps=self._timestamps, language=language)
+            except Exception as error:  # noqa: BLE001 — seule cette erreur se rattrape
+                if type(error).__name__ != "UnsupportedRequest" or self._timestamps == "none":
+                    raise
+                # Le texte entier fait alors un seul passage.
+                self._timestamps = "none"
+                result = session.run(pcm, timestamps="none", language=language)
         segments = [
             Segment(segment.t0_ms / 1000, segment.t1_ms / 1000, segment.text)
             for segment in (result.segments or [])
