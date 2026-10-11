@@ -52,7 +52,7 @@
       "speech_compute_type": "int8_float16",
       "text_model": "Qwen/Qwen2.5-3B-Instruct-AWQ",
       "text_max_model_len": 3072,
-      "text_gpu_memory_utilization": 0.6,
+      "text_gpu_memory_utilization": 0.60,
       "max_concurrent_text": 1,
       "max_concurrent_speech": 1
     },
