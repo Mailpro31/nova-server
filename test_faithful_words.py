@@ -34,7 +34,6 @@ class FaithfulWordTests(unittest.TestCase):
     def test_corrections_numbers_and_formulas_are_not_drops(self):
         for said, written in (
             ("un avion vol a 250 metres par seconde", "Un avion vole à 250 mètres par seconde."),
-            ("la dérivée de x au carré est égale à deux x", "La dérivée de x² est égale à 2x."),
             ("la transformée de la place permet de résoudre les équations",
              "La transformée de Laplace permet de résoudre les équations."),
             ("la viscosité s'exprime en pascal secondes", "La viscosité s'exprime en pascals seconde."),
@@ -43,6 +42,31 @@ class FaithfulWordTests(unittest.TestCase):
         ):
             with self.subTest(written=written):
                 self.assertFalse(main.faithful_word_dropped(said, written))
+
+    def test_a_formula_is_left_to_the_desktop(self):
+        # Banc #105 du RTX sur 472bc3a (11/10) : « la dérivée de x au carré est
+        # égale à deux x » acceptée en « La dérivée du x² est égale à 2x ». Le
+        # poste écrit les formules lui-même, de façon déterministe
+        # (`spoken_maths`) : un Style fidèle garde « au carré ».
+        self.assertTrue(main.faithful_word_dropped(
+            "la dérivée de x au carré est égale à deux x", "La dérivée du x² est égale à 2x."))
+
+    def test_an_invented_letter_closing_or_blank_field_is_refused(self):
+        # Banc du RTX sur 472bc3a (11/10), 3 fois sur 3 avec le Style par défaut.
+        said = "bonjour je vous envoie mon adresse pour l'inscription au partiel"
+        written = ("Bonjour,\n\nJe vous envoie mon adresse pour l'inscription au partiel."
+                   "\n\nMerci,\n[Votre nom]")
+        self.assertEqual(main.rewrite_refusal(said, written, "default_improve_transcriptions"),
+                         "content-added")
+        # Une formule ou un champ dicté reste.
+        self.assertIsNone(main.rewrite_refusal(
+            "bonjour je vous envoie mon adresse merci", "Bonjour, je vous envoie mon adresse. Merci.",
+            "default_improve_transcriptions"))
+        # Un champ à remplir n'est jamais acceptable, même dans un e-mail.
+        self.assertEqual(main.rewrite_refusal(
+            "écris à madame dupont que je serai absent demain",
+            "Bonjour Madame Dupont,\n\nJe serai absent demain.\n\nCordialement,\n[Votre nom]",
+            "nova_style_email"), "content-added")
 
     def test_the_rule_applies_to_faithful_styles_only(self):
         said = "Définition, l'hypoténuse est le côté opposé à l'angle droit dans un triangle rectangle."

@@ -13280,14 +13280,12 @@ def has_personal_value_marker(text: str) -> bool:
     return any(not marker.startswith("nvxlex") for marker in PERSONAL_VALUE_MARKER.findall(text or ""))
 
 
-# Les mots qu'un Style fidèle peut faire disparaître sans rien perdre : ceux
-# d'une formule ou d'un nombre, écrits ensuite en symboles et en chiffres
-# (« x au carré égale deux x » → « x² = 2x »).
-FAITHFUL_SYMBOL_WORDS = frozenset((
-    "carre carres cube cubes egale egal egalent plus moins fois divise divisee "
-    "racine puissance demi demie tiers quart quarts pourcent pour cent virgule "
-    "inferieur superieur different environ degres degre"
-).split())
+# Les mots qu'un Style fidèle peut faire disparaître sans rien perdre : une
+# unité écrite en symbole. Pas les mots d'une formule : le poste écrit les
+# formules lui-même, de façon déterministe (`spoken_maths`), et le modèle les
+# abîmait (« la dérivée de x au carré » → « La dérivée du x² », banc du RTX
+# sur 472bc3a, 11/10).
+FAITHFUL_SYMBOL_WORDS = frozenset("pourcent pour cent virgule degres degre".split())
 # « être » et « avoir » conjugués : une faute d'accord ou de temps corrigée
 # (« sa a était bon » → « ça a été bon ») ne retire aucun contenu.
 FAITHFUL_AUXILIARY_WORDS = frozenset((
@@ -13330,6 +13328,36 @@ def faithful_word_dropped(dictated: str, text: str) -> bool:
             for other in new_words
         ):
             return True
+    return False
+
+
+# Un champ à remplir (« [Votre nom] ») : jamais dicté, jamais acceptable.
+BLANK_FIELD = re.compile(r"\[[^\[\]\n]{1,40}\]")
+# Une ligne de formule de lettre ajoutée à une dictée qui n'en avait pas.
+LETTER_CLOSINGS = (
+    "merci", "cordialement", "bien cordialement", "bien a vous", "salutations",
+    "bonne journee", "bonne soiree", "a bientot", "respectueusement",
+)
+
+
+def invented_letter_parts(dictated: str, text: str, closings: bool) -> bool:
+    """La sortie ajoute-t-elle un champ à remplir, ou une formule de lettre ?
+
+    Banc du RTX sur 472bc3a (11/10), 3 fois sur 3 avec le Style par défaut :
+    « bonjour je vous envoie mon adresse… » rendu avec « Merci,\n[Votre nom] »
+    en fin de texte.
+    """
+    if any(field not in dictated for field in BLANK_FIELD.findall(text)):
+        return True
+    if not closings:
+        return False
+    said = fold_accents((dictated or "").casefold())
+    for line in (text or "").splitlines():
+        start = fold_accents(line.strip().casefold())
+        for closing in LETTER_CLOSINGS:
+            if start.startswith(closing) and len(start) <= len(closing) + 25 \
+                    and closing not in said:
+                return True
     return False
 
 
@@ -13469,6 +13497,11 @@ def rewrite_refusal(
     # devenue « \( x^2 \) », illisible dans Word (test de Sash, 07/10).
     if latex_added(dictated, text):
         return "latex-added"
+    # « Merci,\n[Votre nom] » au bout d'une dictée. Un Style d'e-mail peut
+    # ajouter sa formule de politesse, jamais un champ à remplir.
+    if style_id in GUARDED_STYLE_IDS and invented_letter_parts(
+            dictated, text, closings=style_id in FAITHFUL_STYLE_IDS):
+        return "content-added"
     # Les notes de cours ont leurs propres controles, plus stricts, et les
     # motifs du poste : les nombres y sont compares en chiffres comme en
     # lettres.
