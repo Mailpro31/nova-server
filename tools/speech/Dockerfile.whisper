@@ -1,0 +1,23 @@
+# Le service de transcription avec le moteur faster-whisper. Voir README.md.
+#
+# Il part de l'image que le serveur utilise déjà (`whisper` dans
+# docker-compose.yml) : faster-whisper, CUDA et FastAPI y sont, rien de plus à
+# télécharger. Il décode comme le banc du RTX (faisceau de 5), qui obtient deux
+# fois moins d'erreurs que le service ; la cause exacte de l'écart reste à
+# trouver (carte et int8_float16, lecture de l'audio, version).
+# Sur le serveur de test, la même image porte le nom nova-local/speech:2026.09.05.1
+# (relevé par le RTX le 11/10) : `--build-arg BASE=nova-local/speech:2026.09.05.1`.
+ARG BASE=fedirz/faster-whisper-server:latest-cuda
+FROM ${BASE}
+ENV SPEECH_ENGINE=faster_whisper \
+    SPEECH_MODEL=large-v3-turbo \
+    SPEECH_DEVICE=cuda \
+    SPEECH_COMPUTE_TYPE=int8_float16 \
+    SPEECH_BEAM_SIZE=5 \
+    SPEECH_DEFAULT_LANGUAGE=fr \
+    PORT=8000
+COPY app.py /nova-speech/app.py
+EXPOSE 8000
+# Le Python de l'image est celui de son environnement virtuel : /usr/bin/python3
+# n'a ni FastAPI ni faster-whisper. L'entrée de l'image (CUDA) est gardée.
+CMD ["/root/faster-whisper-server/.venv/bin/python", "/nova-speech/app.py"]
