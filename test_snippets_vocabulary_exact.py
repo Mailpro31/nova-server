@@ -101,6 +101,32 @@ class VocabularyEnforcementTests(unittest.TestCase):
                          "{{snippet0}} IPSA")
 
 
+class DoubledLetterNameTests(unittest.TestCase):
+    """Banc du RTX sur 0da852a (11/10) : « Sacha Barato » restait tel quel,
+    alors que le vocabulaire avait « Baratto »."""
+
+    VOCAB = [("Baratto", ""), ("Bernoulli", ""), ("Pascal", ""), ("ipsa", "IPSA")]
+
+    def test_a_name_heard_without_its_doubled_letter_is_written_right(self):
+        for heard, written in (
+            ("Sacha Barato a rendu le rapport.", "Sacha Baratto a rendu le rapport."),
+            ("Le théorème de Bernouli.", "Le théorème de Bernoulli."),
+            ("Le théorème de Bernoullli.", "Le théorème de Bernoulli."),
+        ):
+            with self.subTest(heard=heard):
+                self.assertEqual(main.enforce_vocabulary(heard, self.VOCAB), written)
+
+    def test_other_words_are_left_alone(self):
+        for said in (
+            "Pascale a rendu son devoir.",   # une autre personne, pas « Pascal »
+            "le barato du marché",           # pas une majuscule : pas un nom
+            "Barrette et Bateau",            # pas le même nom
+            "écrire à baratto@ecole.example",
+        ):
+            with self.subTest(said=said):
+                self.assertEqual(main.enforce_vocabulary(said, self.VOCAB), said)
+
+
 class ReformulateSnippetTests(AdminTestCase):
     def setUp(self):
         super().setUp()
