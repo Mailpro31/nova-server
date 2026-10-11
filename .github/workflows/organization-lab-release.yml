@@ -176,6 +176,10 @@ jobs:
     runs-on: ubuntu-latest
     environment: organization-lab-release
     steps:
+      # Le manifeste signé est construit depuis `profiles.manifest.json` : sans
+      # le dépôt, la publication échouait au dernier moment (11/10, run
+      # 38132465350), après la construction de toutes les images.
+      - uses: actions/checkout@v5
       - name: Validate release inputs and secrets
         env:
           VERSION: ${{ inputs.version }}
