@@ -12365,6 +12365,22 @@ SUBTITLE_CREDITS = re.compile(
 )
 
 
+# « Merci. » seul, écrit par Whisper sur un souffle sans un mot dit : témoin
+# du RTX (11/10), bruit vers −44 dBFS, confiance −0,46, au-dessus de la porte
+# de silence. Un élève qui dicte vraiment « Merci » est entendu avec assurance.
+LONE_THANKS = frozenset({
+    "merci", "merci beaucoup", "merci a vous", "merci a tous", "merci bien",
+    "merci pour votre attention", "merci de votre attention",
+})
+LONE_THANKS_AVG_LOGPROB = -0.3
+
+
+def lone_thanks(text: str) -> bool:
+    """Vrai si la transcription n'est qu'un remerciement."""
+    words = " ".join(re.findall(r"[^\W_]+", fold_accents((text or "").casefold())))
+    return words in LONE_THANKS
+
+
 def only_subtitle_credits(text: str) -> bool:
     """Vrai si la transcription n'est faite que de crédits de sous-titres."""
     words = " ".join(re.findall(r"[^\W_]+", fold_accents((text or "").casefold())))
@@ -12377,6 +12393,8 @@ def dictation_unclear(text: str, avg_logprob: float | None) -> bool:
     if avg_logprob is not None and avg_logprob < UNCLEAR_AVG_LOGPROB:
         return True
     if only_subtitle_credits(text):
+        return True
+    if lone_thanks(text) and avg_logprob is not None and avg_logprob < LONE_THANKS_AVG_LOGPROB:
         return True
     # Une phrase dite deux fois de suite avec une bonne confiance, c'est
     # l'élève qui se répète : la boucle demande alors une troisième copie
