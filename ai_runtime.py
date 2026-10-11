@@ -482,6 +482,11 @@ class OpenAICompatibleTextBackend:
                     headers=_auth_headers(self.token),
                     json=payload,
                 )
+        except (httpx.ConnectTimeout, httpx.ConnectError) as error:
+            # Le moteur est injoignable, ce n'est pas une réponse lente : sans
+            # cela, le disjoncteur de `generate` ne s'armait jamais (test 8 du
+            # RTX sur 3ebfec9, 11/10 : 6,1 s à chaque reformulation).
+            raise AIRuntimeError(AI_RUNTIME_UNAVAILABLE) from error
         except httpx.TimeoutException as error:
             raise AIRuntimeError(AI_RUNTIME_TIMEOUT) from error
         except httpx.HTTPError as error:
@@ -606,6 +611,11 @@ class WhisperCompatibleSpeechBackend:
                     files={"file": (request.filename, request.audio)},
                     data=data,
                 )
+        except (httpx.ConnectTimeout, httpx.ConnectError) as error:
+            # Le moteur est injoignable, ce n'est pas une réponse lente : sans
+            # cela, le disjoncteur de `generate` ne s'armait jamais (test 8 du
+            # RTX sur 3ebfec9, 11/10 : 6,1 s à chaque reformulation).
+            raise AIRuntimeError(AI_RUNTIME_UNAVAILABLE) from error
         except httpx.TimeoutException as error:
             raise AIRuntimeError(AI_RUNTIME_TIMEOUT) from error
         except httpx.HTTPError as error:

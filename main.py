@@ -11323,8 +11323,37 @@ def enforce_vocabulary(text: str, vocabulary: list[tuple[str, str]]) -> str:
                 pattern = re.compile(
                     rf"(?<![\w@./]){re.escape(term)}(?![\w@]|[./]\w)", re.IGNORECASE)
                 piece = pattern.sub(lambda _, target=target: target, piece)
+            piece = restore_doubled_letters(piece, [target for _, target in entries])
         out.append(piece)
     return "".join(out)
+
+
+_DOUBLED = re.compile(r"(\w)\1+", re.IGNORECASE)
+_CAPITALIZED_WORD = re.compile(r"(?<![\w@./])[A-ZÀ-Ý][\w'-]{3,}")
+
+
+def restore_doubled_letters(text: str, targets: list[str]) -> str:
+    """Un nom propre du vocabulaire transcrit avec une lettre doublée en moins
+    ou en trop : « Barato » → « Baratto », « Bernouli » → « Bernoulli ».
+
+    Banc du RTX sur 0da852a (11/10) : « Sacha Barato » restait tel quel alors
+    que le vocabulaire avait « Baratto ». Seul ce cas est corrigé, sur un mot
+    écrit avec une majuscule : remplacer tout mot à une lettre près changerait
+    aussi des mots justes (« Pascale » n'est pas « Pascal »).
+    """
+    names = {}
+    for target in targets:
+        if " " not in target and len(target) >= 5 and target[:1].isupper():
+            names.setdefault(_DOUBLED.sub(r"\1", target.casefold()), target)
+    if not names:
+        return text
+
+    def fix(match: re.Match) -> str:
+        word = match.group(0)
+        target = names.get(_DOUBLED.sub(r"\1", word.casefold()))
+        return target if target and target.casefold() != word.casefold() else word
+
+    return _CAPITALIZED_WORD.sub(fix, text)
 
 def vocabulary_context(user: str) -> str:
     """Vocabulary alone: shared dictionary + the user's personal entries.

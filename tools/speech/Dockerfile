@@ -9,6 +9,8 @@ FROM ${BASE_DEVEL} AS build
 ARG TRANSCRIBE_COMMIT=a94e021ef658dc7c788837341a13f6acea3baf3c
 # 75 : Turing, la RTX 2060 du serveur de test.
 ARG CUDA_ARCH=75
+# TRANSCRIBE_CUDA, et pas seulement GGML_CUDA : transcribe.cpp recopie ses options
+# sur celles de ggml, et coupait CUDA sans prévenir (relevé par le RTX, 11/10).
 RUN apt-get update \
  && apt-get install -y --no-install-recommends cmake g++ make ca-certificates curl \
  && rm -rf /var/lib/apt/lists/*
@@ -16,7 +18,7 @@ WORKDIR /src
 RUN curl -fsSL "https://codeload.github.com/handy-computer/transcribe.cpp/tar.gz/${TRANSCRIBE_COMMIT}" \
     | tar xz --strip-components=1
 RUN cmake -B build -DCMAKE_BUILD_TYPE=Release -DTRANSCRIBE_BUILD_SHARED=ON \
-      -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCH} \
+      -DTRANSCRIBE_CUDA=ON -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCH} \
  && cmake --build build --target transcribe -j"$(nproc)" \
  && mkdir -p /out/lib \
  && find build -name "*.so*" -exec cp -P {} /out/lib/ \;

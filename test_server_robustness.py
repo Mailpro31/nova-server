@@ -161,6 +161,37 @@ class StoppedTextEngineTests(unittest.TestCase):
                 router.generate(ai_runtime.TaskType.REFORMULATION, "bonjour", "Corrige."))
         self.assertEqual(result.text, "fake:reformulation")
 
+    def test_a_real_connection_failure_arms_the_pause(self):
+        # Test 8 du RTX sur 3ebfec9 (11/10) : vLLM arrêté, la connexion bornée
+        # levait ConnectTimeout, compté comme TIMEOUT : la pause ne s'armait
+        # jamais, et chaque reformulation attendait 6,1 s.
+        for failure in (httpx.ConnectTimeout("dns"), httpx.ConnectError("refused")):
+            with self.subTest(failure=type(failure).__name__):
+                calls = []
+
+                def handler(request: httpx.Request) -> httpx.Response:
+                    calls.append(request.url.path)
+                    raise failure
+
+                backend = ai_runtime.OpenAICompatibleTextBackend(
+                    "http://llm:8000/v1", "qwen", transport=httpx.MockTransport(handler))
+                router = ai_runtime.OrganizationAIRouter(
+                    backend, ai_runtime.FakeSpeechInferenceBackend())
+                self.assertEqual(self.generate(router), ai_runtime.AI_RUNTIME_UNAVAILABLE)
+                reached = len(calls)
+                self.assertEqual(self.generate(router), ai_runtime.AI_RUNTIME_UNAVAILABLE)
+                self.assertEqual(len(calls), reached, "le moteur arrêté a été rappelé")
+
+    def test_a_slow_answer_stays_a_timeout(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise httpx.ReadTimeout("slow")
+
+        backend = ai_runtime.OpenAICompatibleTextBackend(
+            "http://llm:8000/v1", "qwen", transport=httpx.MockTransport(handler))
+        router = ai_runtime.OrganizationAIRouter(backend, ai_runtime.FakeSpeechInferenceBackend())
+        self.assertEqual(self.generate(router), ai_runtime.AI_RUNTIME_TIMEOUT)
+        self.assertEqual(router._text_down_until, 0.0)
+
     def test_connecting_to_an_engine_is_bounded(self):
         seen = {}
 
