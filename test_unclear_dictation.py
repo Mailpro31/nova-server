@@ -92,6 +92,17 @@ class UnclearDecisionTests(unittest.TestCase):
         self.assertTrue(main.dictation_unclear(said, -0.63))
         self.assertTrue(main.dictation_unclear(said, None))
 
+    def test_a_lone_thanks_heard_on_a_breath_is_unclear(self):
+        # Témoin du RTX (11/10) : « Merci. » sur un souffle, confiance −0,46.
+        for heard in ("Merci.", "Merci beaucoup !", "merci à vous"):
+            with self.subTest(heard=heard):
+                self.assertTrue(main.dictation_unclear(heard, -0.46))
+        # Dicté pour de vrai, avec assurance, ou sans confiance : gardé.
+        self.assertFalse(main.dictation_unclear("Merci.", -0.15))
+        self.assertFalse(main.dictation_unclear("Merci.", None))
+        # Une phrase qui contient un merci n'est pas visée.
+        self.assertFalse(main.dictation_unclear("Merci pour le corrigé du TD.", -0.46))
+
     def test_a_formula_said_twice_in_a_course_is_not_a_loop(self):
         # Mesuré sur le RTX le 09/10 (défaut 1) : une dictée de cours juste,
         # confiance −0,2, était entièrement bloquée parce que « le nombre de
