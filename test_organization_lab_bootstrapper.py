@@ -51,6 +51,18 @@ def test_rtx_2060_does_not_receive_14b():
     assert profile["max_concurrent_text"] == 1
 
 
+# Le nom de dépôt complet : faster-whisper 1.0.3, celui de l'image de
+# transcription, ne connaît pas le raccourci « large-v3-turbo », et la
+# publication du 11/10 a échoué sur chaque palier qui le demandait.
+TURBO = "deepdml/faster-whisper-large-v3-turbo-ct2"
+
+
+def test_turbo_is_named_so_the_speech_image_can_download_it():
+    for profile in manifest()["profiles"]:
+        if profile.get("gpu"):
+            assert profile["speech_model"] != "large-v3-turbo", profile["id"]
+
+
 def test_a_6gb_card_gets_the_measured_transcriber():
     # Banc v2 du RTX (11/10), RTX 2060 6 Go : turbo int8_float16 fait 0,134
     # d'erreurs normalisées, small 0,231, et turbo tient à côté de vLLM 0.55
@@ -58,7 +70,7 @@ def test_a_6gb_card_gets_the_measured_transcriber():
     # recevait small ou medium.
     for vram in (6144, 8192, 12288):
         profile = select(vram)
-        assert profile["speech_model"] == "large-v3-turbo", vram
+        assert profile["speech_model"] == TURBO, vram
         assert profile["speech_compute_type"] == "int8_float16", vram
     # 4 Go : turbo ne tient pas à côté du modèle de texte ; small plutôt que tiny.
     assert select(4096)["speech_model"] == "small"
