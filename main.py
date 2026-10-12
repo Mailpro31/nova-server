@@ -11742,7 +11742,7 @@ def answer_preamble(text: str, answer: str) -> bool:
 # oublié » devenu « je m'oublie » ajoute un pronom que l'élève n'a pas écrit.
 PERSON_PRONOUNS = {
     "je": "je", "j": "je", "jai": "je", "me": "me", "m": "me", "moi": "moi",
-    "tu": "tu", "te": "te", "t": "te", "toi": "toi", "on": "on", "nous": "nous",
+    "tu": "tu", "te": "te", "t": "te", "toi": "toi", "on": "nous", "nous": "nous",
     "vous": "vous", "quelquun": "quelquun", "i": "i", "you": "you", "we": "we",
     "someone": "someone", "somebody": "someone", "anyone": "anyone",
 }
@@ -13414,6 +13414,39 @@ def invented_letter_parts(dictated: str, text: str, closings: bool) -> bool:
     return False
 
 
+# Un sigle dicté : « TD », « IPSA », « B204 ». Trop court pour le contrôle des
+# mots, il était remplacé sans signal.
+ACRONYM = re.compile(r"(?<![\w@./])[A-Z][A-Z0-9]{1,5}(?![\w@])")
+
+
+def acronym_dropped(dictated: str, text: str) -> bool:
+    """Un sigle dicté manque à la sortie d'un Style fidèle.
+
+    Banc de non-régression du RTX (11/10) : « Le TD de jeudi est annulé »
+    accepté en « Le délégué territorial de jeudi est annulé », une expression
+    inventée.
+    """
+    written = {word.casefold() for word in re.findall(r"[\w]+", text or "")}
+    return any(acronym.casefold() not in written for acronym in ACRONYM.findall(dictated or ""))
+
+
+# Les mots qui retournent le sens d'une phrase. « ne » n'en est pas : à l'oral,
+# il manque souvent, et une correction l'ajoute.
+NEGATION_WORDS = ("non", "pas", "jamais", "aucun", "aucune", "rien", "ni")
+
+
+def negation_dropped(dictated: str, text: str) -> bool:
+    """Un Style fidèle a-t-il retiré une négation dictée ?
+
+    Banc de non-régression du RTX (11/10) : « … à 14 heures, non à temps, à 15
+    heures » accepté sans son « non ». Ce qu'une reprise abandonne est déjà
+    retiré de `dictated`.
+    """
+    said = Counter(re.findall(r"[a-z]+", fold_accents((dictated or "").casefold())))
+    wrote = Counter(re.findall(r"[a-z]+", fold_accents((text or "").casefold())))
+    return any(wrote[word] < said[word] for word in NEGATION_WORDS)
+
+
 def faithful_content_added(dictated: str, text: str) -> bool:
     """Un Style fidele a-t-il ajoute du contenu ?"""
     written = course_words(text)
@@ -13575,7 +13608,8 @@ def rewrite_refusal(
         return facts_refusal(dictated, text, False)
     # Ce qu'une reprise a abandonne (« le 12, non pardon, le 13 ») n'a pas a
     # survivre ; la valeur retenue, si.
-    if any(number not in text for number in EXPLICIT_NUMBER.findall(without_abandoned(dictated))):
+    kept = without_abandoned(resolve_simple_repairs(resolved or dictated))
+    if any(number not in text for number in EXPLICIT_NUMBER.findall(kept)):
         return "explicit-number-lost"
     if len(text) > max(1, len(dictated)) * 6 + 160:
         return "output-expanded-excessively"
@@ -13591,7 +13625,8 @@ def rewrite_refusal(
     compact = lambda value: re.sub(r"[ \u00a0\u202f]", "", value)  # noqa: E731
     if any(compact(number) not in compact(text) for number in GROUPED_NUMBER.findall(dictated)):
         return "number-format-changed"
-    reason = facts_refusal(dictated, text, True)
+    # Ce qu'une reprise abandonne (« le 12, enfin le 19 ») n'a pas à survivre.
+    reason = facts_refusal(kept, text, True)
     if reason:
         return reason
     if style_id in FAITHFUL_STYLE_IDS and faithful_content_added(dictated, text):
@@ -13601,6 +13636,12 @@ def rewrite_refusal(
     if style_id in FAITHFUL_STYLE_IDS and faithful_word_dropped(
             resolve_simple_repairs(resolved or dictated), text):
         return "content-dropped"
+    if style_id in FAITHFUL_STYLE_IDS and acronym_dropped(
+            resolve_simple_repairs(resolved or dictated), text):
+        return "content-dropped"
+    if style_id in FAITHFUL_STYLE_IDS and negation_dropped(
+            resolve_simple_repairs(resolved or dictated), text):
+        return "negation-dropped"
     return None
 
 
