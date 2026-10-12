@@ -12972,7 +12972,10 @@ SIMPLE_REPAIRS = (
     # « à 10 h, pardon, à 11 h » : l'article est repris avec la valeur. Sans
     # article répété (« à 10 h, non attends, 11 h »), il reste.
     re.compile(rf"(?<![\w,.])({_LEAD}{_NUMBER}){_REPAIR}(?={_LEAD}\d)", re.IGNORECASE),
-    re.compile(rf"(?<![\w,.])({_NUMBER}){_REPAIR}(?=\d)", re.IGNORECASE),
+    # La valeur abandonnée est un nombre entier à elle seule : pas la fin de
+    # « 1/2 », de « 2+2 » ou de « 1 500 », qui devenaient « 1/1/3 », « 2+2+3 »
+    # et « 1 1 600 ».
+    re.compile(rf"(?<!\S)(?<!\d\s)({_NUMBER}){_REPAIR}(?=\d)", re.IGNORECASE),
 )
 
 
