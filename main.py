@@ -13366,6 +13366,16 @@ def has_personal_value_marker(text: str) -> bool:
 # abîmait (« la dérivée de x au carré » → « La dérivée du x² », banc du RTX
 # sur 472bc3a, 11/10).
 FAITHFUL_SYMBOL_WORDS = frozenset("pourcent pour cent virgule degres degre".split())
+# Une unité dictée en toutes lettres, écrite en symbole après son nombre :
+# « 14 heures 30 » → « 14 h 30 » était refusé. Sans son symbole après un
+# nombre, le mot compte toujours : « 3 mètres » devenu « 3 » a perdu l'unité.
+FAITHFUL_UNIT_SYMBOLS = {
+    "heure": "h", "heures": "h", "minute": "min", "minutes": "min",
+    "seconde": "s", "secondes": "s", "metre": "m", "metres": "m",
+    "kilometre": "km", "kilometres": "km", "centimetre": "cm", "centimetres": "cm",
+    "millimetre": "mm", "millimetres": "mm", "gramme": "g", "grammes": "g",
+    "kilogramme": "kg", "kilogrammes": "kg", "litre": "l", "litres": "l",
+}
 # « être » et « avoir » conjugués : une faute d'accord ou de temps corrigée
 # (« sa a était bon » → « ça a été bon ») ne retire aucun contenu.
 FAITHFUL_AUXILIARY_WORDS = frozenset((
@@ -13401,6 +13411,8 @@ def faithful_word_dropped(dictated: str, text: str) -> bool:
     new_words = {folded(word) for word in dictation_words(unmarked(text))} - said_words
     ignored = (COURSE_FILLER_WORDS | COURSE_NUMBER_WORDS | FAITHFUL_SYMBOL_WORDS
                | FAITHFUL_AUXILIARY_WORDS)
+    symbols = {symbol.casefold() for symbol in re.findall(r"\d\s?([^\W\d_]{1,3})\b", text or "")}
+    ignored |= {word for word, symbol in FAITHFUL_UNIT_SYMBOLS.items() if symbol in symbols}
     for word in source - written - ignored:
         if not any(
             difflib.SequenceMatcher(None, word, other).ratio() >= FAITHFUL_SPELLING_SIMILARITY
@@ -13636,7 +13648,11 @@ def rewrite_refusal(
     # Ce qu'une reprise a abandonne (« le 12, non pardon, le 13 ») n'a pas a
     # survivre ; la valeur retenue, si.
     kept = without_abandoned(resolve_simple_repairs(resolved or dictated))
-    if any(number not in text for number in EXPLICIT_NUMBER.findall(kept)):
+    # « 1500 » écrit « 1 500 » à la française reste le même nombre : il était
+    # refusé, alors que l'inverse passait.
+    ungrouped = re.sub(r"(?<=\d)[ \u00a0\u202f](?=\d{3}\b)", "", text)
+    if any(number not in text and number not in ungrouped
+           for number in EXPLICIT_NUMBER.findall(kept)):
         return "explicit-number-lost"
     if len(text) > max(1, len(dictated)) * 6 + 160:
         return "output-expanded-excessively"

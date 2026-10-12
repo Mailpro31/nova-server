@@ -112,6 +112,24 @@ class FaithfulWordTests(unittest.TestCase):
             said, "On se retrouve le 20 octobre pour la soutenance.",
             "default_improve_transcriptions"), "explicit-number-lost")
 
+    def test_a_number_or_a_unit_written_the_french_way_is_kept(self):
+        style = "default_improve_transcriptions"
+        self.assertIsNone(main.rewrite_refusal(
+            "le budget est de 1500 euros", "Le budget est de 1 500 euros.", style))
+        self.assertIsNone(main.rewrite_refusal(
+            "rendez-vous à 14 heures 30", "Rendez-vous à 14 h 30.", style))
+        self.assertIsNone(main.rewrite_refusal(
+            "la pièce mesure 3 mètres", "La pièce mesure 3 m.", style))
+        # Un autre nombre, ou l'unité perdue, restent refusés.
+        self.assertEqual(main.rewrite_refusal(
+            "le budget est de 1500 euros", "Le budget est de 1 600 euros.", style),
+            "explicit-number-lost")
+        self.assertEqual(main.rewrite_refusal(
+            "la pièce mesure 3 mètres", "La pièce mesure 3.", style), "content-dropped")
+        self.assertEqual(main.rewrite_refusal(
+            "on se voit dans 2 heures", "On se voit dans 2 minutes.", style),
+            "content-dropped")
+
     def test_the_rule_applies_to_faithful_styles_only(self):
         said = "Définition, l'hypoténuse est le côté opposé à l'angle droit dans un triangle rectangle."
         written = "Définition : l'hypoténuse est le côté opposé à l'angle droit dans un rectangle."
