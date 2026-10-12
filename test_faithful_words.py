@@ -68,6 +68,50 @@ class FaithfulWordTests(unittest.TestCase):
             "Bonjour Madame Dupont,\n\nJe serai absent demain.\n\nCordialement,\n[Votre nom]",
             "nova_style_email"), "content-added")
 
+    def test_a_dictated_acronym_must_stay(self):
+        # Banc de non-régression du RTX (11/10) : « TD » développé en une
+        # expression inventée, et accepté.
+        self.assertEqual(main.rewrite_refusal(
+            "Le TD de mardi, pardon, de jeudi est annulé.",
+            "Le délégué territorial de jeudi est annulé.",
+            "default_improve_transcriptions"), "content-dropped")
+        self.assertIsNone(main.rewrite_refusal(
+            "le TD de jeudi est annulé", "Le TD de jeudi est annulé.",
+            "default_improve_transcriptions"))
+        # Un sigle abandonné par la reprise peut partir.
+        self.assertIsNone(main.rewrite_refusal(
+            "Rendez-vous en salle B204, pardon, en salle C112.",
+            "Rendez-vous en salle C112.", "default_improve_transcriptions",
+            resolved="Rendez-vous en salle C112."))
+
+    def test_a_dictated_negation_must_stay(self):
+        # Banc de non-régression du RTX (11/10) : « non » retiré sans signal.
+        self.assertEqual(main.rewrite_refusal(
+            "Rendez-vous à 14 heures, non à temps, à 15 heures.",
+            "Rendez-vous à 14 heures, à temps, à 15 heures.",
+            "default_improve_transcriptions"), "negation-dropped")
+        self.assertEqual(main.rewrite_refusal(
+            "le partiel n'est pas reporté", "Le partiel est reporté.",
+            "default_improve_transcriptions"), "negation-dropped")
+        # Un « ne » ajouté par la correction est bienvenu.
+        self.assertIsNone(main.rewrite_refusal(
+            "j'ai pas compris la démonstration", "Je n'ai pas compris la démonstration.",
+            "default_improve_transcriptions"))
+
+    def test_on_and_nous_are_the_same_person(self):
+        # Banc de non-régression du RTX (11/10) : refusé à tort en person-changed.
+        said = "On se retrouve le 12 octobre, enfin le 19 octobre, pour la soutenance."
+        self.assertIsNone(main.rewrite_refusal(
+            said, "Nous nous retrouvons le 19 octobre pour la soutenance.",
+            "default_improve_transcriptions"))
+        self.assertEqual(main.rewrite_refusal(
+            said, "Vous vous retrouvez le 19 octobre pour la soutenance.",
+            "default_improve_transcriptions"), "person-changed")
+        # La valeur retenue, elle, doit rester.
+        self.assertEqual(main.rewrite_refusal(
+            said, "On se retrouve le 20 octobre pour la soutenance.",
+            "default_improve_transcriptions"), "explicit-number-lost")
+
     def test_the_rule_applies_to_faithful_styles_only(self):
         said = "Définition, l'hypoténuse est le côté opposé à l'angle droit dans un triangle rectangle."
         written = "Définition : l'hypoténuse est le côté opposé à l'angle droit dans un rectangle."
