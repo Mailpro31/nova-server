@@ -50,3 +50,23 @@ jobs:
           python -m pip install -r requirements.txt pytest
       - name: Lancer la suite
         run: python -m pytest -q -p no:cacheprovider
+
+  # La console d'administration (admin-web) : ses 342 tests et sa
+  # vérification des types ne tournaient nulle part jusqu'au 12/10.
+  admin-web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: admin-web
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Installer les dependances
+        run: bun install --frozen-lockfile
+      - name: Tests
+        run: bun test src
+      - name: Types
+        run: bunx tsc --noEmit
