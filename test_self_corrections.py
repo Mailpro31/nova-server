@@ -132,6 +132,35 @@ class CorrectionsComeFirstRouteTests(AdminTestCase):
         self.assertEqual(response.status_code, 200, response.text)
         return seen, response.json()["text"]
 
+    def test_a_refused_style_returns_the_resolved_dictation(self):
+        # Banc de synthèse du RTX (11/10) : le Style paraphrasait, il était
+        # refusé à juste titre, et l'élève recevait la dictée avec sa reprise.
+        seen = {}
+
+        async def resolve_engine(task_type, instruction, text, examples):
+            return "appelle Sarah pour le projet"
+
+        async def style_engine(task_type, instruction, message):
+            return "Contactez Sarah au sujet du projet, merci de faire vite."
+
+        token = self.sign_in("eleve-reprises@example.com")
+        with patch.object(main, "execute_text_with_examples", resolve_engine), \
+                patch.object(main, "execute_text", style_engine):
+            response = self.client.post(
+                "/api/reformulate", headers=self.auth(token),
+                json={"text": "appelle Paul enfin non Sarah pour le projet",
+                      "style_id": "nova_style_everyday", "style_prompt": "Mets au propre."})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["text"], "appelle Sarah pour le projet")
+
+    def test_a_resolution_that_only_drops_the_announcing_words_is_not_one(self):
+        # Banc de synthèse du RTX sur cced1b3 (11/10).
+        self.assertFalse(main.resolution_acceptable(
+            "Rendez-vous à 14h, non à temps, à 15h en salle à 112.",
+            "Rendez-vous à 14h, à temps, à 15h en salle à 112."))
+        self.assertTrue(main.resolution_acceptable(
+            "appelle Paul enfin non Sarah pour le projet", "appelle Sarah pour le projet"))
+
     def test_the_style_receives_the_resolved_dictation(self):
         # Un nom remplacé par un autre : seul le modèle peut le résoudre.
         seen, text = self.reformulate(

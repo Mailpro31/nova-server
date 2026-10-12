@@ -12871,8 +12871,20 @@ def resolution_acceptable(dictated: str, resolved: str) -> bool:
     new_words = sum(1 for word in kept if word not in vocabulary)
     if new_words > len(kept) * RESOLUTION_MAX_NEW_WORDS:
         return False
+    # Une « reprise » qui n'a retiré que ses mots d'annonce n'a rien repris :
+    # « à 14 h, non à temps, à 15 h » devenu « à 14 h, à temps, à 15 h » perdait
+    # son « non » sans qu'aucune valeur ne soit écartée (banc de synthèse du
+    # RTX sur cced1b3, 11/10). La dictée reste alors telle quelle.
+    removed = Counter(said) - Counter(kept)
+    if removed and all(word in RESOLUTION_MARKER_WORDS for word in removed):
+        return False
     # Retirer des mots, oui ; retirer la correction et garder l'erreur, non.
     return not correction_lost(dictated, resolved)
+
+
+# Les mots qui annoncent une reprise, sans en être une.
+RESOLUTION_MARKER_WORDS = frozenset(
+    "non pardon attends attend enfin plutot plutôt euh heu".split())
 
 
 # Après une reprise, l'élève dit quelque chose de nouveau : « non le BUS »,
@@ -13753,10 +13765,17 @@ async def reformulate(body: ReformulateRequest, user: str = Depends(current_user
         user, "reformulation",
         latency_ms=(time.monotonic() - started) * 1000.0,
     )
+    # La dictée telle que le Style l'a reçue, reprises résolues : c'est elle
+    # que l'élève voulait écrire. Banc de synthèse du RTX (11/10) : « le 12
+    # octobre, enfin le 19 » refusé au Style revenait avec la reprise, alors que
+    # « le 19 octobre » était prêt. Sa résolution a déjà passé ses contrôles.
+    resolved_fallback = {"text": restore_snippets(
+        enforce_vocabulary(outcome.resolved, vocabulary), snippet_restores)
+        or fallback["text"]} if outcome.resolved else fallback
     if outcome.text is None:
         # Une reformulation coupée, un gabarit recopié, une réponse, une
-        # traduction, un nombre perdu : la dictée d'origine est rendue, jamais
-        # un texte que la personne n'a pas dit.
+        # traduction, un nombre perdu : la dictée est rendue, jamais un texte
+        # que la personne n'a pas dit.
         if outcome.reason == "truncated":
             observability.log("reformulation.truncated", level="warning", style=style_id or "")
         elif outcome.reason == "template_echo":
@@ -13765,14 +13784,14 @@ async def reformulate(body: ReformulateRequest, user: str = Depends(current_user
         else:
             observability.log("reformulation.refused", level="warning",
                               style=style_id or "", reason=outcome.reason)
-        return fallback
+        return resolved_fallback
     result = outcome.text
     restored = restore_snippets(
         enforce_vocabulary(result, vocabulary), snippet_restores, dictated=source_text)
     if restored is None:
         # Le modele a perdu un repere : le snippet manquerait au texte.
         observability.log("reformulation.snippet_lost", level="warning", style=style_id or "")
-        return fallback
+        return resolved_fallback
     return {"text": restored}
 
 @app.post("/api/command", dependencies=[Depends(product_capability("commands", "voice_commands"))])
