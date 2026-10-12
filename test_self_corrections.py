@@ -132,6 +132,20 @@ class CorrectionsComeFirstRouteTests(AdminTestCase):
         self.assertEqual(response.status_code, 200, response.text)
         return seen, response.json()["text"]
 
+    def test_a_number_inside_a_larger_one_is_never_cut(self):
+        # Une reprise résolue sans modèle écrivait une valeur que personne
+        # n'avait dite.
+        for said in ("Le résultat est 1/2, pardon 1/3.",
+                     "Le budget est de 1 500, pardon 1 600 euros.",
+                     "2+2, pardon 2+3",
+                     "La température est de -2, pardon 3 degrés."):
+            with self.subTest(said=said):
+                self.assertEqual(main.resolve_simple_repairs(said), said)
+        self.assertEqual(main.resolve_simple_repairs("Le coefficient est de 0,5, pardon, 0,7."),
+                         "Le coefficient est de 0,7.")
+        self.assertEqual(main.resolve_simple_repairs("x = 2, pardon 3"), "x = 3")
+        self.assertEqual(main.resolve_simple_repairs("2, pardon 3 exercices"), "3 exercices")
+
     def test_a_refused_style_returns_the_resolved_dictation(self):
         # Banc de synthèse du RTX (11/10) : le Style paraphrasait, il était
         # refusé à juste titre, et l'élève recevait la dictée avec sa reprise.
