@@ -12450,11 +12450,16 @@ def repeats_in_a_loop(words: list[str], copies: int = 2) -> bool:
     la dictée (mesuré sur le RTX le 09/10, confiance −0,25 sur 93 s).
     """
     count = len(words)
+    # `copies` copies d'un passage de `period` mots, c'est `(copies - 1) *
+    # period` mots de suite égaux à celui `period` plus loin. Compté ainsi,
+    # sans comparer chaque passage en entier : l'ancienne recherche prenait
+    # une seconde sur 1 200 mots, et bloquait le serveur pour tous les élèves.
     for period in range(LOOP_WORDS, count // copies + 1):
-        for start in range(count - copies * period + 1):
-            first = words[start:start + period]
-            if all(words[start + k * period:start + (k + 1) * period] == first
-                   for k in range(1, copies)):
+        needed = (copies - 1) * period
+        run = 0
+        for i in range(count - period):
+            run = run + 1 if words[i] == words[i + period] else 0
+            if run >= needed:
                 return True
     long_passage = 2 * LOOP_WORDS
     seen: Counter = Counter()
