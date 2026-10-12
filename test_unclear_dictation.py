@@ -101,6 +101,16 @@ class UnclearDecisionTests(unittest.TestCase):
             with self.subTest(said=said):
                 self.assertFalse(main.only_hesitations(said))
 
+    def test_a_dictation_made_of_numbers_is_kept(self):
+        # Une réponse d'exercice n'a parfois aucune lettre : elle ressortait
+        # vide, comme un « euh » seul.
+        for said in ("1 + 1 = 2", "3,14", "42.", "111", "2 222", "1/2"):
+            with self.subTest(said=said):
+                self.assertFalse(main.only_hesitations(said))
+        for heard in ("Euh…", "...", "", "Hum, euh."):
+            with self.subTest(heard=heard):
+                self.assertTrue(main.only_hesitations(heard))
+
     def test_a_lone_thanks_heard_on_a_breath_is_unclear(self):
         # Témoin du RTX (11/10) : « Merci. » sur un souffle, confiance −0,46.
         for heard in ("Merci.", "Merci beaucoup !", "merci à vous"):
