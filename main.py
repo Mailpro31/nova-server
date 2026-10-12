@@ -12511,7 +12511,9 @@ async def transcribe_audio(
     # sous-titres, Canary « Je ne sais pas. » (banc du RTX, 11/10), et Cohere ne
     # rend pas de confiance qui permettrait de le voir après coup.
     if task_type == TaskType.TRANSCRIPTION_REALTIME:
-        peak = wav_peak_dbfs(audio)
+        # Hors de la boucle d'événements : une seconde de calcul sur 13 minutes
+        # d'audio, pendant laquelle aucun autre élève n'était servi.
+        peak = await asyncio.to_thread(wav_peak_dbfs, audio)
         if peak is not None and peak < SILENT_PEAK_DBFS:
             observability.log("transcription.silent", level="info")
             return {"text": "", "unclear": True}
@@ -12541,7 +12543,8 @@ async def transcribe_audio(
     # à l'élève (« parlez un peu plus fort »). Un fichier importé, long, n'est
     # pas jugé ainsi : un passage douteux ne doit pas faire perdre le reste.
     dictated = task_type == TaskType.TRANSCRIPTION_REALTIME
-    if dictated and dictation_unclear(result.text, result.avg_logprob):
+    if dictated and await asyncio.to_thread(
+            dictation_unclear, result.text, result.avg_logprob):
         observability.log("transcription.unclear", level="info")
         return {"text": "", "unclear": True}
     # Le vocabulaire de l'élève et de l'école, appliqué à l'identique : il ne
