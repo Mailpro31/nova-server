@@ -13369,6 +13369,7 @@ FAITHFUL_SYMBOL_WORDS = frozenset("pourcent pour cent virgule degres degre".spli
 # Une unité dictée en toutes lettres, écrite en symbole après son nombre :
 # « 14 heures 30 » → « 14 h 30 » était refusé. Sans son symbole après un
 # nombre, le mot compte toujours : « 3 mètres » devenu « 3 » a perdu l'unité.
+# Collé au nombre aussi : le modèle du serveur écrit « 14h30 » (RTX, 12/10).
 FAITHFUL_UNIT_SYMBOLS = {
     "heure": "h", "heures": "h", "minute": "min", "minutes": "min",
     "seconde": "s", "secondes": "s", "metre": "m", "metres": "m",
@@ -13411,7 +13412,7 @@ def faithful_word_dropped(dictated: str, text: str) -> bool:
     new_words = {folded(word) for word in dictation_words(unmarked(text))} - said_words
     ignored = (COURSE_FILLER_WORDS | COURSE_NUMBER_WORDS | FAITHFUL_SYMBOL_WORDS
                | FAITHFUL_AUXILIARY_WORDS)
-    symbols = {symbol.casefold() for symbol in re.findall(r"\d\s?([^\W\d_]{1,3})\b", text or "")}
+    symbols = {symbol.casefold() for symbol in re.findall(r"\d\s?([^\W\d_]{1,3})(?![^\W\d_])", text or "")}
     ignored |= {word for word, symbol in FAITHFUL_UNIT_SYMBOLS.items() if symbol in symbols}
     for word in source - written - ignored:
         if not any(
