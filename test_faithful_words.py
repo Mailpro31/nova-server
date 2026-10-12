@@ -120,6 +120,13 @@ class FaithfulWordTests(unittest.TestCase):
             "rendez-vous à 14 heures 30", "Rendez-vous à 14 h 30.", style))
         self.assertIsNone(main.rewrite_refusal(
             "la pièce mesure 3 mètres", "La pièce mesure 3 m.", style))
+        # Collé à son nombre, comme le modèle du serveur l'écrit (vrai modèle
+        # sur le RTX, 3ec5e50, 12/10).
+        self.assertIsNone(main.rewrite_refusal(
+            "rendez-vous à 14 heures 30 en salle B204",
+            "Rendez-vous à 14h30 en salle B204.", style))
+        self.assertIsNone(main.rewrite_refusal(
+            "la piste fait 2 kilomètres", "La piste fait 2km.", style))
         # Un autre nombre, ou l'unité perdue, restent refusés.
         self.assertEqual(main.rewrite_refusal(
             "le budget est de 1500 euros", "Le budget est de 1 600 euros.", style),
