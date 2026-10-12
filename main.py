@@ -12367,6 +12367,10 @@ def requested_language(value: str | None) -> str | None:
 
 def only_hesitations(text: str) -> bool:
     """Vrai si la transcription n'a que des hésitations ou de la ponctuation."""
+    # Un nombre dicté est une dictée : « 1 + 1 = 2 », « 3,14 » ou « 42 » n'ont
+    # aucune lettre, et ressortaient vides comme un « euh » seul.
+    if re.search(r"\d", text or ""):
+        return False
     words = re.findall(r"[^\W\d_]+(?:-[^\W\d_]+)*", (text or "").casefold())
     return all(
         word in HESITATIONS or STRETCHED_SOUND.search(word) or REPEATED_SYLLABLE.fullmatch(word)
