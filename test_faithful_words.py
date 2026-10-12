@@ -127,6 +127,21 @@ class FaithfulWordTests(unittest.TestCase):
             "Rendez-vous à 14h30 en salle B204.", style))
         self.assertIsNone(main.rewrite_refusal(
             "la piste fait 2 kilomètres", "La piste fait 2km.", style))
+        # Les symboles d'une mise au propre (sondage du 12/10).
+        for said, wrote in (
+                ("la vitesse est de 340 mètres par seconde", "La vitesse est de 340 m/s."),
+                ("la remise est de 20 pour cent", "La remise est de 20 %."),
+                ("le TD numéro 3 est annulé", "Le TD n° 3 est annulé."),
+                ("ça coûte 15 euros", "Ça coûte 15 €."),
+                ("le rendu est pour le premier novembre", "Le rendu est pour le 1er novembre.")):
+            with self.subTest(said=said):
+                self.assertIsNone(main.rewrite_refusal(said, wrote, style))
+        self.assertIsNotNone(main.rewrite_refusal(
+            "la vitesse est de 340 mètres par seconde", "La vitesse est de 340 km/h.", style))
+        self.assertIsNotNone(main.rewrite_refusal(
+            "le rendu est pour le premier novembre", "Le rendu est pour le 2 novembre.", style))
+        self.assertIsNotNone(main.rewrite_refusal(
+            "ça coûte 15 euros", "Ça coûte 15 $.", style))
         # Un autre nombre, ou l'unité perdue, restent refusés.
         self.assertEqual(main.rewrite_refusal(
             "le budget est de 1500 euros", "Le budget est de 1 600 euros.", style),

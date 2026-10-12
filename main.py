@@ -13377,6 +13377,25 @@ FAITHFUL_UNIT_SYMBOLS = {
     "millimetre": "mm", "millimetres": "mm", "gramme": "g", "grammes": "g",
     "kilogramme": "kg", "kilogrammes": "kg", "litre": "l", "litres": "l",
 }
+# Les symboles qu'un Style écrit pour des mots dictés : « 20 % », « 15 € »,
+# « n° 3 », « 340 m/s ». Les contrôles des mots les lisent comme dits : sans
+# cela, la mise au propre attendue d'une dictée était refusée.
+SPOKEN_SYMBOLS = (
+    (re.compile(r"(?<!\w)km/h(?!\w)", re.IGNORECASE), " kilomètres par heure "),
+    (re.compile(r"(?<!\w)m/s(?!\w)"), " mètres par seconde "),
+    (re.compile(r"(?<!\w)n[°º](?=\s?\d)", re.IGNORECASE), " numéro "),
+    (re.compile(r"\s?%"), " pour cent "),
+    (re.compile(r"\s?€"), " euros "),
+)
+# « le premier novembre » écrit « le 1er novembre » : le même jour.
+FIRST_OF_MONTH = re.compile(rf"\bpremi(?:er|ère|ere)\s+(?=(?:{_MONTHS})\b)", re.IGNORECASE)
+
+
+def as_dictated(text: str) -> str:
+    """Le texte d'un Style, ses symboles relus en mots, pour le comparer à la dictée."""
+    for pattern, words in SPOKEN_SYMBOLS:
+        text = pattern.sub(words, text or "")
+    return text
 # « être » et « avoir » conjugués : une faute d'accord ou de temps corrigée
 # (« sa a était bon » → « ça a été bon ») ne retire aucun contenu.
 FAITHFUL_AUXILIARY_WORDS = frozenset((
@@ -13663,22 +13682,23 @@ def rewrite_refusal(
     written_language = dictation_language(text)
     if source_language and written_language and source_language != written_language:
         return "language-changed"
-    ratio = kept_word_ratio(dictated, text)
+    spoken = as_dictated(text)
+    ratio = kept_word_ratio(dictated, spoken)
     if ratio is not None and ratio < MIN_KEPT_WORDS:
         return "dictation-not-kept"
     compact = lambda value: re.sub(r"[ \u00a0\u202f]", "", value)  # noqa: E731
     if any(compact(number) not in compact(text) for number in GROUPED_NUMBER.findall(dictated)):
         return "number-format-changed"
     # Ce qu'une reprise abandonne (« le 12, enfin le 19 ») n'a pas à survivre.
-    reason = facts_refusal(kept, text, True)
+    reason = facts_refusal(FIRST_OF_MONTH.sub("1er ", kept), spoken, True)
     if reason:
         return reason
-    if style_id in FAITHFUL_STYLE_IDS and faithful_content_added(dictated, text):
+    if style_id in FAITHFUL_STYLE_IDS and faithful_content_added(dictated, spoken):
         return "content-added"
     # Ce qu'une reprise abandonne peut partir : la comparaison se fait avec la
     # dictée telle que le Style l'a reçue, reprises résolues.
     if style_id in FAITHFUL_STYLE_IDS and faithful_word_dropped(
-            resolve_simple_repairs(resolved or dictated), text):
+            FIRST_OF_MONTH.sub("1er ", resolve_simple_repairs(resolved or dictated)), spoken):
         return "content-dropped"
     if style_id in FAITHFUL_STYLE_IDS and acronym_dropped(
             resolve_simple_repairs(resolved or dictated), text):
