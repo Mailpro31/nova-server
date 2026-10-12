@@ -101,6 +101,21 @@ class UnclearDecisionTests(unittest.TestCase):
             with self.subTest(said=said):
                 self.assertFalse(main.only_hesitations(said))
 
+    def test_a_long_dictation_is_checked_quickly(self):
+        # Une dictée de cours d'environ 13 minutes (la limite d'envoi) : la
+        # recherche de boucle bloquait le serveur plusieurs secondes.
+        import random
+        import time
+        rng = random.Random(7)
+        words = [f"mot{rng.randrange(400)}" for _ in range(2000)]
+        started = time.perf_counter()
+        self.assertFalse(main.repeats_in_a_loop(words, 2))
+        self.assertFalse(main.repeats_in_a_loop(words, 3))
+        self.assertLess(time.perf_counter() - started, 1.0)
+        passage = "le flux primaire passe dans le compresseur".split()
+        self.assertTrue(main.repeats_in_a_loop(words[:50] + passage * 2 + words[50:], 2))
+        self.assertTrue(main.repeats_in_a_loop(words[:50] + passage * 3, 3))
+        self.assertFalse(main.repeats_in_a_loop(words[:50] + passage * 2 + words[50:60], 3))
     def test_a_dictation_made_of_numbers_is_kept(self):
         # Une réponse d'exercice n'a parfois aucune lettre : elle ressortait
         # vide, comme un « euh » seul.

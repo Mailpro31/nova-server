@@ -12454,11 +12454,16 @@ def repeats_in_a_loop(words: list[str], copies: int = 2) -> bool:
     la dictée (mesuré sur le RTX le 09/10, confiance −0,25 sur 93 s).
     """
     count = len(words)
+    # `copies` copies d'un passage de `period` mots, c'est `(copies - 1) *
+    # period` mots de suite égaux à celui `period` plus loin. Compté ainsi,
+    # sans comparer chaque passage en entier : l'ancienne recherche prenait
+    # une seconde sur 1 200 mots, et bloquait le serveur pour tous les élèves.
     for period in range(LOOP_WORDS, count // copies + 1):
-        for start in range(count - copies * period + 1):
-            first = words[start:start + period]
-            if all(words[start + k * period:start + (k + 1) * period] == first
-                   for k in range(1, copies)):
+        needed = (copies - 1) * period
+        run = 0
+        for i in range(count - period):
+            run = run + 1 if words[i] == words[i + period] else 0
+            if run >= needed:
                 return True
     long_passage = 2 * LOOP_WORDS
     seen: Counter = Counter()
@@ -12510,7 +12515,9 @@ async def transcribe_audio(
     # sous-titres, Canary « Je ne sais pas. » (banc du RTX, 11/10), et Cohere ne
     # rend pas de confiance qui permettrait de le voir après coup.
     if task_type == TaskType.TRANSCRIPTION_REALTIME:
-        peak = wav_peak_dbfs(audio)
+        # Hors de la boucle d'événements : une seconde de calcul sur 13 minutes
+        # d'audio, pendant laquelle aucun autre élève n'était servi.
+        peak = await asyncio.to_thread(wav_peak_dbfs, audio)
         if peak is not None and peak < SILENT_PEAK_DBFS:
             observability.log("transcription.silent", level="info")
             return {"text": "", "unclear": True}
@@ -12540,7 +12547,8 @@ async def transcribe_audio(
     # à l'élève (« parlez un peu plus fort »). Un fichier importé, long, n'est
     # pas jugé ainsi : un passage douteux ne doit pas faire perdre le reste.
     dictated = task_type == TaskType.TRANSCRIPTION_REALTIME
-    if dictated and dictation_unclear(result.text, result.avg_logprob):
+    if dictated and await asyncio.to_thread(
+            dictation_unclear, result.text, result.avg_logprob):
         observability.log("transcription.unclear", level="info")
         return {"text": "", "unclear": True}
     # Le vocabulaire de l'élève et de l'école, appliqué à l'identique : il ne
