@@ -75,6 +75,38 @@ class RuntimeDestinationTests(unittest.TestCase):
                 self.assertEqual(raised.exception.code, AI_RUNTIME_CONFIG_INVALID)
 
 
+class ExternalApiTests(unittest.TestCase):
+    """Une API externe (OpenRouter, Mistral, OpenAI), choisie par l'exploitant."""
+
+    def test_a_public_https_api_needs_the_explicit_setting(self):
+        with patch.dict(os.environ, {"NOVA_AI_ALLOW_PUBLIC_ENDPOINT": ""}):
+            with self.assertRaises(AIRuntimeError):
+                validate_private_runtime_url("https://8.8.8.8/api/v1")
+        with patch.dict(os.environ, {"NOVA_AI_ALLOW_PUBLIC_ENDPOINT": "1"}):
+            self.assertEqual(validate_private_runtime_url("https://8.8.8.8/api/v1"),
+                             "https://8.8.8.8/api/v1")
+            # Le réseau local reste accepté.
+            self.assertEqual(validate_private_runtime_url("http://llm:8000/v1"),
+                             "http://llm:8000/v1")
+            for value in ("http://8.8.8.8/v1",            # en clair vers internet
+                          "https://169.254.169.254/latest",  # métadonnées du cloud
+                          "https://user:secret@8.8.8.8/v1",
+                          "https://8.8.8.8/v1?target=elsewhere"):
+                with self.subTest(value=value):
+                    with self.assertRaises(AIRuntimeError):
+                        validate_private_runtime_url(value)
+
+    def test_each_engine_can_have_its_own_key(self):
+        env = {"NOVA_AI_TEXT_BASE_URL": "http://llm:8000/v1", "NOVA_AI_TEXT_MODEL": "m",
+               "NOVA_AI_SPEECH_BASE_URL": "http://speech:8000", "NOVA_AI_SPEECH_MODEL": "s",
+               "NOVA_AI_RUNTIME_TOKEN": "commune", "NOVA_AI_TEXT_TOKEN": "texte",
+               "NOVA_AI_SPEECH_TOKEN": ""}
+        with patch.dict(os.environ, env):
+            router = ai_runtime.router_from_environment()
+        self.assertEqual(router.text_backend.token, "texte")
+        self.assertEqual(router.speech_backend.token, "commune")
+
+
 class AdapterTests(unittest.IsolatedAsyncioTestCase):
     async def test_openai_compatible_adapter_translates_the_stable_contract(self):
         seen = {}
