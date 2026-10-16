@@ -146,6 +146,25 @@ class CorrectionsComeFirstRouteTests(AdminTestCase):
         self.assertEqual(main.resolve_simple_repairs("x = 2, pardon 3"), "x = 3")
         self.assertEqual(main.resolve_simple_repairs("2, pardon 3 exercices"), "3 exercices")
 
+    def test_oups_and_je_corrige_announce_a_repair(self):
+        for said in ("C'est en salle B204, oups, C204.",
+                     "Le prof s'appelle Martin, je corrige, Bernard.",
+                     "Le rendu est le 12, je rectifie, le 14 mars."):
+            with self.subTest(said=said):
+                self.assertTrue(main.has_self_correction_hint(said))
+        # La valeur abandonnée n'est plus exigée ; la valeur retenue, si.
+        # Comme dans /api/reformulate : la dictée résolue accompagne le texte.
+        self.assertIsNone(main.rewrite_refusal(
+            "C'est en salle B204, oups, C204.", "C'est en salle C204.",
+            "default_improve_transcriptions", resolved="C'est en salle C204."))
+        self.assertIsNone(main.rewrite_refusal(
+            "Le rendu est le 12, je rectifie, le 14 mars.", "Le rendu est le 14 mars.",
+            "default_improve_transcriptions", resolved="Le rendu est le 14 mars."))
+        # Sans la dictée résolue, la valeur abandonnée gardée seule reste refusée.
+        self.assertIsNotNone(main.rewrite_refusal(
+            "Le rendu est le 12, je rectifie, le 14 mars.", "Le rendu est le 12 mars.",
+            "default_improve_transcriptions"))
+
     def test_a_refused_style_returns_the_resolved_dictation(self):
         # Banc de synthèse du RTX (11/10) : le Style paraphrasait, il était
         # refusé à juste titre, et l'élève recevait la dictée avec sa reprise.
