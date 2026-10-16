@@ -12365,6 +12365,41 @@ def requested_language(value: str | None) -> str | None:
     return value if DICTATION_LANGUAGE.fullmatch(value) and value != "auto" else None
 
 
+# Les tics de l'oral qu'un texte mis au propre ne garde pas. Banc synthétique
+# du RTX (16/10) : « comment dire », « en fait », « voilà » restaient, même
+# quand le Style était accepté, et le repli d'un Style refusé les gardait tous.
+# Un tic n'est retiré que détaché par la ponctuation : « le genre du nom » et
+# « voilà la formule » restent.
+_FILLER = r"(?:euh+|heu+|hum+|hm+|bah|ben|du coup|en fait|genre|comment dire|voil[àa]|tu vois|bon)"
+_HESITATION_ANYWHERE = re.compile(r"\s*,?\s*\b(?:euh+|heu+|hum+|hm+)\b\s*,?", re.IGNORECASE)
+_FILLER_LEADING = re.compile(rf"(^|[.!?:;]\s+){_FILLER}\s*,\s*(\w?)", re.IGNORECASE)
+_FILLER_INCISE = re.compile(rf",\s*{_FILLER}\s*,\s*", re.IGNORECASE)
+_FILLER_INNER = re.compile(rf",\s*{_FILLER}\s*(?=[.!?;:]|$)", re.IGNORECASE)
+
+
+def without_fillers(text: str) -> str:
+    """Le texte d'un Style sans les tics de l'oral, ni « euh » ni « du coup, »."""
+    if not text:
+        return text
+    # En tête de phrase d'abord : la phrase reprend avec une majuscule.
+    out, previous = text, None
+    while previous != out:
+        previous = out
+        out = _FILLER_LEADING.sub(lambda m: m.group(1) + m.group(2).upper(), out)
+    out = _HESITATION_ANYWHERE.sub(lambda m: "," if m.group(0).strip().startswith(",")
+                                   and m.group(0).strip().endswith(",") else " ", out)
+    previous = None
+    while previous != out:
+        previous = out
+        out = _FILLER_INCISE.sub(" ", out)
+        out = _FILLER_INNER.sub("", out)
+    # Pas devant « : ; ! ? » : en français, ils gardent leur espace.
+    out = re.sub(r"[ \t]+([,.])", r"\1", out)
+    out = re.sub(r",\s*,", ",", out)
+    out = re.sub(r"(^|[.!?]\s+),\s*", r"\1", out)
+    return re.sub(r"[ \t]{2,}", " ", out).strip()
+
+
 def only_hesitations(text: str) -> bool:
     """Vrai si la transcription n'a que des hésitations ou de la ponctuation."""
     # Un nombre dicté est une dictée : « 1 + 1 = 2 », « 3,14 » ou « 42 » n'ont
@@ -13821,9 +13856,9 @@ async def reformulate(body: ReformulateRequest, user: str = Depends(current_user
     # que l'élève voulait écrire. Banc de synthèse du RTX (11/10) : « le 12
     # octobre, enfin le 19 » refusé au Style revenait avec la reprise, alors que
     # « le 19 octobre » était prêt. Sa résolution a déjà passé ses contrôles.
-    resolved_fallback = {"text": restore_snippets(
+    resolved_fallback = {"text": without_fillers(restore_snippets(
         enforce_vocabulary(outcome.resolved, vocabulary), snippet_restores)
-        or fallback["text"]} if outcome.resolved else fallback
+        or fallback["text"])} if outcome.resolved else {"text": without_fillers(fallback["text"])}
     if outcome.text is None:
         # Une reformulation coupée, un gabarit recopié, une réponse, une
         # traduction, un nombre perdu : la dictée est rendue, jamais un texte
@@ -13844,7 +13879,7 @@ async def reformulate(body: ReformulateRequest, user: str = Depends(current_user
         # Le modele a perdu un repere : le snippet manquerait au texte.
         observability.log("reformulation.snippet_lost", level="warning", style=style_id or "")
         return resolved_fallback
-    return {"text": restored}
+    return {"text": without_fillers(restored)}
 
 @app.post("/api/command", dependencies=[Depends(product_capability("commands", "voice_commands"))])
 async def command(body: CommandRequest, user: str = Depends(current_user),
