@@ -12849,7 +12849,7 @@ def transcript_message(text: str) -> str:
 # Indices d'une reprise possible. Le passage n'est tenté que s'il y en a un :
 # la plupart des dictées n'en ont pas, et n'attendent pas un appel de plus.
 SELF_CORRECTION_HINT = re.compile(
-    r"\b(non|attends?|pardon|plut[oô]t|enfin|oublie|je veux dire|en fait|"
+    r"\b(non|attends?|pardon|plut[oô]t|enfin|oublie|je veux dire|en fait|oups|je corrige|je rectifie|"
     r"no|wait|sorry|i mean|actually|rather)\b",
     re.IGNORECASE,
 )
@@ -13287,7 +13287,8 @@ DATE_PERIODS = frozenset("semaine mois annee an week month year".split())
 DATE_RELATIVES = frozenset("prochain prochaine dernier derniere next last".split())
 DATE_TOKEN = re.compile(r"(?:[^\W\d_]|')+")
 # Mots qui annoncent une reprise : ce qui est dit juste avant peut etre ecarte.
-CORRECTION_MARKERS = frozenset("pardon plutot attends sorry rather".split())
+# « enfin » comme le poste (`guard.rs`) ; « oups » : « en salle B204, oups, C204 ».
+CORRECTION_MARKERS = frozenset("pardon plutot attends enfin oups sorry rather".split())
 # Nombre de mots, avant une reprise, que la reprise peut remplacer.
 CORRECTION_WINDOW = 6
 # Les reperes (`{{nvxlex0}}`, `{{adresse}}`) protegent un terme pendant la
@@ -13350,6 +13351,8 @@ def without_abandoned(text: str) -> str:
             span = 1
         elif " ".join(words[index:index + 3]) == "je veux dire" and index + 3 <= len(words):
             span = 3
+        elif " ".join(words[index:index + 2]) in ("je corrige", "je rectifie"):
+            span = 2
         elif index + 2 <= len(words) and " ".join(words[index:index + 2]) in ("i mean", "no wait"):
             span = 2
         elif words[index] in ("non", "no") and index + 1 < len(words) and _is_fact_token(words[index + 1]):
