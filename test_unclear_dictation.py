@@ -152,6 +152,36 @@ class UnclearDecisionTests(unittest.TestCase):
                      "C'est un bon résultat.", "En fait de cours, il s'agit d'un TD."):
             with self.subTest(kept=kept):
                 self.assertEqual(main.without_fillers(kept), kept)
+        # Banc v2 du RTX sur 5178642 (17/10) : ce qui restait encore.
+        for said, written in (
+                ("La poussée dépend du débit genre, massique.", "La poussée dépend du débit massique."),
+                ("Le cours, enfin bref, est annulé.", "Le cours est annulé."),
+                ("Le cours est annulé, c'est tout.", "Le cours est annulé."),
+                ("Attends, le TP 5 est à rendre jeudi.", "Le TP 5 est à rendre jeudi.")):
+            with self.subTest(said=said):
+                self.assertEqual(main.without_fillers(said), written)
+        for kept in ("Le genre, le nombre et le cas.", "C'est tout ce qu'il faut savoir.",
+                     "Attends la fin du chargement."):
+            with self.subTest(kept=kept):
+                self.assertEqual(main.without_fillers(kept), kept)
+
+    def test_a_hesitation_heard_as_a_lone_e_is_dropped(self):
+        # Banc v2 du RTX (17/10) : Whisper écrit « euh » comme la lettre « E ».
+        # 215 « E » isolés sur 263 étaient des « euh » ; les 48 autres, tous
+        # dans une formule.
+        for heard, written in (
+                ("Le facteur E de charge vaut 2.", "Le facteur de charge vaut 2."),
+                ("La portance augmente avec l'angle d'incidence E, jusqu'au décrochage.",
+                 "La portance augmente avec l'angle d'incidence, jusqu'au décrochage."),
+                ("E. Le correcteur PID est stable.", "Le correcteur PID est stable.")):
+            with self.subTest(heard=heard):
+                self.assertEqual(main.without_hesitation_e(heard), written)
+        for kept in ("Formule E égale mc².", "Formule, E = mc².", "R E égale rho V L sur mu.",
+                     "Prenez de la vitamine E.", "Le cours a lieu en salle E.",
+                     "Le champ E est uniforme.", "Le groupe E passe en premier.",
+                     "Elle a eu un E à l'examen ?"):
+            with self.subTest(kept=kept):
+                self.assertEqual(main.without_hesitation_e(kept), kept)
 
     def test_a_lone_thanks_heard_on_a_breath_is_unclear(self):
         # Témoin du RTX (11/10) : « Merci. » sur un souffle, confiance −0,46.

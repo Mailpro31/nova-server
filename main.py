@@ -12370,7 +12370,7 @@ def requested_language(value: str | None) -> str | None:
 # quand le Style était accepté, et le repli d'un Style refusé les gardait tous.
 # Un tic n'est retiré que détaché par la ponctuation : « le genre du nom » et
 # « voilà la formule » restent.
-_FILLER = r"(?:euh+|heu+|hum+|hm+|bah|ben|du coup|en fait|genre|comment dire|voil[àa]|tu vois|bon)"
+_FILLER = r"(?:euh+|heu+|hum+|hm+|bah|ben|du coup|en fait|genre|comment dire|voil[àa]|tu vois|bon|enfin bref)"
 _HESITATION_ANYWHERE = re.compile(r"\s*,?\s*\b(?:euh+|heu+|hum+|hm+)\b\s*,?", re.IGNORECASE)
 _FILLER_LEADING = re.compile(rf"(^|[.!?:;]\s+){_FILLER}\s*,\s*(\w?)", re.IGNORECASE)
 _FILLER_INCISE = re.compile(rf",\s*{_FILLER}\s*,\s*", re.IGNORECASE)
@@ -12385,6 +12385,14 @@ _FILLER_SENTENCE = re.compile(rf"(^|(?<=[.!?])\s+){_FILLER}\s*[.!?]+", re.IGNORE
 _PHRASE_FILLER = r"(?:du coup|en fait|tu vois|comment dire|voil[àa])"
 _FILLER_ONE_SIDED = re.compile(rf"(?<=\w)\s+{_PHRASE_FILLER}\s*,\s*(?=\w)", re.IGNORECASE)
 _FILLER_BARE = re.compile(r"(?<=\w)\s+(?:du coup|en fait)\b(?=\s+\w)", re.IGNORECASE)
+# Banc v2 du RTX sur 5178642 (17/10) : « débit genre, massique », « …, c'est
+# tout. », « Attends, » en tête d'une dictée déjà reprise. « Le genre, le
+# nombre » (un déterminant devant) et « Attends la fin » (sans virgule) restent.
+_GENRE_ONE_SIDED = re.compile(r"\b(\w+)\s+genre\s*,\s*(?=\w)", re.IGNORECASE)
+_DETERMINERS = frozenset(
+    "le la les un une du des ce cet son sa ses leur mon ma ton ta quel quelle".split())
+_FILLER_THATS_ALL = re.compile(r",\s*c'est tout\s*(?=[.!?]|$)", re.IGNORECASE)
+_FILLER_WAIT_LEADING = re.compile(r"^attends?\s*,\s*(\w)", re.IGNORECASE)
 
 
 def without_fillers(text: str) -> str:
@@ -12407,10 +12415,50 @@ def without_fillers(text: str) -> str:
         out = _FILLER_SENTENCE.sub(lambda m: m.group(1), out)
         out = _FILLER_ONE_SIDED.sub(" ", out)
         out = _FILLER_BARE.sub("", out)
+        out = _GENRE_ONE_SIDED.sub(
+            lambda m: m.group(0) if m.group(1).lower() in _DETERMINERS else m.group(1) + " ", out)
+        out = _FILLER_THATS_ALL.sub("", out)
+        out = _FILLER_WAIT_LEADING.sub(lambda m: m.group(1).upper(), out)
     # Pas devant « : ; ! ? » : en français, ils gardent leur espace.
     out = re.sub(r"[ \t]+([,.])", r"\1", out)
     out = re.sub(r",\s*,", ",", out)
     out = re.sub(r"(^|[.!?]\s+),\s*", r"\1", out)
+    return re.sub(r"[ \t]{2,}", " ", out).strip()
+
+
+# Whisper écrit souvent « euh » comme la lettre « E » : « le facteur E de
+# charge », « l'angle d'incidence E, jusqu'au décrochage ». Banc v2 du RTX
+# (17/10) : 215 « E » isolés sur 263 étaient des « euh » ; les 48 autres, tous
+# dans une formule (« E égale mc² », « R E égale »). Un « E » reste devant
+# « égale » ou « = », après une lettre seule, et après un nom qui prend une
+# lettre (« salle E », « vitamine E », « un E à l'examen »).
+_LONE_E = re.compile(r"(?<![\w'’])E(?![\w'’])")
+_E_IN_FORMULA = re.compile(r"\s*(?:=|²|[ée]gal|egle)", re.IGNORECASE)
+_E_NAMED_BY = frozenset(
+    "salle vitamine groupe bâtiment batiment catégorie categorie type classe série serie "
+    "niveau annexe point champ vecteur axe plan partie option colonne ligne case bloc zone "
+    "étage etage porte amphi section note un une formule lettre".split())
+
+
+def without_hesitation_e(text: str) -> str:
+    """La transcription sans les « E » qui étaient des « euh »."""
+    if not text or not _LONE_E.search(text):
+        return text
+
+    def keep_or_drop(m: re.Match) -> str:
+        if _E_IN_FORMULA.match(text, m.end()):
+            return m.group(0)
+        before = re.findall(r"[^\W\d_]+", text[max(0, m.start() - 40):m.start()].lower())
+        if before and (len(before[-1]) == 1 or before[-1] in _E_NAMED_BY):
+            return m.group(0)
+        return ""
+
+    out = _LONE_E.sub(keep_or_drop, text)
+    if out == text:
+        return text
+    out = re.sub(r"[ \t]+([,.])", r"\1", out)
+    out = re.sub(r"^\s*[.,]\s*", "", out)
+    out = re.sub(r"([,.])\s*\1", r"\1", out)
     return re.sub(r"[ \t]{2,}", " ", out).strip()
 
 
@@ -12608,7 +12656,7 @@ async def transcribe_audio(
     except Exception:  # noqa: BLE001 — la dictée d'abord
         observability.log("transcription_vocabulary_unavailable", level="warning")
         vocabulary = []
-    return {"text": enforce_vocabulary(result.text, vocabulary)}
+    return {"text": enforce_vocabulary(without_hesitation_e(result.text), vocabulary)}
 
 
 @app.post("/api/transcribe")
