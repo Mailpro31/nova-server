@@ -137,8 +137,18 @@ class UnclearDecisionTests(unittest.TestCase):
                 ("Bon, la boucle for parcourt la liste.", "La boucle for parcourt la liste.")):
             with self.subTest(said=said):
                 self.assertEqual(main.without_fillers(said), written)
+        # Banc v2 du RTX (16/10) : les formes qui restaient.
+        for said, written in (
+                ("On chauffe sans le brûler, et voilà.", "On chauffe sans le brûler."),
+                ("On chauffe sans le brûler. Voilà.", "On chauffe sans le brûler."),
+                ("La température monte à 60 du coup, degrés.", "La température monte à 60 degrés."),
+                ("Le moteur a du coup chauffé.", "Le moteur a chauffé."),
+                ("C'est en fait une erreur de signe.", "C'est une erreur de signe.")):
+            with self.subTest(said=said):
+                self.assertEqual(main.without_fillers(said), written)
         # Un mot qui porte du sens reste.
         for kept in ("Le genre du nom est féminin.", "Voilà la formule de Bernoulli.",
+                     "Tu vois la courbe de portance.", "Le nom, son genre, son nombre.",
                      "C'est un bon résultat.", "En fait de cours, il s'agit d'un TD."):
             with self.subTest(kept=kept):
                 self.assertEqual(main.without_fillers(kept), kept)
