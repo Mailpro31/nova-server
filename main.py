@@ -12375,6 +12375,16 @@ _HESITATION_ANYWHERE = re.compile(r"\s*,?\s*\b(?:euh+|heu+|hum+|hm+)\b\s*,?", re
 _FILLER_LEADING = re.compile(rf"(^|[.!?:;]\s+){_FILLER}\s*,\s*(\w?)", re.IGNORECASE)
 _FILLER_INCISE = re.compile(rf",\s*{_FILLER}\s*,\s*", re.IGNORECASE)
 _FILLER_INNER = re.compile(rf",\s*{_FILLER}\s*(?=[.!?;:]|$)", re.IGNORECASE)
+# Banc v2 du RTX (16/10) : les formes que les règles ci-dessus laissaient.
+# « …, et voilà. » ; une phrase faite d'un seul tic (« Voilà. ») ; un tic de
+# plusieurs mots avec une virgule d'un seul côté (« à 60 du coup, degrés ») ;
+# « du coup » et « en fait » sans ponctuation. « genre » et « tu vois » sans
+# ponctuation restent : « le genre du nom », « tu vois la courbe ».
+_FILLER_AND_VOILA = re.compile(r",?\s*\bet voil[àa]\s*(?=[.!?]|$)", re.IGNORECASE)
+_FILLER_SENTENCE = re.compile(rf"(^|(?<=[.!?])\s+){_FILLER}\s*[.!?]+", re.IGNORECASE)
+_PHRASE_FILLER = r"(?:du coup|en fait|tu vois|comment dire|voil[àa])"
+_FILLER_ONE_SIDED = re.compile(rf"(?<=\w)\s+{_PHRASE_FILLER}\s*,\s*(?=\w)", re.IGNORECASE)
+_FILLER_BARE = re.compile(r"(?<=\w)\s+(?:du coup|en fait)\b(?=\s+\w)", re.IGNORECASE)
 
 
 def without_fillers(text: str) -> str:
@@ -12393,6 +12403,10 @@ def without_fillers(text: str) -> str:
         previous = out
         out = _FILLER_INCISE.sub(" ", out)
         out = _FILLER_INNER.sub("", out)
+        out = _FILLER_AND_VOILA.sub("", out)
+        out = _FILLER_SENTENCE.sub(lambda m: m.group(1), out)
+        out = _FILLER_ONE_SIDED.sub(" ", out)
+        out = _FILLER_BARE.sub("", out)
     # Pas devant « : ; ! ? » : en français, ils gardent leur espace.
     out = re.sub(r"[ \t]+([,.])", r"\1", out)
     out = re.sub(r",\s*,", ",", out)
