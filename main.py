@@ -12426,42 +12426,6 @@ def without_fillers(text: str) -> str:
     return re.sub(r"[ \t]{2,}", " ", out).strip()
 
 
-# Whisper écrit souvent « euh » comme la lettre « E » : « le facteur E de
-# charge », « l'angle d'incidence E, jusqu'au décrochage ». Banc v2 du RTX
-# (17/10) : 215 « E » isolés sur 263 étaient des « euh » ; les 48 autres, tous
-# dans une formule (« E égale mc² », « R E égale »). Un « E » reste devant
-# « égale » ou « = », après une lettre seule, et après un nom qui prend une
-# lettre (« salle E », « vitamine E », « un E à l'examen »).
-_LONE_E = re.compile(r"(?<![\w'’])E(?![\w'’])")
-_E_IN_FORMULA = re.compile(r"\s*(?:=|²|[ée]gal|egle)", re.IGNORECASE)
-_E_NAMED_BY = frozenset(
-    "salle vitamine groupe bâtiment batiment catégorie categorie type classe série serie "
-    "niveau annexe point champ vecteur axe plan partie option colonne ligne case bloc zone "
-    "étage etage porte amphi section note un une formule lettre".split())
-
-
-def without_hesitation_e(text: str) -> str:
-    """La transcription sans les « E » qui étaient des « euh »."""
-    if not text or not _LONE_E.search(text):
-        return text
-
-    def keep_or_drop(m: re.Match) -> str:
-        if _E_IN_FORMULA.match(text, m.end()):
-            return m.group(0)
-        before = re.findall(r"[^\W\d_]+", text[max(0, m.start() - 40):m.start()].lower())
-        if before and (len(before[-1]) == 1 or before[-1] in _E_NAMED_BY):
-            return m.group(0)
-        return ""
-
-    out = _LONE_E.sub(keep_or_drop, text)
-    if out == text:
-        return text
-    out = re.sub(r"[ \t]+([,.])", r"\1", out)
-    out = re.sub(r"^\s*[.,]\s*", "", out)
-    out = re.sub(r"([,.])\s*\1", r"\1", out)
-    return re.sub(r"[ \t]{2,}", " ", out).strip()
-
-
 def only_hesitations(text: str) -> bool:
     """Vrai si la transcription n'a que des hésitations ou de la ponctuation."""
     # Un nombre dicté est une dictée : « 1 + 1 = 2 », « 3,14 » ou « 42 » n'ont
@@ -12656,7 +12620,7 @@ async def transcribe_audio(
     except Exception:  # noqa: BLE001 — la dictée d'abord
         observability.log("transcription_vocabulary_unavailable", level="warning")
         vocabulary = []
-    return {"text": enforce_vocabulary(without_hesitation_e(result.text), vocabulary)}
+    return {"text": enforce_vocabulary(result.text, vocabulary)}
 
 
 @app.post("/api/transcribe")
