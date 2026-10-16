@@ -255,12 +255,25 @@ def _safe_request_id(value: str | None) -> str:
     return str(uuid.uuid4())
 
 
+def public_endpoint_allowed() -> bool:
+    """Vrai si l'exploitant a choisi une API externe (OpenRouter, Mistral, OpenAI…).
+
+    Choix explicite du déploiement, jamais un repli : sans lui, les dictées ne
+    quittent pas le réseau de l'établissement.
+    """
+    return os.getenv("NOVA_AI_ALLOW_PUBLIC_ENDPOINT", "").strip() == "1"
+
+
 def validate_private_runtime_url(value: str) -> str:
     """Accept only operator-controlled private/loopback HTTP destinations.
 
     Single-label names are allowed for Docker/service discovery. Public IPs,
     link-local metadata ranges, credentials, query strings and fragments fail
     closed. This policy is intentionally different from public OIDC discovery.
+
+    With `NOVA_AI_ALLOW_PUBLIC_ENDPOINT=1`, a public HTTPS destination is also
+    accepted (an external API chosen by the operator); link-local metadata
+    ranges, plain HTTP to a public host, credentials and queries still fail.
     """
 
     parsed = urlparse((value or "").strip())
@@ -272,9 +285,13 @@ def validate_private_runtime_url(value: str) -> str:
     if host in {"localhost", "host.docker.internal"} or host.endswith(".localhost"):
         return value.rstrip("/")
 
+    public_ok = public_endpoint_allowed() and parsed.scheme == "https"
+
     def allowed_ip(raw: str) -> bool:
         address = ipaddress.ip_address(raw)
-        return (address.is_private or address.is_loopback) and not address.is_link_local
+        if address.is_link_local:
+            return False
+        return address.is_private or address.is_loopback or (public_ok and address.is_global)
 
     try:
         if allowed_ip(host):
@@ -1206,6 +1223,13 @@ def router_from_environment() -> OrganizationAIRouter:
     import secrets_provider
 
     token = secrets_provider.resolve_value(os.getenv("NOVA_AI_RUNTIME_TOKEN", "")) or ""
+    # Une clé par moteur : la mise au propre peut passer par une API externe
+    # pendant que la transcription reste locale, sans recevoir cette clé.
+    text_token = secrets_provider.resolve_value(os.getenv("NOVA_AI_TEXT_TOKEN", "")) or token
+    speech_token = secrets_provider.resolve_value(os.getenv("NOVA_AI_SPEECH_TOKEN", "")) or token
+    if public_endpoint_allowed():
+        observability.log("ai.public_endpoint_allowed", level="warning",
+                          text_url=text_url, speech_url=speech_url)
     try:
         profile = ModelProfile(os.getenv("NOVA_AI_PROFILE", "standard").lower())
     except ValueError as error:
@@ -1220,11 +1244,11 @@ def router_from_environment() -> OrganizationAIRouter:
         OpenAICompatibleTextBackend(
             text_url,
             text_model,
-            token=token,
+            token=text_token,
             reasoning_supported=os.getenv("NOVA_AI_REASONING_ADAPTER", "false").lower()
             == "true",
         ),
-        WhisperCompatibleSpeechBackend(speech_url, speech_model, token=token),
+        WhisperCompatibleSpeechBackend(speech_url, speech_model, token=speech_token),
         profile=profile,
         reasoning_allowed=os.getenv("NOVA_AI_REASONING_ALLOWED", "false").lower()
         == "true",

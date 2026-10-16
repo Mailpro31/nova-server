@@ -130,7 +130,27 @@ Les moteurs se déclarent par la configuration du déploiement. `NOVA_LLM_URL` /
 `NOVA_AI_SPEECH_MODEL` sont les noms actuels. Le serveur n'invente aucun modèle
 par défaut : un déploiement qui n'en déclare pas obtient `AI_MODEL_NOT_READY`
 plutôt qu'un choix silencieux. La destination doit être privée ou locale — une
-adresse publique est refusée.
+adresse publique est refusée, sauf choix explicite de l'exploitant (ci-dessous).
+
+**API externe, au choix de l'exploitant.** Avec `NOVA_AI_ALLOW_PUBLIC_ENDPOINT=1`,
+une adresse publique **en https** est acceptée : une API au format OpenAI comme
+OpenRouter, Mistral ou OpenAI. Le serveur l'écrit dans ses journaux au démarrage
+(`ai.public_endpoint_allowed`). La mise au propre et la transcription se règlent
+séparément, chacune avec sa clé (`NOVA_AI_TEXT_TOKEN`, `NOVA_AI_SPEECH_TOKEN`, à
+défaut `NOVA_AI_RUNTIME_TOKEN`) : on peut garder la transcription locale et
+envoyer seulement la mise au propre. Exemple, avec la transcription locale :
+
+```
+NOVA_AI_ALLOW_PUBLIC_ENDPOINT=1
+NOVA_AI_TEXT_BASE_URL=https://api.mistral.ai/v1      # ou https://openrouter.ai/api/v1
+NOVA_AI_TEXT_MODEL=mistral-small-2603                 # OpenRouter : mistralai/mistral-small-2603
+NOVA_AI_TEXT_TOKEN=env://MISTRAL_API_KEY
+```
+
+RGPD : les dictées partent alors chez ce fournisseur. Pour de vrais élèves, prendre
+un fournisseur direct avec un contrat de sous-traitance (DPA) et un hébergement
+dans l'UE (Mistral par défaut), et en informer l'établissement. OpenRouter, un
+intermédiaire basé hors de l'UE, ne sert qu'aux bancs de test synthétiques.
 
 Le profil décrit le comportement voulu, jamais un nom de modèle. Le lien
 profil → modèle appartient à la configuration du runtime.
