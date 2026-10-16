@@ -126,6 +126,23 @@ class UnclearDecisionTests(unittest.TestCase):
             with self.subTest(heard=heard):
                 self.assertTrue(main.only_hesitations(heard))
 
+    def test_a_tidy_text_drops_the_fillers_of_speech(self):
+        # Banc synthétique du RTX (16/10) : les tics restaient dans le texte collé.
+        for said, written in (
+                ("Euh, le TD de jeudi est annulé.", "Le TD de jeudi est annulé."),
+                ("En fait, le rendu est pour lundi, voilà.", "Le rendu est pour lundi."),
+                ("La salle B323, comment dire, est fermée.", "La salle B323 est fermée."),
+                ("Du coup, on fait l'exercice 3, quoi.", "On fait l'exercice 3, quoi."),
+                ("Le théorème de euh Bernoulli s'applique.", "Le théorème de Bernoulli s'applique."),
+                ("Bon, la boucle for parcourt la liste.", "La boucle for parcourt la liste.")):
+            with self.subTest(said=said):
+                self.assertEqual(main.without_fillers(said), written)
+        # Un mot qui porte du sens reste.
+        for kept in ("Le genre du nom est féminin.", "Voilà la formule de Bernoulli.",
+                     "C'est un bon résultat.", "En fait de cours, il s'agit d'un TD."):
+            with self.subTest(kept=kept):
+                self.assertEqual(main.without_fillers(kept), kept)
+
     def test_a_lone_thanks_heard_on_a_breath_is_unclear(self):
         # Témoin du RTX (11/10) : « Merci. » sur un souffle, confiance −0,46.
         for heard in ("Merci.", "Merci beaucoup !", "merci à vous"):
