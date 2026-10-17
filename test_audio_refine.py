@@ -15,6 +15,8 @@ import ai_runtime
 import main
 from ai_runtime import AI_RUNTIME_FAILED, AIRuntimeError, AudioRefineBackend
 
+main.init_db()
+
 
 def backend(handler):
     return AudioRefineBackend("http://refine:8000/v1", "google/gemini-2.5-flash",

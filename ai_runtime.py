@@ -1221,6 +1221,75 @@ def custom_options_from_environment() -> TextInferenceOptions | None:
     return TextInferenceOptions(tokens, temperature, reasoning)
 
 
+def router_from_environment() -> OrganizationAIRouter:
+    """Build the dedicated router, retaining explicit legacy env compatibility.
+
+    Legacy URLs remain accepted. Model names no longer have commercial defaults:
+    an operator must configure them, otherwise inference fails with
+    ``AI_MODEL_NOT_READY`` instead of selecting a model silently.
+    """
+
+    text_url = os.getenv("NOVA_AI_TEXT_BASE_URL", os.getenv("NOVA_LLM_URL", ""))
+    text_model = os.getenv("NOVA_AI_TEXT_MODEL", os.getenv("NOVA_LLM_MODEL", ""))
+    speech_url = os.getenv(
+        "NOVA_AI_SPEECH_BASE_URL", os.getenv("NOVA_WHISPER_URL", "")
+    )
+    speech_model = os.getenv(
+        "NOVA_AI_SPEECH_MODEL", os.getenv("NOVA_WHISPER_MODEL", "")
+    )
+    # Reference ou valeur : `env://NOM`, `file:///run/secrets/nom`, ou la
+    # valeur elle-meme. Resolue a chaque appel, pour qu'une rotation du
+    # fichier monte prenne effet sans redemarrer le service.
+    import secrets_provider
+
+    token = secrets_provider.resolve_value(os.getenv("NOVA_AI_RUNTIME_TOKEN", "")) or ""
+    # Une clé par moteur : la mise au propre peut passer par une API externe
+    # pendant que la transcription reste locale, sans recevoir cette clé.
+    text_token = secrets_provider.resolve_value(os.getenv("NOVA_AI_TEXT_TOKEN", "")) or token
+    speech_token = secrets_provider.resolve_value(os.getenv("NOVA_AI_SPEECH_TOKEN", "")) or token
+    if public_endpoint_allowed():
+        observability.log("ai.public_endpoint_allowed", level="warning",
+                          text_url=text_url, speech_url=speech_url)
+    try:
+        profile = ModelProfile(os.getenv("NOVA_AI_PROFILE", "standard").lower())
+    except ValueError as error:
+        raise AIRuntimeError(AI_RUNTIME_CONFIG_INVALID) from error
+    custom_options = custom_options_from_environment()
+    # Le moteur local de secours, quand le texte passe par une API externe.
+    fallback_url = os.getenv("NOVA_AI_TEXT_FALLBACK_BASE_URL", "").strip()
+    fallback_model = os.getenv("NOVA_AI_TEXT_FALLBACK_MODEL", "").strip()
+    fallback = (
+        OpenAICompatibleTextBackend(fallback_url, fallback_model, token=token)
+        if fallback_url and fallback_model else None
+    )
+    if profile == ModelProfile.CUSTOM and custom_options is None:
+        # Echouer au demarrage, bruyamment. Retomber sur `standard` en silence
+        # ferait tourner le deploiement avec des reglages que personne n'a
+        # choisis, sous un nom qui affirme le contraire.
+        raise AIRuntimeError(AI_RUNTIME_CONFIG_INVALID)
+    return OrganizationAIRouter(
+        OpenAICompatibleTextBackend(
+            text_url,
+            text_model,
+            token=text_token,
+            reasoning_supported=os.getenv("NOVA_AI_REASONING_ADAPTER", "false").lower()
+            == "true",
+        ),
+        WhisperCompatibleSpeechBackend(speech_url, speech_model, token=speech_token),
+        profile=profile,
+        reasoning_allowed=os.getenv("NOVA_AI_REASONING_ALLOWED", "false").lower()
+        == "true",
+        max_concurrent_text=int(os.getenv("NOVA_AI_MAX_CONCURRENT_TEXT", "2")),
+        max_concurrent_speech=int(os.getenv("NOVA_AI_MAX_CONCURRENT_SPEECH", "1")),
+        max_queue=int(os.getenv("NOVA_AI_MAX_QUEUE", str(DEFAULT_MAX_QUEUE))),
+        queue_wait_seconds=float(
+            os.getenv("NOVA_AI_QUEUE_WAIT_SECONDS", str(DEFAULT_QUEUE_WAIT_SECONDS))
+        ),
+        custom_options=custom_options,
+        fallback_text_backend=fallback,
+    )
+
+
 # La transcription relue par un modèle qui entend l'audio. Banc v2 du RTX
 # (17/10, 600 dictées) : Gemini 2.5 Flash, avec l'audio, la transcription
 # locale et le vocabulaire du cours, rend 80,7 % de transcriptions complètes,
@@ -1302,72 +1371,3 @@ def audio_refiner_from_environment() -> AudioRefineBackend | None:
     token = secrets_provider.resolve_value(os.getenv("NOVA_AI_SPEECH_REFINE_TOKEN", "")) or ""
     observability.log("ai.speech_refine_enabled", level="warning", url=url, model=model)
     return AudioRefineBackend(url, model, token=token)
-
-
-def router_from_environment() -> OrganizationAIRouter:
-    """Build the dedicated router, retaining explicit legacy env compatibility.
-
-    Legacy URLs remain accepted. Model names no longer have commercial defaults:
-    an operator must configure them, otherwise inference fails with
-    ``AI_MODEL_NOT_READY`` instead of selecting a model silently.
-    """
-
-    text_url = os.getenv("NOVA_AI_TEXT_BASE_URL", os.getenv("NOVA_LLM_URL", ""))
-    text_model = os.getenv("NOVA_AI_TEXT_MODEL", os.getenv("NOVA_LLM_MODEL", ""))
-    speech_url = os.getenv(
-        "NOVA_AI_SPEECH_BASE_URL", os.getenv("NOVA_WHISPER_URL", "")
-    )
-    speech_model = os.getenv(
-        "NOVA_AI_SPEECH_MODEL", os.getenv("NOVA_WHISPER_MODEL", "")
-    )
-    # Reference ou valeur : `env://NOM`, `file:///run/secrets/nom`, ou la
-    # valeur elle-meme. Resolue a chaque appel, pour qu'une rotation du
-    # fichier monte prenne effet sans redemarrer le service.
-    import secrets_provider
-
-    token = secrets_provider.resolve_value(os.getenv("NOVA_AI_RUNTIME_TOKEN", "")) or ""
-    # Une clé par moteur : la mise au propre peut passer par une API externe
-    # pendant que la transcription reste locale, sans recevoir cette clé.
-    text_token = secrets_provider.resolve_value(os.getenv("NOVA_AI_TEXT_TOKEN", "")) or token
-    speech_token = secrets_provider.resolve_value(os.getenv("NOVA_AI_SPEECH_TOKEN", "")) or token
-    if public_endpoint_allowed():
-        observability.log("ai.public_endpoint_allowed", level="warning",
-                          text_url=text_url, speech_url=speech_url)
-    try:
-        profile = ModelProfile(os.getenv("NOVA_AI_PROFILE", "standard").lower())
-    except ValueError as error:
-        raise AIRuntimeError(AI_RUNTIME_CONFIG_INVALID) from error
-    custom_options = custom_options_from_environment()
-    # Le moteur local de secours, quand le texte passe par une API externe.
-    fallback_url = os.getenv("NOVA_AI_TEXT_FALLBACK_BASE_URL", "").strip()
-    fallback_model = os.getenv("NOVA_AI_TEXT_FALLBACK_MODEL", "").strip()
-    fallback = (
-        OpenAICompatibleTextBackend(fallback_url, fallback_model, token=token)
-        if fallback_url and fallback_model else None
-    )
-    if profile == ModelProfile.CUSTOM and custom_options is None:
-        # Echouer au demarrage, bruyamment. Retomber sur `standard` en silence
-        # ferait tourner le deploiement avec des reglages que personne n'a
-        # choisis, sous un nom qui affirme le contraire.
-        raise AIRuntimeError(AI_RUNTIME_CONFIG_INVALID)
-    return OrganizationAIRouter(
-        OpenAICompatibleTextBackend(
-            text_url,
-            text_model,
-            token=text_token,
-            reasoning_supported=os.getenv("NOVA_AI_REASONING_ADAPTER", "false").lower()
-            == "true",
-        ),
-        WhisperCompatibleSpeechBackend(speech_url, speech_model, token=speech_token),
-        profile=profile,
-        reasoning_allowed=os.getenv("NOVA_AI_REASONING_ALLOWED", "false").lower()
-        == "true",
-        max_concurrent_text=int(os.getenv("NOVA_AI_MAX_CONCURRENT_TEXT", "2")),
-        max_concurrent_speech=int(os.getenv("NOVA_AI_MAX_CONCURRENT_SPEECH", "1")),
-        max_queue=int(os.getenv("NOVA_AI_MAX_QUEUE", str(DEFAULT_MAX_QUEUE))),
-        queue_wait_seconds=float(
-            os.getenv("NOVA_AI_QUEUE_WAIT_SECONDS", str(DEFAULT_QUEUE_WAIT_SECONDS))
-        ),
-        custom_options=custom_options,
-        fallback_text_backend=fallback,
-    )
