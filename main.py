@@ -12385,6 +12385,13 @@ _FILLER_SENTENCE = re.compile(rf"(^|(?<=[.!?])\s+){_FILLER}\s*[.!?]+", re.IGNORE
 _PHRASE_FILLER = r"(?:du coup|en fait|tu vois|comment dire|voil[àa])"
 _FILLER_ONE_SIDED = re.compile(rf"(?<=\w)\s+{_PHRASE_FILLER}\s*,\s*(?=\w)", re.IGNORECASE)
 _FILLER_BARE = re.compile(r"(?<=\w)\s+(?:du coup|en fait)\b(?=\s+\w)", re.IGNORECASE)
+# « comment dire » sans ponctuation : un tic (« sans comment dire échange »),
+# sauf quand il complète un verbe (« je ne sais pas comment dire ça »).
+# Banc v2 du RTX sur a7ccc94 (17/10) : 47 restaient.
+_COMMENT_DIRE_BARE = re.compile(r"(\w+)\s+comment dire\b(?=\s+\w)", re.IGNORECASE)
+_COMMENT_DIRE_GOVERNED = frozenset(
+    "pas sais sait savais savait savoir savez savons vois voit comprends idée idee "
+    "sur appris demande demandé demande demander".split())
 # Banc v2 du RTX sur 5178642 (17/10) : « débit genre, massique », « …, c'est
 # tout. », « Attends, » en tête d'une dictée déjà reprise. « Le genre, le
 # nombre » (un déterminant devant) et « Attends la fin » (sans virgule) restent.
@@ -12415,6 +12422,9 @@ def without_fillers(text: str) -> str:
         out = _FILLER_SENTENCE.sub(lambda m: m.group(1), out)
         out = _FILLER_ONE_SIDED.sub(" ", out)
         out = _FILLER_BARE.sub("", out)
+        out = _COMMENT_DIRE_BARE.sub(
+            lambda m: m.group(0) if m.group(1).lower() in _COMMENT_DIRE_GOVERNED
+            else m.group(1), out)
         out = _GENRE_ONE_SIDED.sub(
             lambda m: m.group(0) if m.group(1).lower() in _DETERMINERS else m.group(1) + " ", out)
         out = _FILLER_THATS_ALL.sub("", out)

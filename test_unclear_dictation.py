@@ -146,6 +146,12 @@ class UnclearDecisionTests(unittest.TestCase):
                 ("C'est en fait une erreur de signe.", "C'est une erreur de signe.")):
             with self.subTest(said=said):
                 self.assertEqual(main.without_fillers(said), written)
+        # Banc v2 du RTX sur a7ccc94 (17/10) : « comment dire » sans ponctuation.
+        self.assertEqual(
+            main.without_fillers("Le transfert se fait sans comment dire échange de chaleur."),
+            "Le transfert se fait sans échange de chaleur.")
+        self.assertEqual(main.without_fillers("Je ne sais pas comment dire ça au prof."),
+                         "Je ne sais pas comment dire ça au prof.")
         # Un mot qui porte du sens reste.
         for kept in ("Le genre du nom est féminin.", "Voilà la formule de Bernoulli.",
                      "Tu vois la courbe de portance.", "Le nom, son genre, son nombre.",
