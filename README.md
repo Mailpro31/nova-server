@@ -153,6 +153,14 @@ saturée ou trop lente envoie la même requête au modèle local, et le journal
 l'écrit (`ai.text_fallback`). La vue d'administration `GET /api/control/organization/ai-runtime` indique
 `fallback_policy: local`.
 
+Relecture audio : avec `NOVA_AI_SPEECH_REFINE_BASE_URL`, `NOVA_AI_SPEECH_REFINE_MODEL`
+et `NOVA_AI_SPEECH_REFINE_TOKEN`, une dictée transcrite par Whisper est relue par un
+modèle qui entend l'audio (format `input_audio`, comme Gemini via OpenRouter), avec le
+vocabulaire de l'élève et de l'école. Banc v2 (17/10, 600 dictées) : 41,5 % → 80,7 % de
+transcriptions complètes. Une relecture en échec, vide, trop longue ou truffée de
+termes du vocabulaire non entendus est écartée : Whisper reste (`transcription.refine_*`
+dans le journal). L'audio part alors aussi chez le fournisseur.
+
 RGPD : les dictées partent alors chez ce fournisseur. Pour de vrais élèves, prendre
 un fournisseur direct avec un contrat de sous-traitance (DPA) et un hébergement
 dans l'UE (Mistral par défaut), et en informer l'établissement. OpenRouter, un

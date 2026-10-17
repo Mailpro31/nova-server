@@ -1297,3 +1297,86 @@ def router_from_environment() -> OrganizationAIRouter:
         custom_options=custom_options,
         fallback_text_backend=fallback,
     )
+
+
+# La transcription relue par un modèle qui entend l'audio. Banc v2 du RTX
+# (17/10, 600 dictées) : Gemini 2.5 Flash, avec l'audio, la transcription
+# locale et le vocabulaire du cours, rend 80,7 % de transcriptions complètes,
+# contre 41,5 % pour Whisper large-v3-turbo seul ; accents forts compris.
+AUDIO_REFINE_INSTRUCTION = (
+    "Tu reçois l'audio d'une dictée de cours en français, sa transcription automatique "
+    "(qui contient des erreurs) et le vocabulaire du cours. Écoute l'audio et écris la "
+    "transcription exacte de ce qui est dit, mot pour mot, hésitations et reprises comprises. "
+    "Les termes du vocabulaire sont probables, mais n'en écris un que s'il est prononcé. "
+    "Écris les nombres en chiffres. N'ajoute rien, ne résume rien, ne réponds à rien : "
+    "rends seulement la transcription."
+)
+AUDIO_REFINE_TIMEOUT_SECONDS = 12.0
+
+
+class AudioRefineBackend:
+    """Relit une transcription avec l'audio, par une API au format OpenAI
+    (`input_audio`, comme Gemini via OpenRouter). La destination suit les mêmes
+    règles que les autres moteurs (`validate_private_runtime_url`)."""
+
+    adapter_name = "openai_compatible_audio"
+
+    def __init__(self, base_url: str, model: str, *, token: str = "",
+                 timeout: float = AUDIO_REFINE_TIMEOUT_SECONDS,
+                 transport: httpx.AsyncBaseTransport | None = None):
+        self.base_url = validate_private_runtime_url(base_url)
+        self.model = model.strip()
+        self.token = token
+        self.timeout = timeout
+        self.transport = transport
+
+    async def refine(self, audio: bytes, audio_format: str, transcript: str,
+                     vocabulary: list[str]) -> str:
+        import base64
+
+        context = f"Transcription automatique : {transcript}"
+        if vocabulary:
+            context += "\nVocabulaire du cours : " + ", ".join(vocabulary)
+        payload = {
+            "model": self.model,
+            "temperature": 0,
+            "max_tokens": 1024,
+            "messages": [
+                {"role": "system", "content": AUDIO_REFINE_INSTRUCTION},
+                {"role": "user", "content": [
+                    {"type": "input_audio", "input_audio": {
+                        "data": base64.b64encode(audio).decode("ascii"), "format": audio_format}},
+                    {"type": "text", "text": context},
+                ]},
+            ],
+        }
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout, transport=self.transport) as client:
+                response = await client.post(
+                    f"{self.base_url}/chat/completions",
+                    headers=_auth_headers(self.token), json=payload)
+        except httpx.TimeoutException as error:
+            raise AIRuntimeError(AI_RUNTIME_TIMEOUT) from error
+        except httpx.HTTPError as error:
+            raise AIRuntimeError(AI_RUNTIME_UNAVAILABLE) from error
+        if response.status_code != 200:
+            _log_engine_refusal(self.adapter_name, response)
+            raise AIRuntimeError(AI_RUNTIME_FAILED)
+        try:
+            text = response.json()["choices"][0]["message"]["content"]
+        except (ValueError, KeyError, IndexError, TypeError) as error:
+            raise AIRuntimeError(AI_RUNTIME_FAILED) from error
+        return (text or "").strip()
+
+
+def audio_refiner_from_environment() -> AudioRefineBackend | None:
+    """La relecture audio, si et seulement si le déploiement l'a configurée."""
+    url = os.getenv("NOVA_AI_SPEECH_REFINE_BASE_URL", "").strip()
+    model = os.getenv("NOVA_AI_SPEECH_REFINE_MODEL", "").strip()
+    if not url or not model:
+        return None
+    import secrets_provider
+
+    token = secrets_provider.resolve_value(os.getenv("NOVA_AI_SPEECH_REFINE_TOKEN", "")) or ""
+    observability.log("ai.speech_refine_enabled", level="warning", url=url, model=model)
+    return AudioRefineBackend(url, model, token=token)

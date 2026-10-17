@@ -55,6 +55,7 @@ import scim
 import secrets_provider
 from ai_runtime import (
     ADVANCED_MINIMUM_VRAM_GB,
+    audio_refiner_from_environment,
     AI_AUDIO_INVALID,
     AI_MODEL_NOT_READY,
     AI_PROMPT_TOO_LONG,
@@ -12649,6 +12650,47 @@ def looks_like_audio(audio: bytes) -> bool:
     return audio[0] == 0xFF and audio[1] & 0xE0 == 0xE0
 
 
+AUDIO_REFINER = audio_refiner_from_environment()
+# Les formats que l'API accepte en `input_audio`.
+AUDIO_REFINE_FORMATS = {"wav": "wav", "mp3": "mp3"}
+AUDIO_REFINE_MAX_TERMS = 300
+# Une relecture plausible : ni vide, ni beaucoup plus longue que la dictée, ni
+# truffée de termes du vocabulaire que Whisper n'a pas entendus. Banc du RTX
+# (17/10) : un glossaire recopié en entier sur 600 dictées.
+AUDIO_REFINE_MAX_GROWTH = 2.0
+AUDIO_REFINE_MAX_NEW_TERMS = 3
+
+
+def refine_plausible(transcript: str, refined: str, vocabulary: list[str]) -> bool:
+    said, wrote = len(transcript.split()), len(refined.split())
+    if not refined.strip() or wrote > said * AUDIO_REFINE_MAX_GROWTH + 8:
+        return False
+    before, after = transcript.casefold(), refined.casefold()
+    new_terms = sum(1 for term in vocabulary
+                    if term.casefold() in after and term.casefold() not in before)
+    return new_terms <= AUDIO_REFINE_MAX_NEW_TERMS
+
+
+async def refined_transcription(audio: bytes, filename: str, transcript: str,
+                                vocabulary: list[tuple[str, str]]) -> str:
+    """La transcription relue avec l'audio et le vocabulaire, ou celle de
+    Whisper si la relecture n'est pas configurée, échoue ou n'est pas plausible."""
+    audio_format = AUDIO_REFINE_FORMATS.get(Path(filename).suffix.lower().lstrip("."))
+    if AUDIO_REFINER is None or audio_format is None or not transcript.strip():
+        return transcript
+    terms = sorted({(replacement or term).strip() for term, replacement in vocabulary
+                    if (replacement or term).strip()})[:AUDIO_REFINE_MAX_TERMS]
+    try:
+        refined = await AUDIO_REFINER.refine(audio, audio_format, transcript, terms)
+    except AIRuntimeError as error:
+        observability.log("transcription.refine_failed", level="warning", reason=error.code)
+        return transcript
+    if not refine_plausible(transcript, refined, terms):
+        observability.log("transcription.refine_rejected", level="warning")
+        return transcript
+    return refined
+
+
 async def transcribe_audio(
     file: UploadFile, user: str, task_type: TaskType, max_bytes: int,
     language: str | None = None, organization_id: str | None = None,
@@ -12710,7 +12752,10 @@ async def transcribe_audio(
     except Exception:  # noqa: BLE001 — la dictée d'abord
         observability.log("transcription_vocabulary_unavailable", level="warning")
         vocabulary = []
-    return {"text": enforce_vocabulary(result.text, vocabulary)}
+    text = result.text
+    if dictated:
+        text = await refined_transcription(audio, file.filename or "audio.wav", text, vocabulary)
+    return {"text": enforce_vocabulary(text, vocabulary)}
 
 
 @app.post("/api/transcribe")
