@@ -12375,8 +12375,29 @@ def requested_language(value: str | None) -> str | None:
 # quand le Style était accepté, et le repli d'un Style refusé les gardait tous.
 # Un tic n'est retiré que détaché par la ponctuation : « le genre du nom » et
 # « voilà la formule » restent.
-_FILLER = r"(?:euh+|heu+|hum+|hm+|bah|ben|du coup|en fait|genre|comment dire|voil[àa]|tu vois|bon|enfin bref)"
-_HESITATION_ANYWHERE = re.compile(r"\s*,?\s*\b(?:euh+|heu+|hum+|hm+)\b\s*,?", re.IGNORECASE)
+_FILLER = (r"(?:euh+|heu+|hum+|hm+|bah|ben|du coup|en fait|genre|comment dire|voil[àa]|tu vois|"
+           r"bon|enfin bref|en gros|ok alors|ok)")
+# « bah » n'a jamais de sens ; il restait au milieu d'une phrase (« Bernoulli
+# bah, s'applique ») : 252 dictées sur 3 000 du banc v2 (sondage du 17/10).
+_HESITATION_ANYWHERE = re.compile(r"\s*,?\s*\b(?:euh+|heu+|hum+|hm+|bah)\b\s*,?", re.IGNORECASE)
+# Plusieurs tics à la suite, sans virgule devant le premier (« volets genre,
+# comment dire, hypersustentateurs »).
+_FILLER_CHAIN = re.compile(rf"(?<=\w)\s+(?:{_FILLER}\s*,\s*){{2,}}(?=\w)", re.IGNORECASE)
+# Un mot commencé puis repris : « co- converge », « nég- négative », et avec
+# une élision, « dinc- d'inclinaison », « lé- l'échange ».
+_FALSE_START_CUT = re.compile(r"(?<![\w-])(\w{1,8})-\s+(?=(\S+))")
+
+
+# Un petit mot dit deux fois : « le le long », « est est en », « et et à ».
+# « nous nous », « vous vous » (verbes pronominaux) n'y sont pas.
+_REPEATED_WORD = re.compile(
+    r"\b(le|la|les|un|une|de|des|du|et|est|en|je|à|a|il|elle|on|que|qui|ce|se|sa|son|au|aux)"
+    r"\s+\1\b", re.IGNORECASE)
+
+
+def _without_false_start(match: re.Match) -> str:
+    cut, following = match.group(1).lower(), match.group(2).lower().replace("'", "").replace("’", "")
+    return "" if following.startswith(cut) and len(following) > len(cut) else match.group(0)
 _FILLER_LEADING = re.compile(rf"(^|[.!?:;]\s+){_FILLER}\s*,\s*(\w?)", re.IGNORECASE)
 _FILLER_INCISE = re.compile(rf",\s*{_FILLER}\s*,\s*", re.IGNORECASE)
 _FILLER_INNER = re.compile(rf",\s*{_FILLER}\s*(?=[.!?;:]|$)", re.IGNORECASE)
@@ -12387,7 +12408,7 @@ _FILLER_INNER = re.compile(rf",\s*{_FILLER}\s*(?=[.!?;:]|$)", re.IGNORECASE)
 # ponctuation restent : « le genre du nom », « tu vois la courbe ».
 _FILLER_AND_VOILA = re.compile(r",?\s*\bet voil[àa]\s*(?=[.!?]|$)", re.IGNORECASE)
 _FILLER_SENTENCE = re.compile(rf"(^|(?<=[.!?])\s+){_FILLER}\s*[.!?]+", re.IGNORECASE)
-_PHRASE_FILLER = r"(?:du coup|en fait|tu vois|comment dire|voil[àa])"
+_PHRASE_FILLER = r"(?:du coup|en fait|tu vois|comment dire|voil[àa]|enfin bref|en gros)"
 _FILLER_ONE_SIDED = re.compile(rf"(?<=\w)\s+{_PHRASE_FILLER}\s*,\s*(?=\w)", re.IGNORECASE)
 _FILLER_BARE = re.compile(r"(?<=\w)\s+(?:du coup|en fait)\b(?=\s+\w)", re.IGNORECASE)
 # « comment dire » sans ponctuation : un tic (« sans comment dire échange »),
@@ -12401,26 +12422,47 @@ _COMMENT_DIRE_GOVERNED = frozenset(
 # tout. », « Attends, » en tête d'une dictée déjà reprise. « Le genre, le
 # nombre » (un déterminant devant) et « Attends la fin » (sans virgule) restent.
 _GENRE_ONE_SIDED = re.compile(r"\b(\w+)\s+genre\s*,\s*(?=\w)", re.IGNORECASE)
+# Masculins singuliers seulement : « la genre, », « les genre, » sont des tics.
 _DETERMINERS = frozenset(
-    "le la les un une du des ce cet son sa ses leur mon ma ton ta quel quelle".split())
+    "le un du ce cet son leur mon ton quel".split())
 _FILLER_THATS_ALL = re.compile(r",\s*c'est tout\s*(?=[.!?]|$)", re.IGNORECASE)
 _FILLER_WAIT_LEADING = re.compile(r"^attends?\s*,\s*(\w)", re.IGNORECASE)
+
+
+# Ce que le poste ne sait pas coller : du HTML d'indice ou d'exposant
+# (« R<sub>e</sub> »), du code Markdown (« `for` »). Le gras et les titres
+# Markdown restent : le poste les met en forme. RTX, 17/10 : 0137, 0533.
+_HTML_SUPERSCRIPT = re.compile(r"<sup>\s*([0-9]+)\s*</sup>", re.IGNORECASE)
+_HTML_INLINE_TAG = re.compile(r"</?(?:sub|sup|span|em|i|b|strong|code)\b[^>]*>", re.IGNORECASE)
+_INLINE_CODE = re.compile(r"(?<!`)`([^`\n]{1,60})`(?!`)")
+
+
+def _as_plain_text(text: str) -> str:
+    text = _HTML_SUPERSCRIPT.sub(lambda m: m.group(1).translate(str.maketrans("0123456789", "⁰¹²³⁴⁵⁶⁷⁸⁹")), text)
+    text = _HTML_INLINE_TAG.sub("", text)
+    return _INLINE_CODE.sub(r"\1", text)
 
 
 def without_fillers(text: str) -> str:
     """Le texte d'un Style sans les tics de l'oral, ni « euh » ni « du coup, »."""
     if not text:
         return text
+    text = _as_plain_text(text)
     # En tête de phrase d'abord : la phrase reprend avec une majuscule.
     out, previous = text, None
     while previous != out:
         previous = out
         out = _FILLER_LEADING.sub(lambda m: m.group(1) + m.group(2).upper(), out)
-    out = _HESITATION_ANYWHERE.sub(lambda m: "," if m.group(0).strip().startswith(",")
-                                   and m.group(0).strip().endswith(",") else " ", out)
+    # La virgule d'avant reste : « C122, tu vois, euh non A119 » garde la
+    # virgule qui ferme « tu vois ».
+    out = _HESITATION_ANYWHERE.sub(lambda m: ", " if m.group(0).strip().startswith(",")
+                                   else " ", out)
+    out = _FALSE_START_CUT.sub(_without_false_start, out)
+    out = _REPEATED_WORD.sub(lambda m: m.group(1), out)
     previous = None
     while previous != out:
         previous = out
+        out = _FILLER_CHAIN.sub(" ", out)
         out = _FILLER_INCISE.sub(" ", out)
         out = _FILLER_INNER.sub("", out)
         out = _FILLER_AND_VOILA.sub("", out)

@@ -150,7 +150,8 @@ NOVA_AI_TEXT_TOKEN=env://MISTRAL_API_KEY
 Secours local : avec `NOVA_AI_TEXT_FALLBACK_BASE_URL` et `NOVA_AI_TEXT_FALLBACK_MODEL`
 (le modèle local, par exemple `http://vllm:8000/v1`), une API externe en panne,
 saturée ou trop lente envoie la même requête au modèle local, et le journal
-l'écrit (`ai.text_fallback`). `/api/ai/health` indique `fallback_policy: local`.
+l'écrit (`ai.text_fallback`). La vue d'administration `GET /api/control/organization/ai-runtime` indique
+`fallback_policy: local`.
 
 Relecture audio : avec `NOVA_AI_SPEECH_REFINE_BASE_URL`, `NOVA_AI_SPEECH_REFINE_MODEL`
 et `NOVA_AI_SPEECH_REFINE_TOKEN`, une dictée transcrite par Whisper est relue par un
