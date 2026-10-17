@@ -12391,7 +12391,7 @@ _FALSE_START_CUT = re.compile(r"(?<![\w-])(\w{1,8})-\s+(?=(\S+))")
 # Un petit mot dit deux fois : « le le long », « est est en », « et et à ».
 # « nous nous », « vous vous » (verbes pronominaux) n'y sont pas.
 _REPEATED_WORD = re.compile(
-    r"\b(le|la|les|un|une|de|des|du|et|est|en|je|à|a|il|elle|on|que|qui|ce|se|sa|son|au|aux)"
+    r"\b(le|la|les|un|une|de|des|du|et|est|en|je|à|a|il|elle|on|que|qui|ce|se|sa|son|au|aux|si)"
     r"\s+\1\b", re.IGNORECASE)
 
 
@@ -12417,6 +12417,10 @@ _FILLER_BARE = re.compile(r"(?<=\w)\s+(?:du coup|en fait|enfin bref)\b(?=\s+\w)"
 _FILLER_FINAL_BARE = re.compile(r"\s+(?:en gros|voil[àa]|en fait)\s*(?=[.!?]|$)", re.IGNORECASE)
 _FILLER_THATS_ALL_SENTENCE = re.compile(r"(^|(?<=[.!?])\s+)c'est tout\s*[.!?]+", re.IGNORECASE)
 _FILLER_OK_LEADING = re.compile(r"(^|[.!?]\s+)ok\s+alors\s+(\w)", re.IGNORECASE)
+# « Quoi ? » seul, en fin de dictée (RTX, 17/10, 0463).
+_FILLER_WHAT = re.compile(r"(^|(?<=[.!?])\s+)quoi\s*\?+", re.IGNORECASE)
+# « d'une genre plaque plane » : « genre » entre un article et un nom (0812).
+_GENRE_AFTER_ARTICLE = re.compile(r"\b(la|une|les|des|ces|cette)\s+genre\s+(?=\w)", re.IGNORECASE)
 _FILLER_MARKER = re.compile(rf"\{{\{{\s*{_FILLER}\s*\}}\}}", re.IGNORECASE)
 # « comment dire » sans ponctuation : un tic (« sans comment dire échange »),
 # sauf quand il complète un verbe (« je ne sais pas comment dire ça »).
@@ -12465,6 +12469,9 @@ def without_fillers(text: str) -> str:
     out = _HESITATION_ANYWHERE.sub(lambda m: ", " if m.group(0).strip().startswith(",")
                                    else " ", out)
     out = _FALSE_START_CUT.sub(_without_false_start, out)
+    # « doit comme, comment dire, avoir » : le faux départ sans tiret, avant que
+    # le tic qui le suit ne parte (RTX, 17/10 : 0956, 0384).
+    out = _FALSE_START_PLAIN.sub("", out)
     out = _REPEATED_WORD.sub(lambda m: m.group(1), out)
     previous = None
     while previous != out:
@@ -12486,6 +12493,8 @@ def without_fillers(text: str) -> str:
         out = _FILLER_THATS_ALL_SENTENCE.sub(lambda m: m.group(1), out)
         out = _FILLER_OK_LEADING.sub(lambda m: m.group(1) + m.group(2).upper(), out)
         out = _FILLER_MARKER.sub(" ", out)
+        out = _FILLER_WHAT.sub(lambda m: m.group(1), out)
+        out = _GENRE_AFTER_ARTICLE.sub(lambda m: m.group(1) + " ", out)
         out = _FILLER_WAIT_LEADING.sub(lambda m: m.group(1).upper(), out)
     # Pas devant « : ; ! ? » : en français, ils gardent leur espace.
     out = re.sub(r"[ \t]+([,.])", r"\1", out)
@@ -13208,10 +13217,11 @@ SIMPLE_REPAIRS = (
 # enfin à 128 » (RTX, 17/10 : jamais résolu, ni par la règle ni par le modèle).
 # Un « non » seul suffit ici : un code n'a pas d'autre lecture.
 _ROOM_CODE_REPAIR = re.compile(
-    r"(?<!\w)[A-Z]\d{2,4}\b\s*[,.]?\s*(?:euh\s*,?\s*)?"
+    r"(?<!\w)[A-Z]\s?\d{2,4}\b\s*[,.]?\s*(?:euh\s*,?\s*)?"
     r"(?:non(?:\s*,?\s*(?:non|pardon|attends?))?|pardon|attends?|plut[oô]t|enfin)\s*,?\s*"
     r"(?=(?:à\s+)?[A-Z]?\d{2,4}\b)")
-SIMPLE_REPAIRS = SIMPLE_REPAIRS + (_ROOM_CODE_REPAIR,)
+# Avant la règle des nombres : « salle B 305 non pardon 305 » gardait B305.
+SIMPLE_REPAIRS = (_ROOM_CODE_REPAIR,) + SIMPLE_REPAIRS
 
 
 def resolve_simple_repairs(text: str) -> str:
@@ -13561,6 +13571,10 @@ def without_abandoned(text: str) -> str:
             span = 1
         else:
             span = 0
+        # « …le lundi 26 décembre, pardon. » : rien ne suit, aucune valeur n'est
+        # abandonnée (RTX, 17/10, 0635 : la date retenue partait avec).
+        if span and index + span >= len(words):
+            span = 0
         if span:
             for position in range(max(0, index - CORRECTION_WINDOW), index + span):
                 dropped[position] = True
@@ -13653,6 +13667,7 @@ SPOKEN_SYMBOLS = (
     (re.compile(r"(?<!\w)m/s(?!\w)"), " mètres par seconde "),
     (re.compile(r"(?<!\w)n[°º](?=\s?\d)", re.IGNORECASE), " numéro "),
     (re.compile(r"\s?%"), " pour cent "),
+    (re.compile(r"\bpourcents?\b", re.IGNORECASE), " pour cent "),
     (re.compile(r"\s?€"), " euros "),
     # Une unité composée après un nombre : « 2400 tr/min », « 5 L/s ».
     (re.compile(r"(?<=\d)\s?([^\W\d_]{1,3})/([^\W\d_]{1,3})(?![\w/])"), r" \1 par \2 "),
@@ -13716,7 +13731,7 @@ def misheard_words(dictated_words: list[str], written_words: list[str]) -> set[s
 # Une reprise après une pause : le mot abandonné, puis l'annonce, puis la
 # correction (« mardi, pardon, de jeudi », « B12, non, B14 »).
 _REPAIRED_WORD = re.compile(
-    r"\S+[,.;]\s*(?:(?:euh|non|attends?|pardon|plut[oô]t|oublie|je veux dire|oups|je corrige|"
+    r"\S+[,.;]\s*(?:(?:euh|non|attends?|pardon|(?:ou\s+)?plut[oô]t|oublie|je veux dire|oups|je corrige|"
     r"je rectifie|je me suis tromp[ée]e?|je me trompe)\b[\s,.;]*)+(?=\w)",
     re.IGNORECASE)
 
