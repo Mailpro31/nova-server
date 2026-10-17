@@ -335,6 +335,27 @@ class FaithfulWordTests(unittest.TestCase):
         self.assertIsNotNone(main.rewrite_refusal(
             "il y a 2 boucles dans le programme", "Il y a des boucles dans le programme.", style))
 
+    def test_ok_alors_a_room_repair_and_a_plain_false_start(self):
+        # RTX, 20 refus et 11 « garde » sur 0e2ca32 (17/10).
+        style = "default_improve_transcriptions"
+        for said, wrote in (
+                ("OK, alors, formule E = mc².", "Formule : E = mc²."),
+                ("Important, hein, le rendu est lundi.", "Important : le rendu est lundi."),
+                ("Une suite converge si et seul, seulement si elle est de Cauchy.",
+                 "Une suite converge si et seulement si elle est de Cauchy.")):
+            with self.subTest(said=said):
+                self.assertIsNone(main.rewrite_refusal(said, wrote, style))
+        self.assertEqual(
+            main.resolve_simple_repairs("Le cours est déplacé en salle C222, non pardon à 223."),
+            "Le cours est déplacé en salle à 223.")
+        self.assertEqual(main.resolve_simple_repairs("Le TP est en salle C219, enfin A128."),
+                         "Le TP est en salle A128.")
+        # Un code suivi d'un « non » qui n'annonce aucun autre code reste.
+        self.assertEqual(main.resolve_simple_repairs("La salle C219, non, est fermée."),
+                         "La salle C219, non, est fermée.")
+        self.assertEqual(main.without_transcript_tags("La conservation de l'énergie.\n</transcript>"),
+                         "La conservation de l'énergie.")
+
     def test_a_formula_written_in_symbols_is_kept(self):
         # Banc v2 du RTX sur Gemini (17/10) : la formule bien écrite était refusée.
         style = "default_improve_transcriptions"
