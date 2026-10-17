@@ -187,7 +187,7 @@ class FaithfulWordTests(unittest.TestCase):
                 ("l'intégrale de x au carré vaut un tiers", "L'intégrale de x² vaut 1/3."),
                 ("les trois quarts du groupe", "Les 3/4 du groupe.")):
             with self.subTest(said=said):
-                self.assertIsNone(main.rewrite_refusal(said, wrote, style, resolved=wrote))
+                self.assertIsNone(main.rewrite_refusal(said, wrote, style))
         # Une autre fraction reste refusée.
         self.assertIsNotNone(main.rewrite_refusal(
             "l'intégrale vaut un tiers", "L'intégrale vaut 1/4.", style))
@@ -195,6 +195,23 @@ class FaithfulWordTests(unittest.TestCase):
         self.assertFalse(main.resolution_acceptable(
             "en salle B124, non, je me suis trompé des 315",
             "en salle B124 des 315"))
+
+    def test_units_false_starts_and_formula_minus_are_kept(self):
+        # RTX, 20 content-dropped de Gemini sur 707855b (17/10).
+        style = "default_improve_transcriptions"
+        for said, wrote in (
+                ("la viscosité vaut 1 mPa seconde", "La viscosité vaut 1 mPa·s."),
+                ("g vaut 9,83 mètres par seconde carré", "g vaut 9,83 m/s²."),
+                ("un cours d'aéro-aérodynamique", "Un cours d'aérodynamique."),
+                ("le TD, HUM, est annulé", "Le TD est annulé."),
+                ("formule delta égale b au carré moins 4ac", "Formule : Δ = b² - 4ac.")):
+            with self.subTest(said=said):
+                self.assertIsNone(main.rewrite_refusal(said, wrote, style))
+        # Un vrai mot perdu, un vrai sigle perdu restent refusés.
+        self.assertIsNotNone(main.rewrite_refusal(
+            "la viscosité vaut 1 mPa seconde", "La viscosité vaut 1 mPa.", style))
+        self.assertIsNotNone(main.rewrite_refusal(
+            "le TD est annulé", "Le cours est annulé.", style))
 
     def test_a_formula_written_in_symbols_is_kept(self):
         # Banc v2 du RTX sur Gemini (17/10) : la formule bien écrite était refusée.
@@ -204,11 +221,13 @@ class FaithfulWordTests(unittest.TestCase):
                 ("formule delta égale b au carré moins 4 a c", "Formule : Δ = b² - 4ac."),
                 ("R égale rho V L divisé par mu", "R = ρVL / μ."),
                 ("la tension U égale R I, comment dire, c'est la loi d'Ohm",
-                 "La tension U = RI, c'est la loi d'Ohm."),
-                ("le rendu est en salle 312, non, je me suis trompé, 315",
-                 "Le rendu est en salle 315.")):
+                 "La tension U = RI, c'est la loi d'Ohm.")):
             with self.subTest(said=said):
-                self.assertIsNone(main.rewrite_refusal(said, wrote, style, resolved=wrote))
+                self.assertIsNone(main.rewrite_refusal(said, wrote, style))
+        # La reprise, résolue par la passe dédiée.
+        self.assertIsNone(main.rewrite_refusal(
+            "le rendu est en salle 312, non, je me suis trompé, 315",
+            "Le rendu est en salle 315.", style, resolved="le rendu est en salle 315"))
         # Une autre formule reste refusée.
         self.assertIsNotNone(main.rewrite_refusal(
             "formule P égale rho GH", "Formule : P = mv².", style))
