@@ -178,6 +178,24 @@ class FaithfulWordTests(unittest.TestCase):
         self.assertIsNotNone(main.rewrite_refusal(
             "Le projet compte pour 50% de la note.", "Le projet compte pour 40% de la note.", style))
 
+    def test_a_formula_label_and_a_fraction_in_words_are_kept(self):
+        # RTX sur 707855b (17/10) : content-dropped et number-changed à tort.
+        style = "default_improve_transcriptions"
+        for said, wrote in (
+                ("Formule F égale MA.", "F = MA"),
+                ("Formule E égale mc au carré.", "E = mc²"),
+                ("l'intégrale de x au carré vaut un tiers", "L'intégrale de x² vaut 1/3."),
+                ("les trois quarts du groupe", "Les 3/4 du groupe.")):
+            with self.subTest(said=said):
+                self.assertIsNone(main.rewrite_refusal(said, wrote, style, resolved=wrote))
+        # Une autre fraction reste refusée.
+        self.assertIsNotNone(main.rewrite_refusal(
+            "l'intégrale vaut un tiers", "L'intégrale vaut 1/4.", style))
+        # « je me suis trompé » seul retiré n'est pas une reprise résolue.
+        self.assertFalse(main.resolution_acceptable(
+            "en salle B124, non, je me suis trompé des 315",
+            "en salle B124 des 315"))
+
     def test_a_formula_written_in_symbols_is_kept(self):
         # Banc v2 du RTX sur Gemini (17/10) : la formule bien écrite était refusée.
         style = "default_improve_transcriptions"
