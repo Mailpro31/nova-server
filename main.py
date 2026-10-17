@@ -12376,7 +12376,7 @@ def requested_language(value: str | None) -> str | None:
 # Un tic n'est retiré que détaché par la ponctuation : « le genre du nom » et
 # « voilà la formule » restent.
 _FILLER = (r"(?:euh+|heu+|hum+|hm+|bah|ben|du coup|en fait|genre|comment dire|voil[àa]|tu vois|"
-           r"bon|enfin bref|en gros|ok alors|ok)")
+           r"bon|enfin bref|en gros|ok,?\s+alors|ok|hein)")
 # « bah » n'a jamais de sens ; il restait au milieu d'une phrase (« Bernoulli
 # bah, s'applique ») : 252 dictées sur 3 000 du banc v2 (sondage du 17/10).
 _HESITATION_ANYWHERE = re.compile(r"\s*,?\s*\b(?:euh+|heu+|hum+|hm+|bah)\b\s*,?", re.IGNORECASE)
@@ -12513,6 +12513,8 @@ _SPOKEN_DIVIDE = re.compile(r"\bdivis[ée]e?s?\s+par\b", re.IGNORECASE)
 _FORMULA_MINUS = re.compile(r"(?<=\w)\s+[-−]\s+(?=\w)")
 # Un faux départ : « aéro-aérodynamique », « com-complexité » (RTX, 17/10).
 _FALSE_START = re.compile(r"\b(\w{2,})-\s?(?=\1\w)", re.IGNORECASE)
+# Sans tiret : « seul, seulement si », « comme comment dire » (RTX, 17/10).
+_FALSE_START_PLAIN = re.compile(r"\b(\w{4,})\s*,?\s+(?=\1\w)", re.IGNORECASE)
 
 
 def for_checks(text: str) -> str:
@@ -12520,6 +12522,7 @@ def for_checks(text: str) -> str:
     et les symboles d'une formule relus en mots."""
     out = as_dictated(_TICS_FOR_CHECKS.sub(" ", without_fillers(text or "")))
     out = _FALSE_START.sub("", out)
+    out = _FALSE_START_PLAIN.sub("", out)
     # « b² - 4ac » : le tiret n'est un « moins » que dans une formule.
     if "=" in out:
         out = _FORMULA_MINUS.sub(" moins ", out)
@@ -13062,7 +13065,9 @@ SELF_CORRECTION_EXAMPLES: tuple[tuple[str, str], ...] = (
 # Le passage s'ajoute au temps d'attente de l'élève : au-delà, on le laisse
 # tomber et le Style reçoit la dictée telle quelle. Un moteur bloqué ajoutait
 # sinon le délai complet d'une reformulation, 30 s, avant même le Style.
-SELF_CORRECTION_TIMEOUT_SECONDS = 4.0
+# 5 s : Gemini 2.5 Flash répond en 4,4 s au p95 (banc du 17/10) ; à 4 s, le
+# Style recevait parfois la dictée brute et recopiait les deux valeurs.
+SELF_CORRECTION_TIMEOUT_SECONDS = 5.0
 # Une reprise retire des mots ; elle n'en invente pas, et ne vide pas la dictée.
 RESOLUTION_MIN_KEPT = 0.4
 RESOLUTION_MAX_NEW_WORDS = 0.1
@@ -13199,6 +13204,16 @@ SIMPLE_REPAIRS = (
 )
 
 
+# Un code de salle repris : « en salle C222, non pardon à 223 », « C219,
+# enfin à 128 » (RTX, 17/10 : jamais résolu, ni par la règle ni par le modèle).
+# Un « non » seul suffit ici : un code n'a pas d'autre lecture.
+_ROOM_CODE_REPAIR = re.compile(
+    r"(?<!\w)[A-Z]\d{2,4}\b\s*[,.]?\s*(?:euh\s*,?\s*)?"
+    r"(?:non(?:\s*,?\s*(?:non|pardon|attends?))?|pardon|attends?|plut[oô]t|enfin)\s*,?\s*"
+    r"(?=(?:à\s+)?[A-Z]?\d{2,4}\b)")
+SIMPLE_REPAIRS = SIMPLE_REPAIRS + (_ROOM_CODE_REPAIR,)
+
+
 def resolve_simple_repairs(text: str) -> str:
     """« mardi, non attends, mercredi » → « mercredi » ; « 10 h, pardon, 11 h »
     → « 11 h ». Seule la valeur abandonnée et les mots de la reprise partent."""
@@ -13275,10 +13290,8 @@ def without_reasoning(answer: str) -> str:
 
 def without_transcript_tags(answer: str) -> str:
     """Le modele rend parfois la reformulation dans les balises recues."""
-    text = (answer or "").strip()
-    if text.lower().startswith("<transcript>") and text.lower().endswith("</transcript>"):
-        return text[len("<transcript>"):-len("</transcript>")].strip()
-    return text
+    # Une balise seule aussi : « …énergie.\n</transcript> » (RTX, 17/10).
+    return re.sub(r"</?transcript>", "", answer or "", flags=re.IGNORECASE).strip()
 
 
 def dictation_words(text: str) -> list[str]:
@@ -13826,7 +13839,9 @@ def acronym_dropped(dictated: str, text: str) -> bool:
     inventée.
     """
     written = {word.casefold() for word in re.findall(r"[\w]+", text or "")}
-    return any(acronym.casefold() not in written and acronym.casefold() not in HESITATIONS
+    # « OK, alors » retiré n'est pas un sigle perdu (RTX, 17/10 : 7 refus sur 20).
+    return any(acronym.casefold() not in written
+               and acronym.casefold() not in HESITATIONS | {"ok", "hein"}
                for acronym in ACRONYM.findall(dictated or ""))
 
 
