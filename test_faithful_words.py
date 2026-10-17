@@ -327,6 +327,14 @@ class FaithfulWordTests(unittest.TestCase):
             with self.subTest(wrong=wrote):
                 self.assertEqual(main.rewrite_refusal(said, wrote, style), "content-dropped")
 
+    def test_a_doubled_article_is_not_a_lost_number(self):
+        # RTX, 17/10 (0913, 0528) : number-lost sans nombre perdu.
+        style = "default_improve_transcriptions"
+        self.assertIsNone(main.rewrite_refusal(
+            "une une boucle for parcourt la liste", "Une boucle for parcourt la liste.", style))
+        self.assertIsNotNone(main.rewrite_refusal(
+            "il y a 2 boucles dans le programme", "Il y a des boucles dans le programme.", style))
+
     def test_a_formula_written_in_symbols_is_kept(self):
         # Banc v2 du RTX sur Gemini (17/10) : la formule bien écrite était refusée.
         style = "default_improve_transcriptions"
