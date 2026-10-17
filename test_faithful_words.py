@@ -152,6 +152,32 @@ class FaithfulWordTests(unittest.TestCase):
             "on se voit dans 2 heures", "On se voit dans 2 minutes.", style),
             "content-dropped")
 
+    def test_the_tics_of_speech_never_count_in_the_checks(self):
+        # Banc v2 du RTX (17/10, 45 refus tirés au hasard) : la moitié venaient
+        # des contrôles, pas du modèle.
+        style = "default_improve_transcriptions"
+        for said, wrote in (
+                # « coup » de « du coup » compté comme un mot perdu (0933).
+                ("Du coup, l'intégrale de 0 à 1 de x au carré vaut un tiers.",
+                 "L'intégrale de 0 à 1 de x au carré vaut un tiers."),
+                # « tu vois » retiré : ce n'est pas un changement de personne (0408).
+                ("le correcteur tu vois combine trois actions",
+                 "Le correcteur combine trois actions."),
+                # « tu vois » rendu « vous voyez » (0533).
+                ("le correcteur, tu vois, est stable", "Le correcteur, vous voyez, est stable."),
+                # Un pourcentage recopié tel quel (0447).
+                ("Le projet compte pour 50% de la note finale.",
+                 "Le projet compte pour 50% de la note finale.")):
+            with self.subTest(said=said):
+                self.assertIsNone(main.rewrite_refusal(said, wrote, style))
+        # Une vraie personne changée, un vrai mot perdu, un pourcentage changé : refusés.
+        self.assertEqual(main.rewrite_refusal(
+            "je dois rendre le rapport", "Vous devez rendre le rapport.", style), "person-changed")
+        self.assertEqual(main.rewrite_refusal(
+            "du coup dans un triangle rectangle", "Dans un rectangle.", style), "content-dropped")
+        self.assertIsNotNone(main.rewrite_refusal(
+            "Le projet compte pour 50% de la note.", "Le projet compte pour 40% de la note.", style))
+
     def test_the_rule_applies_to_faithful_styles_only(self):
         said = "Définition, l'hypoténuse est le côté opposé à l'angle droit dans un triangle rectangle."
         written = "Définition : l'hypoténuse est le côté opposé à l'angle droit dans un rectangle."

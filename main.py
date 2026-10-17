@@ -12414,6 +12414,20 @@ def without_fillers(text: str) -> str:
     return re.sub(r"[ \t]{2,}", " ", out).strip()
 
 
+# Les tics qu'un contrôle ne compte jamais, avec ou sans ponctuation. Banc
+# v2 du RTX (17/10, 45 refus tirés au hasard) : « coup » de « du coup » compté
+# comme un mot perdu, « tu vois » retiré ou rendu « vous voyez » compté comme
+# un changement de personne. Le texte rendu à l'élève n'est pas touché ici.
+_TICS_FOR_CHECKS = re.compile(
+    r"\b(?:du coup|en fait|en gros|enfin bref|tu vois|vous voyez|tu sais|vous savez)\b",
+    re.IGNORECASE)
+
+
+def for_checks(text: str) -> str:
+    """Le texte tel que les contrôles le comparent : sans les tics de l'oral."""
+    return _TICS_FOR_CHECKS.sub(" ", without_fillers(text or ""))
+
+
 def only_hesitations(text: str) -> bool:
     """Vrai si la transcription n'a que des hésitations ou de la ponctuation."""
     # Un nombre dicté est une dictée : « 1 + 1 = 2 », « 3,14 » ou « 42 » n'ont
@@ -13682,13 +13696,14 @@ def rewrite_refusal(
     # Ce qui était à l'élève devient à quelqu'un d'autre. Un Style
     # d'organisation peut tout réécrire : il y échappe.
     person_guarded = style_id in GUARDED_STYLE_IDS or style_id == COURSE_NOTES_STYLE
-    if person_guarded and person_changed(dictated, text):
+    if person_guarded and person_changed(for_checks(dictated), for_checks(text)):
         return "person-changed"
     # « Je dois rendre le rapport » réécrit « Vous devez rendre le rapport »
     # (test de Sash, 07/10). Les Styles qui corrigent ne changent pas qui parle ;
     # les notes de cours, qui peuvent tourner « je vais montrer » en « on
     # montre », n'y sont pas soumises.
-    if style_id in GUARDED_STYLE_IDS and pronouns_swapped(dictated, text):
+    if style_id in GUARDED_STYLE_IDS and pronouns_swapped(
+            for_checks(resolved or dictated), for_checks(text)):
         return "person-changed"
     # Du code LaTeX que l'élève n'a pas dicté : « la dérivée de x au carré »
     # devenue « \( x^2 \) », illisible dans Word (test de Sash, 07/10).
@@ -13735,22 +13750,26 @@ def rewrite_refusal(
     if source_language and written_language and source_language != written_language:
         return "language-changed"
     spoken = as_dictated(text)
-    ratio = kept_word_ratio(dictated, spoken)
+    ratio = kept_word_ratio(for_checks(dictated), for_checks(spoken))
     if ratio is not None and ratio < MIN_KEPT_WORDS:
         return "dictation-not-kept"
     compact = lambda value: re.sub(r"[ \u00a0\u202f]", "", value)  # noqa: E731
     if any(compact(number) not in compact(text) for number in GROUPED_NUMBER.findall(dictated)):
         return "number-format-changed"
     # Ce qu'une reprise abandonne (« le 12, enfin le 19 ») n'a pas à survivre.
-    reason = facts_refusal(FIRST_OF_MONTH.sub("1er ", kept), spoken, True)
+    # Les deux côtés relus de la même façon : « 50% » devenait « 50 pour cent »
+    # d'un seul côté, et « cent » un nombre nouveau (banc v2, cas 0447).
+    reason = facts_refusal(as_dictated(FIRST_OF_MONTH.sub("1er ", kept)), spoken, True)
     if reason:
         return reason
-    if style_id in FAITHFUL_STYLE_IDS and faithful_content_added(dictated, spoken):
+    if style_id in FAITHFUL_STYLE_IDS and faithful_content_added(
+            for_checks(dictated), for_checks(spoken)):
         return "content-added"
     # Ce qu'une reprise abandonne peut partir : la comparaison se fait avec la
     # dictée telle que le Style l'a reçue, reprises résolues.
     if style_id in FAITHFUL_STYLE_IDS and faithful_word_dropped(
-            FIRST_OF_MONTH.sub("1er ", resolve_simple_repairs(resolved or dictated)), spoken):
+            for_checks(FIRST_OF_MONTH.sub("1er ", resolve_simple_repairs(resolved or dictated))),
+            for_checks(spoken)):
         return "content-dropped"
     if style_id in FAITHFUL_STYLE_IDS and acronym_dropped(
             resolve_simple_repairs(resolved or dictated), text):
