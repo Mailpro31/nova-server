@@ -135,6 +135,11 @@ ENGINE_CONNECT_TIMEOUT_SECONDS = 2.0
 TEXT_ENGINE_DOWN_SECONDS = 10.0
 # Les pannes du moteur principal qui envoient la requête au moteur de secours.
 # Une requête invalide (trop longue, configuration fausse) échouerait aussi là.
+# Avec un secours, l'API externe n'a qu'un tiers du délai : Gemini répond en
+# 2,4 s au p95 (banc du 17/10), et l'élève ne doit pas attendre 30 s avant le
+# secours. Une API en panne ou trop lente est mise de côté une minute.
+TEXT_PRIMARY_TIMEOUT_SHARE = 1 / 3
+TEXT_FALLBACK_DOWN_SECONDS = 60.0
 TEXT_FALLBACK_CODES = frozenset({
     AI_RUNTIME_UNAVAILABLE, AI_RUNTIME_STARTING, AI_RUNTIME_BUSY,
     AI_RUNTIME_TIMEOUT, AI_RUNTIME_FAILED, AI_MODEL_NOT_READY,
@@ -992,12 +997,16 @@ class OrganizationAIRouter:
         await self.text_capacity.acquire()
         try:
             if not primary_down:
+                has_fallback = self.fallback_text_backend is not None
+                primary_timeout = timeout * TEXT_PRIMARY_TIMEOUT_SHARE if has_fallback else timeout
                 try:
-                    return await self._generate_with(self.text_backend, request, timeout)
+                    return await self._generate_with(self.text_backend, request, primary_timeout)
                 except AIRuntimeError as error:
-                    if error.code == AI_RUNTIME_UNAVAILABLE:
-                        self._text_down_until = time.monotonic() + TEXT_ENGINE_DOWN_SECONDS
-                    if self.fallback_text_backend is None or error.code not in TEXT_FALLBACK_CODES:
+                    if error.code == AI_RUNTIME_UNAVAILABLE or (
+                            has_fallback and error.code == AI_RUNTIME_TIMEOUT):
+                        self._text_down_until = time.monotonic() + (
+                            TEXT_FALLBACK_DOWN_SECONDS if has_fallback else TEXT_ENGINE_DOWN_SECONDS)
+                    if not has_fallback or error.code not in TEXT_FALLBACK_CODES:
                         raise
                     observability.log("ai.text_fallback", level="warning", reason=error.code)
             return await self._generate_with(self.fallback_text_backend, request, timeout)

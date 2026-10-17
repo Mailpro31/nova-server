@@ -465,12 +465,21 @@ class RouterTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_slow_external_engine_falls_back_to_the_local_one(self):
         local = FakeTextInferenceBackend()
-        router = self.router(text=FakeTextInferenceBackend(delay=5),
-                             fallback_text_backend=local)
-        with patch.dict(ai_runtime.TEXT_TIMEOUTS, {TaskType.REFORMULATION: 0.05}):
+        external = FakeTextInferenceBackend(delay=0.2)
+        router = self.router(text=external, fallback_text_backend=local)
+        # L'API n'a qu'un tiers du délai (0,1 s ici) : 0,2 s, c'est trop.
+        with patch.dict(ai_runtime.TEXT_TIMEOUTS, {TaskType.REFORMULATION: 0.3}):
             result = await router.generate(TaskType.REFORMULATION, "x", "y")
+            self.assertEqual(result.text, "fake:reformulation")
+            self.assertEqual(len(local.requests), 1)
+            # Trop lente, elle est mise de côté : la suivante va au secours.
+            await router.generate(TaskType.REFORMULATION, "x", "y")
+        self.assertEqual((len(external.requests), len(local.requests)), (1, 2))
+        # Sans secours, l'API garde tout son délai.
+        alone = self.router(text=FakeTextInferenceBackend(delay=0.2))
+        with patch.dict(ai_runtime.TEXT_TIMEOUTS, {TaskType.REFORMULATION: 0.3}):
+            result = await alone.generate(TaskType.REFORMULATION, "x", "y")
         self.assertEqual(result.text, "fake:reformulation")
-        self.assertEqual(len(local.requests), 1)
 
     async def test_unknown_or_cross_engine_tasks_fail_closed(self):
         router = self.router()
