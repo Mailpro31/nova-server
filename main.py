@@ -12689,10 +12689,12 @@ AUDIO_REFINE_MAX_TERMS = 300
 # (17/10) : un glossaire recopié en entier sur 600 dictées.
 AUDIO_REFINE_MAX_GROWTH = 2.0
 AUDIO_REFINE_MAX_NEW_TERMS = 3
-# Une relecture en panne ou trop lente est mise de côté une minute : les
-# dictées suivantes gardent Whisper sans attendre (comme le texte, #149).
-AUDIO_REFINE_DOWN_SECONDS = 60.0
+# Une relecture en panne ou trop lente 3 fois de suite est mise de côté 15 s :
+# les dictées suivantes gardent Whisper sans attendre (comme le texte).
+AUDIO_REFINE_DOWN_SECONDS = 15.0
+AUDIO_REFINE_FAILURES = 3
 _audio_refine_down_until = 0.0
+_audio_refine_failures = 0
 
 
 def refine_plausible(transcript: str, refined: str, vocabulary: list[str]) -> bool:
@@ -12714,16 +12716,21 @@ async def refined_transcription(audio: bytes, filename: str, transcript: str,
         return transcript
     terms = sorted({(replacement or term).strip() for term, replacement in vocabulary
                     if (replacement or term).strip()})[:AUDIO_REFINE_MAX_TERMS]
-    global _audio_refine_down_until
+    global _audio_refine_down_until, _audio_refine_failures
     if time.monotonic() < _audio_refine_down_until:
+        observability.log("transcription.refine_skipped", level="warning")
         return transcript
     try:
         refined = await AUDIO_REFINER.refine(audio, audio_format, transcript, terms)
     except AIRuntimeError as error:
         observability.log("transcription.refine_failed", level="warning", reason=error.code)
         if error.code in (AI_RUNTIME_UNAVAILABLE, AI_RUNTIME_TIMEOUT):
-            _audio_refine_down_until = time.monotonic() + AUDIO_REFINE_DOWN_SECONDS
+            _audio_refine_failures += 1
+            if _audio_refine_failures >= AUDIO_REFINE_FAILURES:
+                _audio_refine_down_until = time.monotonic() + AUDIO_REFINE_DOWN_SECONDS
+                _audio_refine_failures = 0
         return transcript
+    _audio_refine_failures = 0
     if not refine_plausible(transcript, refined, terms):
         observability.log("transcription.refine_rejected", level="warning")
         return transcript

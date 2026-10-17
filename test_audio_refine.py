@@ -95,10 +95,12 @@ class RefinedTranscriptionTests(unittest.TestCase):
                 calls.append(1)
                 raise AIRuntimeError(ai_runtime.AI_RUNTIME_UNAVAILABLE)
 
-        with patch.object(main, "_audio_refine_down_until", 0.0):
-            self.assertEqual(self.refined(Down()), "le nombre de à Maquin")
-            self.assertEqual(self.refined(Down()), "le nombre de à Maquin")
-        self.assertEqual(len(calls), 1)
+        with patch.object(main, "_audio_refine_down_until", 0.0), \
+                patch.object(main, "_audio_refine_failures", 0):
+            for _ in range(4):
+                self.assertEqual(self.refined(Down()), "le nombre de à Maquin")
+        # 3 échecs de suite, puis la relecture est mise de côté.
+        self.assertEqual(len(calls), 3)
 
     def test_a_copied_vocabulary_or_an_invented_text_is_rejected(self):
         # RTX, 17/10 : le glossaire recopié en entier à la place de la dictée.
