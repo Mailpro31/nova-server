@@ -152,7 +152,42 @@ class UnclearDecisionTests(unittest.TestCase):
             "Le transfert se fait sans échange de chaleur.")
         self.assertEqual(main.without_fillers("Je ne sais pas comment dire ça au prof."),
                          "Je ne sais pas comment dire ça au prof.")
+        # Sondage du 17/10 : les tics que without_fillers laissait sur le texte
+        # dit du banc v2 (1 070 dictées sur 3 000).
+        for said, clean in (
+                ("Un système est stable si ses pôles sont à partie enfin bref, réelle négative.",
+                 "Un système est stable si ses pôles sont à partie réelle négative."),
+                ("Le théorème de Bernoulli bah, s'applique le long d'une ligne de courant.",
+                 "Le théorème de Bernoulli s'applique le long d'une ligne de courant."),
+                ("ok alors, formule, F égale m a.", "Formule, F égale m a."),
+                ("Le satellite fait le tour de la Terre en 90 minutes, en gros.",
+                 "Le satellite fait le tour de la Terre en 90 minutes."),
+                ("La loi d'Ohm relie la tension, la genre, résistance et l'intensité.",
+                 "La loi d'Ohm relie la tension, la résistance et l'intensité."),
+                ("Les volets genre, comment dire, hypersustentateurs servent au décollage.",
+                 "Les volets hypersustentateurs servent au décollage."),
+                ("La série harmonique ne co- converge pas.", "La série harmonique ne converge pas."),
+                ("Le correcteur PID com- combine trois actions.", "Le correcteur PID combine trois actions."),
+                ("Les genre, volets hypersustentateurs servent au décollage.",
+                 "Les volets hypersustentateurs servent au décollage."),
+                ("Le cours est déplacé en salle C122, tu vois, euh non A119.",
+                 "Le cours est déplacé en salle C122 non A119."),
+                ("Un virage à 60 degrés dinc- d'inclinaison.", "Un virage à 60 degrés d'inclinaison."),
+                ("Le le théorème s'applique le le long d'une ligne et et à la fin.",
+                 "Le théorème s'applique le long d'une ligne et à la fin."),
+                ("Nous nous voyons demain.", "Nous nous voyons demain."),
+                ("Formule : R<sub>e</sub> = ρVL / μ.", "Formule : Re = ρVL / μ."),
+                ("L'aire vaut x<sup>2</sup>.", "L'aire vaut x²."),
+                ("Une boucle `for` parcourt la liste.", "Une boucle for parcourt la liste."),
+                ("Un **point clé** reste en gras.", "Un **point clé** reste en gras."),
+                ("Le contrat est formé dès lé- l'échange des consentements.",
+                 "Le contrat est formé dès l'échange des consentements.")):
+            with self.subTest(said=said):
+                self.assertEqual(main.without_fillers(said), clean)
         # Un mot qui porte du sens reste.
+        for kept in ("On achète en gros chez le fournisseur.", "Le genre, le nombre et la personne.",
+                     "OK est un mot anglais.", "Le Navier-Stokes est au programme."):
+            self.assertEqual(main.without_fillers(kept), kept)
         for kept in ("Le genre du nom est féminin.", "Voilà la formule de Bernoulli.",
                      "Tu vois la courbe de portance.", "Le nom, son genre, son nombre.",
                      "C'est un bon résultat.", "En fait de cours, il s'agit d'un TD."):
