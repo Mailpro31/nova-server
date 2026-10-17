@@ -454,9 +454,12 @@ class RouterTests(unittest.IsolatedAsyncioTestCase):
         result = await router.generate(TaskType.REFORMULATION, "x", "y")
         self.assertEqual(result.text, "fake:reformulation")
         self.assertEqual((len(external.requests), len(local.requests)), (1, 1))
-        # L'API marquée en panne n'est plus appelée pendant le délai.
+        # Un échec isolé ne met pas l'API de côté : il en faut 3 de suite.
         await router.generate(TaskType.REFORMULATION, "x", "y")
-        self.assertEqual((len(external.requests), len(local.requests)), (1, 2))
+        await router.generate(TaskType.REFORMULATION, "x", "y")
+        self.assertEqual((len(external.requests), len(local.requests)), (3, 3))
+        await router.generate(TaskType.REFORMULATION, "x", "y")
+        self.assertEqual((len(external.requests), len(local.requests)), (3, 4))
         # Sans secours, la panne remonte comme avant.
         with self.assertRaises(AIRuntimeError) as raised:
             await self.router(text=FakeTextInferenceBackend(status=EngineStatus.UNAVAILABLE)
@@ -472,9 +475,10 @@ class RouterTests(unittest.IsolatedAsyncioTestCase):
             result = await router.generate(TaskType.REFORMULATION, "x", "y")
             self.assertEqual(result.text, "fake:reformulation")
             self.assertEqual(len(local.requests), 1)
-            # Trop lente, elle est mise de côté : la suivante va au secours.
-            await router.generate(TaskType.REFORMULATION, "x", "y")
-        self.assertEqual((len(external.requests), len(local.requests)), (1, 2))
+            # Trop lente 3 fois de suite, elle est mise de côté.
+            for _ in range(3):
+                await router.generate(TaskType.REFORMULATION, "x", "y")
+        self.assertEqual((len(external.requests), len(local.requests)), (3, 4))
         # Sans secours, l'API garde tout son délai.
         alone = self.router(text=FakeTextInferenceBackend(delay=0.2))
         with patch.dict(ai_runtime.TEXT_TIMEOUTS, {TaskType.REFORMULATION: 0.3}):

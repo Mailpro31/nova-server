@@ -139,7 +139,11 @@ TEXT_ENGINE_DOWN_SECONDS = 10.0
 # 2,4 s au p95 (banc du 17/10), et l'élève ne doit pas attendre 30 s avant le
 # secours. Une API en panne ou trop lente est mise de côté une minute.
 TEXT_PRIMARY_TIMEOUT_SHARE = 1 / 3
-TEXT_FALLBACK_DOWN_SECONDS = 60.0
+# Mise de côté après 3 échecs de suite, pour 15 s. Après un seul échec, une
+# minute entière partait au local pour toute la classe (RTX, 17/10 : 367 et
+# 726 appels au Qwen 1.5B, alors qu'OpenRouter répondait juste après).
+TEXT_FALLBACK_DOWN_SECONDS = 15.0
+TEXT_FALLBACK_FAILURES = 3
 TEXT_FALLBACK_CODES = frozenset({
     AI_RUNTIME_UNAVAILABLE, AI_RUNTIME_STARTING, AI_RUNTIME_BUSY,
     AI_RUNTIME_TIMEOUT, AI_RUNTIME_FAILED, AI_MODEL_NOT_READY,
@@ -881,6 +885,7 @@ class OrganizationAIRouter:
         # une panne de l'API ne coûte pas la mise au propre (demande de Sash, 17/10).
         self.fallback_text_backend = fallback_text_backend
         self._text_down_until = 0.0
+        self._text_failures = 0
         self.speech_backend = speech_backend
         # Les valeurs de `custom`, si et seulement si le deploiement les a
         # declarees. Elles ne sont pas modifiables par une API : ce sont des
@@ -1000,15 +1005,25 @@ class OrganizationAIRouter:
                 has_fallback = self.fallback_text_backend is not None
                 primary_timeout = timeout * TEXT_PRIMARY_TIMEOUT_SHARE if has_fallback else timeout
                 try:
-                    return await self._generate_with(self.text_backend, request, primary_timeout)
+                    result = await self._generate_with(self.text_backend, request, primary_timeout)
+                    self._text_failures = 0
+                    return result
                 except AIRuntimeError as error:
-                    if error.code == AI_RUNTIME_UNAVAILABLE or (
-                            has_fallback and error.code == AI_RUNTIME_TIMEOUT):
-                        self._text_down_until = time.monotonic() + (
-                            TEXT_FALLBACK_DOWN_SECONDS if has_fallback else TEXT_ENGINE_DOWN_SECONDS)
-                    if not has_fallback or error.code not in TEXT_FALLBACK_CODES:
+                    if not has_fallback:
+                        if error.code == AI_RUNTIME_UNAVAILABLE:
+                            self._text_down_until = time.monotonic() + TEXT_ENGINE_DOWN_SECONDS
+                        raise
+                    if error.code in (AI_RUNTIME_UNAVAILABLE, AI_RUNTIME_TIMEOUT):
+                        self._text_failures += 1
+                        if self._text_failures >= TEXT_FALLBACK_FAILURES:
+                            self._text_down_until = time.monotonic() + TEXT_FALLBACK_DOWN_SECONDS
+                            self._text_failures = 0
+                    if error.code not in TEXT_FALLBACK_CODES:
                         raise
                     observability.log("ai.text_fallback", level="warning", reason=error.code)
+            else:
+                # Chaque requête servie par le secours se compte (RTX, 17/10).
+                observability.log("ai.text_fallback", level="warning", reason="primary_set_aside")
             return await self._generate_with(self.fallback_text_backend, request, timeout)
         finally:
             await self.text_capacity.release()
