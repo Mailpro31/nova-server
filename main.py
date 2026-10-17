@@ -13493,12 +13493,13 @@ SPOKEN_SYMBOLS = (
     (re.compile(r"(?<!\w)n[°º](?=\s?\d)", re.IGNORECASE), " numéro "),
     (re.compile(r"\s?%"), " pour cent "),
     (re.compile(r"\s?€"), " euros "),
-    # Une fraction dite en mots : « un tiers » écrit « 1/3 » (RTX, 17/10).
-    (re.compile(r"(?<![\w/,.])1/2(?![\w/])"), " un demi "),
-    (re.compile(r"(?<![\w/,.])1/3(?![\w/])"), " un tiers "),
-    (re.compile(r"(?<![\w/,.])1/4(?![\w/])"), " un quart "),
-    (re.compile(r"(?<![\w/,.])2/3(?![\w/])"), " deux tiers "),
-    (re.compile(r"(?<![\w/,.])3/4(?![\w/])"), " trois quarts "),
+    # Une fraction dite en mots, relue en chiffres des deux côtés : « un tiers »
+    # écrit « 1/3 » (RTX, 17/10), « 1/4 » reste refusé.
+    (re.compile(r"\bun demi\b", re.IGNORECASE), " 1/2 "),
+    (re.compile(r"\bun tiers\b", re.IGNORECASE), " 1/3 "),
+    (re.compile(r"\bun quart\b", re.IGNORECASE), " 1/4 "),
+    (re.compile(r"\bdeux tiers\b", re.IGNORECASE), " 2/3 "),
+    (re.compile(r"\btrois quarts\b", re.IGNORECASE), " 3/4 "),
 )
 # « le premier novembre » écrit « le 1er novembre » : le même jour.
 FIRST_OF_MONTH = re.compile(rf"\bpremi(?:er|ère|ere)\s+(?=(?:{_MONTHS})\b)", re.IGNORECASE)
