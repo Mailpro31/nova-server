@@ -11751,8 +11751,12 @@ PERSON_PRONOUNS = {
 def _person_pronouns(value: str) -> Counter:
     folded = fold_accents((value or "").lower()).replace("’", "'")
     folded = re.sub(r"quelqu\s*'\s*un", "quelquun", folded)
-    return Counter(PERSON_PRONOUNS[word] for word in re.findall(r"[a-z]+", folded)
-                   if word in PERSON_PRONOUNS)
+    # « j' », « m' », « t' » : avec leur apostrophe seulement. Le « T » de
+    # « PV = nRT » passait pour « te » (sondage du 17/10).
+    return Counter(PERSON_PRONOUNS[word.rstrip("'")]
+                   for word in re.findall(r"[a-z]+'?", folded)
+                   if word.rstrip("'") in PERSON_PRONOUNS
+                   and word not in ("j", "m", "t"))
 
 
 def pronouns_swapped(text: str, answer: str) -> bool:
@@ -12450,6 +12454,8 @@ _FORMULA_SYMBOLS = (("±", " plus ou moins "), ("=", " égale "), ("²", " au ca
                     ("³", " au cube "), ("√", " racine "), ("Δ", " delta "), ("ρ", " rho "),
                     ("μ", " mu "), ("π", " pi "), ("σ", " sigma "), ("×", " fois "))
 _FORMULA_DIVIDE = re.compile(r"(?<=\w)\s*/\s*(?=\w)")
+# « F sur S » et « F divisé par S » : la même division, des deux côtés.
+_SPOKEN_DIVIDE = re.compile(r"\bdivis[ée]e?s?\s+par\b", re.IGNORECASE)
 _FORMULA_MINUS = re.compile(r"(?<=\w)\s+[-−]\s+(?=\w)")
 # Un faux départ : « aéro-aérodynamique », « com-complexité » (RTX, 17/10).
 _FALSE_START = re.compile(r"\b(\w{2,})-\s?(?=\1\w)", re.IGNORECASE)
@@ -12465,7 +12471,7 @@ def for_checks(text: str) -> str:
         out = _FORMULA_MINUS.sub(" moins ", out)
     for symbol, words in _FORMULA_SYMBOLS:
         out = out.replace(symbol, words)
-    return _FORMULA_DIVIDE.sub(" divisé par ", out)
+    return _SPOKEN_DIVIDE.sub("sur", _FORMULA_DIVIDE.sub(" sur ", out))
 
 
 def only_hesitations(text: str) -> bool:
@@ -13490,6 +13496,12 @@ FAITHFUL_UNIT_SYMBOLS = {
     "kilometre": "km", "kilometres": "km", "centimetre": "cm", "centimetres": "cm",
     "millimetre": "mm", "millimetres": "mm", "gramme": "g", "grammes": "g",
     "kilogramme": "kg", "kilogrammes": "kg", "litre": "l", "litres": "l",
+    "newton": "n", "newtons": "n", "kilonewton": "kn", "kilonewtons": "kn",
+    "pascal": "pa", "pascals": "pa", "kilopascal": "kpa", "kilopascals": "kpa",
+    "megapascal": "mpa", "megapascals": "mpa", "gigapascal": "gpa", "gigapascals": "gpa",
+    "watt": "w", "watts": "w", "kilowatt": "kw", "kilowatts": "kw",
+    "joule": "j", "joules": "j", "kilojoule": "kj", "kilojoules": "kj",
+    "tour": "tr", "tours": "tr", "hertz": "hz", "volt": "v", "volts": "v",
 }
 # Les symboles qu'un Style écrit pour des mots dictés : « 20 % », « 15 € »,
 # « n° 3 », « 340 m/s ». Les contrôles des mots les lisent comme dits : sans
@@ -13501,6 +13513,17 @@ SPOKEN_SYMBOLS = (
     (re.compile(r"(?<!\w)n[°º](?=\s?\d)", re.IGNORECASE), " numéro "),
     (re.compile(r"\s?%"), " pour cent "),
     (re.compile(r"\s?€"), " euros "),
+    # Une unité composée après un nombre : « 2400 tr/min », « 5 L/s ».
+    (re.compile(r"(?<=\d)\s?([^\W\d_]{1,3})/([^\W\d_]{1,3})(?![\w/])"), r" \1 par \2 "),
+    (re.compile(r"\s?°C\b"), " degrés Celsius "),
+    (re.compile(r"\s?°"), " degrés "),
+    # « -2 » se dit « moins 2 » ; « 2020-2021 » n'est pas concerné.
+    (re.compile(r"(?<![\w)])[-−]\s?(?=\d)"), " moins "),
+    (re.compile(r"½"), " 1/2 "),
+    (re.compile(r"⅓"), " 1/3 "),
+    (re.compile(r"¼"), " 1/4 "),
+    (re.compile(r"⅔"), " 2/3 "),
+    (re.compile(r"¾"), " 3/4 "),
     # Une fraction dite en mots, relue en chiffres des deux côtés : « un tiers »
     # écrit « 1/3 » (RTX, 17/10), « 1/4 » reste refusé.
     (re.compile(r"\bun demi\b", re.IGNORECASE), " 1/2 "),
@@ -13554,7 +13577,7 @@ def faithful_word_dropped(dictated: str, text: str) -> bool:
     ignored = (COURSE_FILLER_WORDS | COURSE_NUMBER_WORDS | FAITHFUL_SYMBOL_WORDS
                | FAITHFUL_AUXILIARY_WORDS)
     symbols = {symbol.casefold() for symbol in re.findall(
-        r"(?:\d\s?|·)([^\W\d_]{1,3})(?![^\W\d_])", text or "")}
+        r"(?:\d\s?|·|\bpar\s)([^\W\d_]{1,3})(?![^\W\d_])", text or "")}
     ignored |= {word for word, symbol in FAITHFUL_UNIT_SYMBOLS.items() if symbol in symbols}
     # « Formule F égale MA » écrit « F = MA » : le « = » dit déjà la formule.
     if "egale" in written:
@@ -13655,14 +13678,17 @@ def course_notes_refusal(dictated: str, text: str) -> str | None:
         return "language-changed"
     # Un nombre que l'eleve n'a pas dit — une date de partiel decalee — est
     # l'erreur la plus couteuse : il la revisera.
-    reason = facts_refusal(dictated, text, True)
+    # Les symboles relus en mots, des deux côtés, comme pour les autres
+    # Styles : « 2 pour cent » écrit « 2 % » était refusé (sondage du 17/10).
+    reason = facts_refusal(as_dictated(FIRST_OF_MONTH.sub("1er ", dictated)), as_dictated(text), True)
     if reason:
         return reason
-    written_words = course_words(text) - COURSE_STRUCTURE_WORDS
-    dictated_words = course_words(dictated)
+    spoken = for_checks(text)
+    written_words = course_words(spoken) - COURSE_STRUCTURE_WORDS
+    dictated_words = course_words(for_checks(dictated))
     if written_words and len(written_words - dictated_words) / len(written_words) > COURSE_MAX_ADDED_WORDS:
         return "content-added"
-    if dictated_words and len(dictated_words & course_words(text)) / len(dictated_words) < COURSE_MIN_KEPT_WORDS:
+    if dictated_words and len(dictated_words & course_words(spoken)) / len(dictated_words) < COURSE_MIN_KEPT_WORDS:
         return "dictation-not-kept"
     if correction_lost(dictated, text):
         return "correction-lost"
