@@ -13574,6 +13574,47 @@ FAITHFUL_AUXILIARY_WORDS = frozenset((
 FAITHFUL_SPELLING_SIMILARITY = 0.75
 
 
+# Une reprise après une pause : le mot abandonné, puis l'annonce, puis la
+# correction (« mardi, pardon, de jeudi », « B12, non, B14 »).
+_REPAIRED_WORD = re.compile(
+    r"\S+[,.;]\s*(?:(?:euh|non|attends?|pardon|plut[oô]t|oublie|je veux dire|oups|je corrige|"
+    r"je rectifie|je me suis tromp[ée]e?|je me trompe)\b[\s,.;]*)+(?=\w)",
+    re.IGNORECASE)
+
+
+def without_repaired_words(text: str) -> str:
+    """La dictée sans le mot qu'une reprise abandonne, ni l'annonce.
+
+    Quand la passe des reprises échoue, le Style reçoit la dictée brute ; s'il
+    résout lui-même la reprise, « mardi » ou « B12 » partis ne sont pas des mots
+    perdus (RTX, 17/10, cas 0800). La négation et la correction gardent leurs
+    propres contrôles.
+    """
+    return _REPAIRED_WORD.sub("", text or "")
+
+
+# Le « non » qui annonce une reprise, après une pause et le mot abandonné.
+_REPAIR_NON = re.compile(r"(\w+)[,.;]\s*(?:euh\s*,?\s*)?non\b[\s,.;]*(?=\w)", re.IGNORECASE)
+
+
+def without_resolved_repair_non(dictated: str, text: str) -> str:
+    """La dictée sans le « non » d'une reprise que la sortie a résolue.
+
+    Résolue : le mot abandonné n'y est plus. « 14 heures, non à temps, à 15
+    heures » recopié sans son « non » garde « heures » : refusé, comme avant.
+    Un mot de négation abandonné (« pas, non, ») ne libère rien.
+    """
+    written = set(_resolution_words(text))
+
+    def resolved(match: re.Match) -> str:
+        abandoned = fold_accents(match.group(1).lower())
+        if abandoned in NEGATION_WORDS or abandoned in written:
+            return match.group(0)
+        return match.group(1) + " "
+
+    return _REPAIR_NON.sub(resolved, dictated or "")
+
+
 def faithful_word_dropped(dictated: str, text: str) -> bool:
     """Un Style fidèle a-t-il fait disparaître un mot de contenu dicté ?
 
@@ -13879,15 +13920,14 @@ def rewrite_refusal(
         return "content-added"
     # Ce qu'une reprise abandonne peut partir : la comparaison se fait avec la
     # dictée telle que le Style l'a reçue, reprises résolues.
+    repaired = without_repaired_words(resolve_simple_repairs(resolved or dictated))
     if style_id in FAITHFUL_STYLE_IDS and faithful_word_dropped(
-            for_checks(FIRST_OF_MONTH.sub("1er ", resolve_simple_repairs(resolved or dictated))),
-            for_checks(spoken)):
+            for_checks(FIRST_OF_MONTH.sub("1er ", repaired)), for_checks(spoken)):
         return "content-dropped"
-    if style_id in FAITHFUL_STYLE_IDS and acronym_dropped(
-            resolve_simple_repairs(resolved or dictated), for_checks(text)):
+    if style_id in FAITHFUL_STYLE_IDS and acronym_dropped(repaired, for_checks(text)):
         return "content-dropped"
     if style_id in FAITHFUL_STYLE_IDS and negation_dropped(
-            resolve_simple_repairs(resolved or dictated), text):
+            without_resolved_repair_non(resolve_simple_repairs(resolved or dictated), text), text):
         return "negation-dropped"
     return None
 

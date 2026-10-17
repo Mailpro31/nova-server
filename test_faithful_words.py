@@ -267,6 +267,29 @@ class FaithfulWordTests(unittest.TestCase):
                 with self.subTest(style=style, said=said):
                     self.assertIsNone(main.rewrite_refusal(said, wrote, style))
 
+    def test_a_repair_resolved_by_the_style_is_kept(self):
+        # La passe des reprises a échoué : le Style reçoit la dictée brute et
+        # résout la reprise lui-même (RTX, 17/10, cas 0800).
+        style = "default_improve_transcriptions"
+        for said, wrote in (
+                ("Le TD de mardi, pardon, de jeudi est annulé.", "Le TD de jeudi est annulé."),
+                ("Le cours est en salle B12, non, B14.", "Le cours est en salle B14."),
+                ("Le devoir est pour lundi, euh non, mardi.", "Le devoir est pour mardi."),
+                ("Envoie le rapport à Paul, oups, à Pierre.", "Envoie le rapport à Pierre."),
+                ("La réunion est mercredi, non, jeudi matin.", "La réunion est jeudi matin."),
+                ("Le rendu est en salle 312, non, je me suis trompé, 315.", "Le rendu est en salle 315.")):
+            with self.subTest(said=said):
+                self.assertIsNone(main.rewrite_refusal(said, wrote, style, resolved=said))
+        # Un autre mot perdu reste refusé, et la négation aussi.
+        self.assertEqual(main.rewrite_refusal(
+            "Le TD de mardi, pardon, de jeudi est annulé.", "Le cours de jeudi est annulé.", style,
+            resolved="Le TD de mardi, pardon, de jeudi est annulé."), "content-dropped")
+        self.assertIsNotNone(main.rewrite_refusal(
+            "Le moteur ne tourne pas, non, il cale.", "Le moteur tourne, il cale.", style))
+        # « non » sans pause n'est pas une reprise : « fonction non linéaire ».
+        self.assertEqual(main.without_repaired_words("une fonction non linéaire"),
+                         "une fonction non linéaire")
+
     def test_a_formula_written_in_symbols_is_kept(self):
         # Banc v2 du RTX sur Gemini (17/10) : la formule bien écrite était refusée.
         style = "default_improve_transcriptions"
