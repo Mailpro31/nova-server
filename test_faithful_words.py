@@ -248,6 +248,25 @@ class FaithfulWordTests(unittest.TestCase):
         self.assertIsNotNone(main.rewrite_refusal(
             "Je t'envoie le rapport.", "Je vous envoie le rapport.", "default_improve_transcriptions"))
 
+    def test_a_unit_changed_is_refused(self):
+        # Contre-épreuve du 17/10 : une unité fausse passait dans les notes de cours.
+        for style in ("default_improve_transcriptions", "nova_style_course_notes"):
+            for said, wrote in (
+                    ("La puissance est de 3 kilowatts.", "La puissance est de 3 kN."),
+                    ("La poussée est de 120 kilonewtons.", "La poussée est de 120 kW."),
+                    ("L'hélice tourne à 2400 tours par minute.", "L'hélice tourne à 2400 tr/s."),
+                    ("Le module de Young vaut 70 gigapascals.", "Le module de Young vaut 70 MPa.")):
+                with self.subTest(style=style, said=said):
+                    self.assertEqual(main.rewrite_refusal(said, wrote, style), "unit-changed")
+            # Une unité dite, ou un mot après un nombre, passent.
+            for said, wrote in (
+                    ("La puissance est de 3 kilowatts.", "La puissance est de 3 kW."),
+                    ("On a 3 jours pour rendre le projet.", "On a 3 j pour rendre le projet."),
+                    ("Le TD a lieu le 2 à l'amphi.", "Le TD a lieu le 2 à l'amphi."),
+                    ("La corde de l'aile mesure 3 mètres.", "La corde de l'aile mesure 3 m.")):
+                with self.subTest(style=style, said=said):
+                    self.assertIsNone(main.rewrite_refusal(said, wrote, style))
+
     def test_a_formula_written_in_symbols_is_kept(self):
         # Banc v2 du RTX sur Gemini (17/10) : la formule bien écrite était refusée.
         style = "default_improve_transcriptions"

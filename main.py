@@ -13502,7 +13502,28 @@ FAITHFUL_UNIT_SYMBOLS = {
     "watt": "w", "watts": "w", "kilowatt": "kw", "kilowatts": "kw",
     "joule": "j", "joules": "j", "kilojoule": "kj", "kilojoules": "kj",
     "tour": "tr", "tours": "tr", "hertz": "hz", "volt": "v", "volts": "v",
+    "jour": "j", "jours": "j",
 }
+UNIT_SYMBOLS = frozenset(FAITHFUL_UNIT_SYMBOLS.values())
+# Un symbole d'unité écrit après un nombre (« 3 kN »), et la seconde unité
+# d'une unité composée (« 2400 tr/min ») ; pas le « S » de « F/S ».
+_UNIT_AFTER_NUMBER = re.compile(r"\d\s?([^\W\d_]{1,3})(?![\w'’])")
+_UNIT_AFTER_UNIT = re.compile(r"\d\s?[^\W\d_]{1,3}[/·]([^\W\d_]{1,3})(?![\w'’])")
+
+
+def unit_changed(dictated: str, text: str) -> bool:
+    """Une unité écrite que l'élève n'a pas dite : « 3 kilowatts » → « 3 kN ».
+
+    Contre-épreuve du 17/10 : les notes de cours l'acceptaient. Un élève
+    révise ce qu'il lit ; une unité fausse y est une erreur de fond.
+    """
+    said = {FAITHFUL_UNIT_SYMBOLS[word] for word in dictation_words(fold_accents(dictated.lower()))
+            if word in FAITHFUL_UNIT_SYMBOLS}
+    units = lambda value: {symbol.casefold() for pattern in (_UNIT_AFTER_NUMBER, _UNIT_AFTER_UNIT)  # noqa: E731
+                           for symbol in pattern.findall(value)}
+    said |= units(dictated)
+    written = units(text)
+    return any(symbol in UNIT_SYMBOLS and symbol not in said for symbol in written)
 # Les symboles qu'un Style écrit pour des mots dictés : « 20 % », « 15 € »,
 # « n° 3 », « 340 m/s ». Les contrôles des mots les lisent comme dits : sans
 # cela, la mise au propre attendue d'une dictée était refusée.
@@ -13683,6 +13704,8 @@ def course_notes_refusal(dictated: str, text: str) -> str | None:
     reason = facts_refusal(as_dictated(FIRST_OF_MONTH.sub("1er ", dictated)), as_dictated(text), True)
     if reason:
         return reason
+    if unit_changed(dictated, text):
+        return "unit-changed"
     spoken = for_checks(text)
     written_words = course_words(spoken) - COURSE_STRUCTURE_WORDS
     dictated_words = course_words(for_checks(dictated))
@@ -13849,6 +13872,8 @@ def rewrite_refusal(
     reason = facts_refusal(as_dictated(FIRST_OF_MONTH.sub("1er ", kept)), spoken, True)
     if reason:
         return reason
+    if unit_changed(dictated, text):
+        return "unit-changed"
     if style_id in FAITHFUL_STYLE_IDS and faithful_content_added(
             for_checks(dictated), for_checks(spoken)):
         return "content-added"
