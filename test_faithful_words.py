@@ -356,6 +356,22 @@ class FaithfulWordTests(unittest.TestCase):
         self.assertEqual(main.without_transcript_tags("La conservation de l'énergie.\n</transcript>"),
                          "La conservation de l'énergie.")
 
+    def test_salle_realiste_cases(self):
+        # RTX, bout en bout 4bf3993 (17/10).
+        style = "default_improve_transcriptions"
+        said = "Le TP1 est à rendre avant le lundi 24 mars, ou plutôt le lundi 26 décembre, pardon."
+        self.assertIsNone(main.rewrite_refusal(
+            said, "Le TP1 est à rendre avant le lundi 26 décembre.", style))
+        self.assertEqual(main.resolve_simple_repairs("Le cours est en salle B 305 non pardon 305."),
+                         "Le cours est en salle 305.")
+        self.assertIsNone(main.rewrite_refusal(
+            "le projet compte pour 20 pourcent de la note finale",
+            "Le projet compte pour 20 % de la note finale.", style))
+        # Un autre pourcentage reste refusé.
+        self.assertIsNotNone(main.rewrite_refusal(
+            "le projet compte pour 20 pourcent de la note finale",
+            "Le projet compte pour 25 % de la note finale.", style))
+
     def test_a_formula_written_in_symbols_is_kept(self):
         # Banc v2 du RTX sur Gemini (17/10) : la formule bien écrite était refusée.
         style = "default_improve_transcriptions"
