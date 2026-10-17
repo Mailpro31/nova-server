@@ -213,6 +213,41 @@ class FaithfulWordTests(unittest.TestCase):
         self.assertIsNotNone(main.rewrite_refusal(
             "le TD est annulé", "Le cours est annulé.", style))
 
+    def test_ideal_notes_with_symbols_are_kept(self):
+        # Sondage du 17/10 : des mises au propre idéales, refusées à tort.
+        for style in ("default_improve_transcriptions", "nova_style_course_notes"):
+            for said, wrote in (
+                    ("La loi des gaz parfaits s'écrit P V égale n R T.",
+                     "La loi des gaz parfaits s'écrit PV = nRT."),
+                    ("Le profil a une cambrure maximale de 2 pour cent.",
+                     "Le profil a une cambrure maximale de 2 %."),
+                    ("Une aile de 30 mètres carrés à 70 mètres par seconde.",
+                     "Une aile de 30 m² à 70 m/s."),
+                    ("Le réacteur fournit une poussée de 120 kilonewtons.",
+                     "Le réacteur fournit une poussée de 120 kN."),
+                    ("Le module de Young vaut environ 70 gigapascals.",
+                     "Le module de Young vaut environ 70 GPa."),
+                    ("L'hélice tourne à 2400 tours par minute.", "L'hélice tourne à 2400 tr/min."),
+                    ("La valeur propre associée vaut moins 2.", "La valeur propre associée vaut -2."),
+                    ("La température est de moins 50 degrés Celsius en altitude.",
+                     "La température est de -50 °C en altitude."),
+                    ("Formule, l'énergie cinétique égale un demi m v au carré.",
+                     "Formule : l'énergie cinétique = ½mv²."),
+                    ("Formule, sigma égale F sur S.", "Formule : σ = F/S."),
+                    ("Rendez-vous le premier décembre à 9 heures.", "Rendez-vous le 1er décembre à 9 h.")):
+                with self.subTest(style=style, said=said):
+                    self.assertIsNone(main.rewrite_refusal(said, wrote, style))
+            # Un nombre ou une personne changés restent refusés.
+            self.assertIsNotNone(main.rewrite_refusal(
+                "Le profil a une cambrure maximale de 2 pour cent.",
+                "Le profil a une cambrure maximale de 3 %.", style))
+            self.assertIsNotNone(main.rewrite_refusal(
+                "La valeur propre associée vaut moins 2.", "La valeur propre associée vaut -3.", style))
+            self.assertIsNotNone(main.rewrite_refusal(
+                "J'ai rendu mon rapport.", "Tu as rendu ton rapport.", style))
+        self.assertIsNotNone(main.rewrite_refusal(
+            "Je t'envoie le rapport.", "Je vous envoie le rapport.", "default_improve_transcriptions"))
+
     def test_a_formula_written_in_symbols_is_kept(self):
         # Banc v2 du RTX sur Gemini (17/10) : la formule bien écrite était refusée.
         style = "default_improve_transcriptions"
