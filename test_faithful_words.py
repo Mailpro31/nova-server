@@ -303,6 +303,30 @@ class FaithfulWordTests(unittest.TestCase):
             "la marge couvre les heures",
             "La marge sur coûts variables couvre les charges fixes."))
 
+    def test_a_misheard_passage_corrected_by_ear_is_kept(self):
+        # Décision de Sash (17/10) : les corrections justes de la transcription
+        # passent (RTX, catégorie B des content-dropped).
+        style = "default_improve_transcriptions"
+        for said, wrote in (
+                ("Une fonction récursive doit avoir une condition de la rite.",
+                 "Une fonction récursive doit avoir une condition d'arrêt."),
+                ("Le module Dune de l'aluminium vaut 70 gigapascals.",
+                 "Le module de Young de l'aluminium vaut 70 gigapascals."),
+                ("On utilise un diagramme de Kant pour le projet.",
+                 "On utilise un diagramme de Gantt pour le projet.")):
+            with self.subTest(said=said):
+                self.assertIsNone(main.rewrite_refusal(said, wrote, style))
+        # Un vrai mot remplacé par un autre, ou un mot supprimé, restent refusés.
+        for said, wrote in (
+                ("Dans un triangle rectangle, le carré de l'hypoténuse.",
+                 "Dans un carré rectangle, le carré de l'hypoténuse."),
+                ("Le cours de mathématiques est déplacé en salle 223.",
+                 "Le cours de mathématiques est en salle 223."),
+                ("Dans un triangle rectangle, le carré de l'hypoténuse.",
+                 "Dans un rectangle, le carré de l'hypoténuse.")):
+            with self.subTest(wrong=wrote):
+                self.assertEqual(main.rewrite_refusal(said, wrote, style), "content-dropped")
+
     def test_a_formula_written_in_symbols_is_kept(self):
         # Banc v2 du RTX sur Gemini (17/10) : la formule bien écrite était refusée.
         style = "default_improve_transcriptions"
