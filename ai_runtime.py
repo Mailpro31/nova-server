@@ -1308,10 +1308,16 @@ AUDIO_REFINE_INSTRUCTION = (
     "(qui contient des erreurs) et le vocabulaire du cours. Écoute l'audio et écris la "
     "transcription exacte de ce qui est dit, mot pour mot, hésitations et reprises comprises. "
     "Les termes du vocabulaire sont probables, mais n'en écris un que s'il est prononcé. "
+    # RTX, 17/10 : 24 « valeur corrigée gardée » sur 25 venaient de la relecture,
+    # qui retirait « non pardon » et gardait les deux valeurs (« 5, 9, 4 »).
+    "Quand la personne se reprend (« non », « non non », « pardon », « attends », « enfin », "
+    "« plutôt », « je veux dire », « je me suis trompé »), écris le mot de reprise ET les deux "
+    "valeurs, exactement comme dits : ne choisis jamais à sa place, ne supprime rien. "
     "Écris les nombres en chiffres. N'ajoute rien, ne résume rien, ne réponds à rien : "
     "rends seulement la transcription."
 )
 AUDIO_REFINE_TIMEOUT_SECONDS = 12.0
+AUDIO_REFINE_CONNECT_SECONDS = 2.0
 
 
 class AudioRefineBackend:
@@ -1351,7 +1357,10 @@ class AudioRefineBackend:
             ],
         }
         try:
-            async with httpx.AsyncClient(timeout=self.timeout, transport=self.transport) as client:
+            # Connexion courte : une API injoignable ne retient pas la dictée
+            # 12 s (panne simulée du RTX, 17/10 : 12,8 s).
+            timeout = httpx.Timeout(self.timeout, connect=AUDIO_REFINE_CONNECT_SECONDS)
+            async with httpx.AsyncClient(timeout=timeout, transport=self.transport) as client:
                 response = await client.post(
                     f"{self.base_url}/chat/completions",
                     headers=_auth_headers(self.token), json=payload)

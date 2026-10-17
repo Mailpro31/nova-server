@@ -44,6 +44,8 @@ class AudioRefineBackendTests(unittest.TestCase):
         self.assertEqual(audio["input_audio"]["format"], "wav")
         self.assertIn("le nombre de à Maquin", context["text"])
         self.assertIn("Mach 1, portance", context["text"])
+        # Les reprises restent dans la transcription : le Style les résout ensuite.
+        self.assertIn("écris le mot de reprise ET les deux valeurs", system["content"])
 
     def test_an_engine_error_is_a_runtime_error(self):
         with self.assertRaises(AIRuntimeError) as raised:
@@ -84,6 +86,19 @@ class RefinedTranscriptionTests(unittest.TestCase):
         # Un format que l'API n'accepte pas : pas de relecture.
         self.assertEqual(self.refined(FakeRefiner("autre"), filename="audio.webm"),
                          "le nombre de à Maquin")
+
+    def test_a_refiner_down_is_set_aside_for_a_minute(self):
+        calls = []
+
+        class Down:
+            async def refine(self, *args):
+                calls.append(1)
+                raise AIRuntimeError(ai_runtime.AI_RUNTIME_UNAVAILABLE)
+
+        with patch.object(main, "_audio_refine_down_until", 0.0):
+            self.assertEqual(self.refined(Down()), "le nombre de à Maquin")
+            self.assertEqual(self.refined(Down()), "le nombre de à Maquin")
+        self.assertEqual(len(calls), 1)
 
     def test_a_copied_vocabulary_or_an_invented_text_is_rejected(self):
         # RTX, 17/10 : le glossaire recopié en entier à la place de la dictée.

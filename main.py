@@ -12410,7 +12410,14 @@ _FILLER_AND_VOILA = re.compile(r",?\s*\bet voil[àa]\s*(?=[.!?]|$)", re.IGNORECA
 _FILLER_SENTENCE = re.compile(rf"(^|(?<=[.!?])\s+){_FILLER}\s*[.!?]+", re.IGNORECASE)
 _PHRASE_FILLER = r"(?:du coup|en fait|tu vois|comment dire|voil[àa]|enfin bref|en gros)"
 _FILLER_ONE_SIDED = re.compile(rf"(?<=\w)\s+{_PHRASE_FILLER}\s*,\s*(?=\w)", re.IGNORECASE)
-_FILLER_BARE = re.compile(r"(?<=\w)\s+(?:du coup|en fait)\b(?=\s+\w)", re.IGNORECASE)
+_FILLER_BARE = re.compile(r"(?<=\w)\s+(?:du coup|en fait|enfin bref)\b(?=\s+\w)", re.IGNORECASE)
+# Bout en bout du RTX (17/10, 40 tics restants sur 600) : « …d'altitude en gros. »,
+# « C'est tout. » seul, « OK alors le premier principe », et un tic entre
+# accolades (« {{du coup}} ») qui passait pour un repère.
+_FILLER_FINAL_BARE = re.compile(r"\s+(?:en gros|voil[àa]|en fait)\s*(?=[.!?]|$)", re.IGNORECASE)
+_FILLER_THATS_ALL_SENTENCE = re.compile(r"(^|(?<=[.!?])\s+)c'est tout\s*[.!?]+", re.IGNORECASE)
+_FILLER_OK_LEADING = re.compile(r"(^|[.!?]\s+)ok\s+alors\s+(\w)", re.IGNORECASE)
+_FILLER_MARKER = re.compile(rf"\{{\{{\s*{_FILLER}\s*\}}\}}", re.IGNORECASE)
 # « comment dire » sans ponctuation : un tic (« sans comment dire échange »),
 # sauf quand il complète un verbe (« je ne sais pas comment dire ça »).
 # Banc v2 du RTX sur a7ccc94 (17/10) : 47 restaient.
@@ -12475,6 +12482,10 @@ def without_fillers(text: str) -> str:
         out = _GENRE_ONE_SIDED.sub(
             lambda m: m.group(0) if m.group(1).lower() in _DETERMINERS else m.group(1) + " ", out)
         out = _FILLER_THATS_ALL.sub("", out)
+        out = _FILLER_FINAL_BARE.sub("", out)
+        out = _FILLER_THATS_ALL_SENTENCE.sub(lambda m: m.group(1), out)
+        out = _FILLER_OK_LEADING.sub(lambda m: m.group(1) + m.group(2).upper(), out)
+        out = _FILLER_MARKER.sub(" ", out)
         out = _FILLER_WAIT_LEADING.sub(lambda m: m.group(1).upper(), out)
     # Pas devant « : ; ! ? » : en français, ils gardent leur espace.
     out = re.sub(r"[ \t]+([,.])", r"\1", out)
@@ -12659,6 +12670,10 @@ AUDIO_REFINE_MAX_TERMS = 300
 # (17/10) : un glossaire recopié en entier sur 600 dictées.
 AUDIO_REFINE_MAX_GROWTH = 2.0
 AUDIO_REFINE_MAX_NEW_TERMS = 3
+# Une relecture en panne ou trop lente est mise de côté une minute : les
+# dictées suivantes gardent Whisper sans attendre (comme le texte, #149).
+AUDIO_REFINE_DOWN_SECONDS = 60.0
+_audio_refine_down_until = 0.0
 
 
 def refine_plausible(transcript: str, refined: str, vocabulary: list[str]) -> bool:
@@ -12680,10 +12695,15 @@ async def refined_transcription(audio: bytes, filename: str, transcript: str,
         return transcript
     terms = sorted({(replacement or term).strip() for term, replacement in vocabulary
                     if (replacement or term).strip()})[:AUDIO_REFINE_MAX_TERMS]
+    global _audio_refine_down_until
+    if time.monotonic() < _audio_refine_down_until:
+        return transcript
     try:
         refined = await AUDIO_REFINER.refine(audio, audio_format, transcript, terms)
     except AIRuntimeError as error:
         observability.log("transcription.refine_failed", level="warning", reason=error.code)
+        if error.code in (AI_RUNTIME_UNAVAILABLE, AI_RUNTIME_TIMEOUT):
+            _audio_refine_down_until = time.monotonic() + AUDIO_REFINE_DOWN_SECONDS
         return transcript
     if not refine_plausible(transcript, refined, terms):
         observability.log("transcription.refine_rejected", level="warning")
@@ -14032,6 +14052,8 @@ def rewrite_refusal(
     # Ce qu'une reprise abandonne (« le 12, enfin le 19 ») n'a pas à survivre.
     # Les deux côtés relus de la même façon : « 50% » devenait « 50 pour cent »
     # d'un seul côté, et « cent » un nombre nouveau (banc v2, cas 0447).
+    # « une une boucle » rendu « une boucle » n'a perdu aucun nombre (RTX, 17/10).
+    kept = _REPEATED_WORD.sub(lambda m: m.group(1), kept)
     reason = facts_refusal(as_dictated(FIRST_OF_MONTH.sub("1er ", kept)), spoken, True)
     if reason:
         return reason
