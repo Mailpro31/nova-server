@@ -13614,6 +13614,25 @@ FAITHFUL_AUXILIARY_WORDS = frozenset((
 # Une correction d'orthographe garde l'essentiel du mot : « intégre » →
 # « intègre », « place » → « Laplace », « secondes » → « seconde ».
 FAITHFUL_SPELLING_SIMILARITY = 0.75
+# Un passage mal entendu, remplacé à la même place par ce qui se prononce
+# pareil : « condition de la rite » → « condition d'arrêt », « module Dune » →
+# « module de Young » (décision de Sash, 17/10). Court, aligné, et proche à
+# l'oreille ; « triangle » → « carré » ou un mot supprimé restent refusés.
+MISHEARD_MAX_WORDS = 3
+MISHEARD_SIMILARITY = 0.5
+
+
+def misheard_words(dictated_words: list[str], written_words: list[str]) -> set[str]:
+    """Les mots dictés qu'un passage proche à l'oreille a remplacés."""
+    excused = set()
+    matcher = difflib.SequenceMatcher(None, dictated_words, written_words, autojunk=False)
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag != "replace" or i2 - i1 > MISHEARD_MAX_WORDS or j2 - j1 > MISHEARD_MAX_WORDS:
+            continue
+        said, wrote = "".join(dictated_words[i1:i2]), "".join(written_words[j1:j2])
+        if difflib.SequenceMatcher(None, said, wrote).ratio() >= MISHEARD_SIMILARITY:
+            excused.update(dictated_words[i1:i2])
+    return excused
 
 
 # Une reprise après une pause : le mot abandonné, puis l'annonce, puis la
@@ -13683,6 +13702,9 @@ def faithful_word_dropped(dictated: str, text: str) -> bool:
     symbols = {symbol.casefold() for symbol in re.findall(
         r"(?:\d\s?|·|\bpar\s)([^\W\d_]{1,3})(?![^\W\d_])", text or "")}
     ignored |= {word for word, symbol in FAITHFUL_UNIT_SYMBOLS.items() if symbol in symbols}
+    # Les lettres élidées comptent à l'oreille : « d'arrêt » se dit « darrêt ».
+    sounds = lambda value: re.findall(r"[^\W_]+", folded(unmarked(value).lower()))  # noqa: E731
+    ignored |= misheard_words(sounds(dictated), sounds(text))
     # « Formule F égale MA » écrit « F = MA » : le « = » dit déjà la formule.
     if "egale" in written:
         ignored |= {"formule"}
