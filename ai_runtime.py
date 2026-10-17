@@ -133,6 +133,12 @@ ENGINE_CONNECT_TIMEOUT_SECONDS = 2.0
 # rappelle pas : la dictée est rendue tout de suite, sans attendre un nouvel
 # échec. Il est retenté ensuite, et repart seul quand il revient.
 TEXT_ENGINE_DOWN_SECONDS = 10.0
+# Les pannes du moteur principal qui envoient la requête au moteur de secours.
+# Une requête invalide (trop longue, configuration fausse) échouerait aussi là.
+TEXT_FALLBACK_CODES = frozenset({
+    AI_RUNTIME_UNAVAILABLE, AI_RUNTIME_STARTING, AI_RUNTIME_BUSY,
+    AI_RUNTIME_TIMEOUT, AI_RUNTIME_FAILED, AI_MODEL_NOT_READY,
+})
 DEFAULT_QUEUE_WAIT_SECONDS = 8.0
 DEFAULT_MAX_QUEUE = 16
 MIN_QUEUE_WAIT_SECONDS = 0.05
@@ -863,8 +869,12 @@ class OrganizationAIRouter:
         max_queue: int = 4,
         queue_wait_seconds: float = DEFAULT_QUEUE_WAIT_SECONDS,
         custom_options: TextInferenceOptions | None = None,
+        fallback_text_backend: TextInferenceBackend | None = None,
     ):
         self.text_backend = text_backend
+        # Le moteur local, quand la mise au propre passe par une API externe :
+        # une panne de l'API ne coûte pas la mise au propre (demande de Sash, 17/10).
+        self.fallback_text_backend = fallback_text_backend
         self._text_down_until = 0.0
         self.speech_backend = speech_backend
         # Les valeurs de `custom`, si et seulement si le deploiement les a
@@ -879,7 +889,7 @@ class OrganizationAIRouter:
         self.speech_capacity = _CapacityGate(
             max_concurrent_speech, max_queue, queue_wait_seconds
         )
-        self.fallback_policy = "disabled"
+        self.fallback_policy = "local" if fallback_text_backend else "disabled"
         self.applied_revision = 0
         self.queue_wait_seconds = queue_wait_seconds
 
@@ -976,22 +986,32 @@ class OrganizationAIRouter:
             timeout,
             examples,
         )
-        if time.monotonic() < self._text_down_until:
+        primary_down = time.monotonic() < self._text_down_until
+        if primary_down and self.fallback_text_backend is None:
             raise AIRuntimeError(AI_RUNTIME_UNAVAILABLE)
         await self.text_capacity.acquire()
         try:
-            try:
-                return await asyncio.wait_for(
-                    self.text_backend.generate(request), timeout=timeout + 0.1
-                )
-            except asyncio.TimeoutError as error:
-                raise AIRuntimeError(AI_RUNTIME_TIMEOUT) from error
-            except AIRuntimeError as error:
-                if error.code == AI_RUNTIME_UNAVAILABLE:
-                    self._text_down_until = time.monotonic() + TEXT_ENGINE_DOWN_SECONDS
-                raise
+            if not primary_down:
+                try:
+                    return await self._generate_with(self.text_backend, request, timeout)
+                except AIRuntimeError as error:
+                    if error.code == AI_RUNTIME_UNAVAILABLE:
+                        self._text_down_until = time.monotonic() + TEXT_ENGINE_DOWN_SECONDS
+                    if self.fallback_text_backend is None or error.code not in TEXT_FALLBACK_CODES:
+                        raise
+                    observability.log("ai.text_fallback", level="warning", reason=error.code)
+            return await self._generate_with(self.fallback_text_backend, request, timeout)
         finally:
             await self.text_capacity.release()
+
+    @staticmethod
+    async def _generate_with(
+        backend: TextInferenceBackend, request: TextInferenceRequest, timeout: float
+    ) -> TextInferenceResult:
+        try:
+            return await asyncio.wait_for(backend.generate(request), timeout=timeout + 0.1)
+        except asyncio.TimeoutError as error:
+            raise AIRuntimeError(AI_RUNTIME_TIMEOUT) from error
 
     async def transcribe(
         self,
@@ -1235,6 +1255,13 @@ def router_from_environment() -> OrganizationAIRouter:
     except ValueError as error:
         raise AIRuntimeError(AI_RUNTIME_CONFIG_INVALID) from error
     custom_options = custom_options_from_environment()
+    # Le moteur local de secours, quand le texte passe par une API externe.
+    fallback_url = os.getenv("NOVA_AI_TEXT_FALLBACK_BASE_URL", "").strip()
+    fallback_model = os.getenv("NOVA_AI_TEXT_FALLBACK_MODEL", "").strip()
+    fallback = (
+        OpenAICompatibleTextBackend(fallback_url, fallback_model, token=token)
+        if fallback_url and fallback_model else None
+    )
     if profile == ModelProfile.CUSTOM and custom_options is None:
         # Echouer au demarrage, bruyamment. Retomber sur `standard` en silence
         # ferait tourner le deploiement avec des reglages que personne n'a
@@ -1259,4 +1286,5 @@ def router_from_environment() -> OrganizationAIRouter:
             os.getenv("NOVA_AI_QUEUE_WAIT_SECONDS", str(DEFAULT_QUEUE_WAIT_SECONDS))
         ),
         custom_options=custom_options,
+        fallback_text_backend=fallback,
     )
