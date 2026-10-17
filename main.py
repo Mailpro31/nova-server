@@ -12450,12 +12450,19 @@ _FORMULA_SYMBOLS = (("±", " plus ou moins "), ("=", " égale "), ("²", " au ca
                     ("³", " au cube "), ("√", " racine "), ("Δ", " delta "), ("ρ", " rho "),
                     ("μ", " mu "), ("π", " pi "), ("σ", " sigma "), ("×", " fois "))
 _FORMULA_DIVIDE = re.compile(r"(?<=\w)\s*/\s*(?=\w)")
+_FORMULA_MINUS = re.compile(r"(?<=\w)\s+[-−]\s+(?=\w)")
+# Un faux départ : « aéro-aérodynamique », « com-complexité » (RTX, 17/10).
+_FALSE_START = re.compile(r"\b(\w{2,})-\s?(?=\1\w)", re.IGNORECASE)
 
 
 def for_checks(text: str) -> str:
     """Le texte tel que les contrôles le comparent : sans les tics de l'oral,
     et les symboles d'une formule relus en mots."""
     out = as_dictated(_TICS_FOR_CHECKS.sub(" ", without_fillers(text or "")))
+    out = _FALSE_START.sub("", out)
+    # « b² - 4ac » : le tiret n'est un « moins » que dans une formule.
+    if "=" in out:
+        out = _FORMULA_MINUS.sub(" moins ", out)
     for symbol, words in _FORMULA_SYMBOLS:
         out = out.replace(symbol, words)
     return _FORMULA_DIVIDE.sub(" divisé par ", out)
@@ -13489,6 +13496,7 @@ FAITHFUL_UNIT_SYMBOLS = {
 # cela, la mise au propre attendue d'une dictée était refusée.
 SPOKEN_SYMBOLS = (
     (re.compile(r"(?<!\w)km/h(?!\w)", re.IGNORECASE), " kilomètres par heure "),
+    (re.compile(r"(?<!\w)m/s²"), " mètres par seconde au carré "),
     (re.compile(r"(?<!\w)m/s(?!\w)"), " mètres par seconde "),
     (re.compile(r"(?<!\w)n[°º](?=\s?\d)", re.IGNORECASE), " numéro "),
     (re.compile(r"\s?%"), " pour cent "),
@@ -13545,7 +13553,8 @@ def faithful_word_dropped(dictated: str, text: str) -> bool:
     new_words = {folded(word) for word in dictation_words(unmarked(text))} - said_words
     ignored = (COURSE_FILLER_WORDS | COURSE_NUMBER_WORDS | FAITHFUL_SYMBOL_WORDS
                | FAITHFUL_AUXILIARY_WORDS)
-    symbols = {symbol.casefold() for symbol in re.findall(r"\d\s?([^\W\d_]{1,3})(?![^\W\d_])", text or "")}
+    symbols = {symbol.casefold() for symbol in re.findall(
+        r"(?:\d\s?|·)([^\W\d_]{1,3})(?![^\W\d_])", text or "")}
     ignored |= {word for word, symbol in FAITHFUL_UNIT_SYMBOLS.items() if symbol in symbols}
     # « Formule F égale MA » écrit « F = MA » : le « = » dit déjà la formule.
     if "egale" in written:
@@ -13603,7 +13612,8 @@ def acronym_dropped(dictated: str, text: str) -> bool:
     inventée.
     """
     written = {word.casefold() for word in re.findall(r"[\w]+", text or "")}
-    return any(acronym.casefold() not in written for acronym in ACRONYM.findall(dictated or ""))
+    return any(acronym.casefold() not in written and acronym.casefold() not in HESITATIONS
+               for acronym in ACRONYM.findall(dictated or ""))
 
 
 # Les mots qui retournent le sens d'une phrase. « ne » n'en est pas : à l'oral,
