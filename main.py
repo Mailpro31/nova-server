@@ -12418,6 +12418,11 @@ _FILLER_FINAL_BARE = re.compile(r"\s+(?:en gros|voil[àa]|en fait)\s*(?=[.!?]|$)
 _FILLER_THATS_ALL_SENTENCE = re.compile(r"(^|(?<=[.!?])\s+)c'est tout\s*[.!?]+", re.IGNORECASE)
 _FILLER_OK_LEADING = re.compile(r"(^|[.!?]\s+)ok\s+alors\s+(\w)", re.IGNORECASE)
 # « Quoi ? » seul, en fin de dictée (RTX, 17/10, 0463).
+# « Du coup le… », « en fait la… » en tête de phrase, sans virgule : toujours
+# un tic (RTX, 17/10, 0254). « Tu vois » reste : « Tu vois la courbe ».
+_FILLER_LEADING_BARE = re.compile(r"(^|[.!?]\s+)(?:du coup|en fait(?!\s+de\b))\s+(\w)", re.IGNORECASE)
+# Le même nombre redit autour d'un tic : « 4000, tu vois, en fait, 4000 » (0044).
+_REPEATED_NUMBER = re.compile(r"\b(\d+(?:[.,]\d+)?)(\s*,?\s+)\1\b")
 _FILLER_WHAT = re.compile(r"(^|(?<=[.!?])\s+)quoi\s*\?+", re.IGNORECASE)
 # « d'une genre plaque plane » : « genre » entre un article et un nom (0812).
 _GENRE_AFTER_ARTICLE = re.compile(r"\b(la|une|les|des|ces|cette)\s+genre\s+(?=\w)", re.IGNORECASE)
@@ -12494,6 +12499,8 @@ def without_fillers(text: str) -> str:
         out = _FILLER_OK_LEADING.sub(lambda m: m.group(1) + m.group(2).upper(), out)
         out = _FILLER_MARKER.sub(" ", out)
         out = _FILLER_WHAT.sub(lambda m: m.group(1), out)
+        out = _FILLER_LEADING_BARE.sub(lambda m: m.group(1) + m.group(2).upper(), out)
+        out = _REPEATED_NUMBER.sub(lambda m: m.group(1), out)
         out = _GENRE_AFTER_ARTICLE.sub(lambda m: m.group(1) + " ", out)
         out = _FILLER_WAIT_LEADING.sub(lambda m: m.group(1).upper(), out)
     # Pas devant « : ; ! ? » : en français, ils gardent leur espace.
