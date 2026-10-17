@@ -446,6 +446,32 @@ class RouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({request.task_type for request in text.requests}, ai_runtime.TEXT_TASKS)
         self.assertEqual({request.task_type for request in speech.requests}, ai_runtime.SPEECH_TASKS)
 
+    async def test_a_failing_external_engine_falls_back_to_the_local_one(self):
+        external = FakeTextInferenceBackend(status=EngineStatus.UNAVAILABLE)
+        local = FakeTextInferenceBackend()
+        router = self.router(text=external, fallback_text_backend=local)
+        self.assertEqual(router.fallback_policy, "local")
+        result = await router.generate(TaskType.REFORMULATION, "x", "y")
+        self.assertEqual(result.text, "fake:reformulation")
+        self.assertEqual((len(external.requests), len(local.requests)), (1, 1))
+        # L'API marquée en panne n'est plus appelée pendant le délai.
+        await router.generate(TaskType.REFORMULATION, "x", "y")
+        self.assertEqual((len(external.requests), len(local.requests)), (1, 2))
+        # Sans secours, la panne remonte comme avant.
+        with self.assertRaises(AIRuntimeError) as raised:
+            await self.router(text=FakeTextInferenceBackend(status=EngineStatus.UNAVAILABLE)
+                              ).generate(TaskType.REFORMULATION, "x", "y")
+        self.assertEqual(raised.exception.code, AI_RUNTIME_UNAVAILABLE)
+
+    async def test_a_slow_external_engine_falls_back_to_the_local_one(self):
+        local = FakeTextInferenceBackend()
+        router = self.router(text=FakeTextInferenceBackend(delay=5),
+                             fallback_text_backend=local)
+        with patch.dict(ai_runtime.TEXT_TIMEOUTS, {TaskType.REFORMULATION: 0.05}):
+            result = await router.generate(TaskType.REFORMULATION, "x", "y")
+        self.assertEqual(result.text, "fake:reformulation")
+        self.assertEqual(len(local.requests), 1)
+
     async def test_unknown_or_cross_engine_tasks_fail_closed(self):
         router = self.router()
         with self.assertRaises(AIRuntimeError) as raised:

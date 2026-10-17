@@ -147,6 +147,11 @@ NOVA_AI_TEXT_MODEL=mistral-small-2603                 # OpenRouter : mistralai/m
 NOVA_AI_TEXT_TOKEN=env://MISTRAL_API_KEY
 ```
 
+Secours local : avec `NOVA_AI_TEXT_FALLBACK_BASE_URL` et `NOVA_AI_TEXT_FALLBACK_MODEL`
+(le modèle local, par exemple `http://vllm:8000/v1`), une API externe en panne,
+saturée ou trop lente envoie la même requête au modèle local, et le journal
+l'écrit (`ai.text_fallback`). `/api/ai/health` indique `fallback_policy: local`.
+
 RGPD : les dictées partent alors chez ce fournisseur. Pour de vrais élèves, prendre
 un fournisseur direct avec un contrat de sous-traitance (DPA) et un hébergement
 dans l'UE (Mistral par défaut), et en informer l'établissement. OpenRouter, un
