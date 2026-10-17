@@ -13726,7 +13726,20 @@ def faithful_content_added(dictated: str, text: str) -> bool:
     written -= COURSE_STRUCTURE_WORDS
     if not written:
         return False
-    return len(written - course_words(dictated)) / len(written) > FAITHFUL_MAX_ADDED_WORDS
+    said = course_words(dictated)
+    # Un mot corrigé n'est pas un ajout : « proportional » → « proportionnelle »,
+    # « massiquet » → « massique » (RTX, 17/10 : 12 refus sur 20). Il remplace
+    # un mot dicté qui a disparu, et lui ressemble ; même règle que
+    # `faithful_word_dropped`.
+    gone = said - written
+    added = {
+        word for word in written - said
+        if not any(
+            difflib.SequenceMatcher(None, word, other).ratio() >= FAITHFUL_SPELLING_SIMILARITY
+            or (min(len(word), len(other)) >= 4 and (word in other or other in word))
+            for other in gone)
+    }
+    return len(added) / len(written) > FAITHFUL_MAX_ADDED_WORDS
 
 
 def course_notes_refusal(dictated: str, text: str) -> str | None:

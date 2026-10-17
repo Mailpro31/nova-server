@@ -290,6 +290,19 @@ class FaithfulWordTests(unittest.TestCase):
         self.assertEqual(main.without_repaired_words("une fonction non linéaire"),
                          "une fonction non linéaire")
 
+    def test_a_corrected_word_is_not_an_addition(self):
+        # RTX, 20 content-added de Gemini sur 7b50edf (17/10) : 12 mots corrigés.
+        self.assertFalse(main.faithful_content_added(
+            "le contrôleur proportional integral derivative combine les trois actions",
+            "Le contrôleur proportionnel intégral dérivé combine les trois actions."))
+        self.assertFalse(main.faithful_content_added(
+            "la capacité thermique massiquet de l'eau est grande",
+            "La capacité thermique massique de l'eau est grande."))
+        # Un mot vraiment nouveau compte toujours.
+        self.assertTrue(main.faithful_content_added(
+            "la marge couvre les heures",
+            "La marge sur coûts variables couvre les charges fixes."))
+
     def test_a_formula_written_in_symbols_is_kept(self):
         # Banc v2 du RTX sur Gemini (17/10) : la formule bien écrite était refusée.
         style = "default_improve_transcriptions"
