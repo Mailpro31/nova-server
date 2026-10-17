@@ -152,6 +152,18 @@ class UnclearDecisionTests(unittest.TestCase):
                      "C'est un bon résultat.", "En fait de cours, il s'agit d'un TD."):
             with self.subTest(kept=kept):
                 self.assertEqual(main.without_fillers(kept), kept)
+        # Banc v2 du RTX sur 5178642 (17/10) : ce qui restait encore.
+        for said, written in (
+                ("La poussée dépend du débit genre, massique.", "La poussée dépend du débit massique."),
+                ("Le cours, enfin bref, est annulé.", "Le cours est annulé."),
+                ("Le cours est annulé, c'est tout.", "Le cours est annulé."),
+                ("Attends, le TP 5 est à rendre jeudi.", "Le TP 5 est à rendre jeudi.")):
+            with self.subTest(said=said):
+                self.assertEqual(main.without_fillers(said), written)
+        for kept in ("Le genre, le nombre et le cas.", "C'est tout ce qu'il faut savoir.",
+                     "Attends la fin du chargement."):
+            with self.subTest(kept=kept):
+                self.assertEqual(main.without_fillers(kept), kept)
 
     def test_a_lone_thanks_heard_on_a_breath_is_unclear(self):
         # Témoin du RTX (11/10) : « Merci. » sur un souffle, confiance −0,46.
