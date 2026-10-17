@@ -12992,8 +12992,11 @@ def resolution_acceptable(dictated: str, resolved: str) -> bool:
 
 
 # Les mots qui annoncent une reprise, sans en être une.
+# « je me suis trompé » aussi (RTX, 17/10 : « Je me suis trompé des 315 »
+# gardait B124 une fois le seul « Non, » retiré).
 RESOLUTION_MARKER_WORDS = frozenset(
-    "non pardon attends attend enfin plutot plutôt euh heu".split())
+    "non pardon attends attend enfin plutot plutôt euh heu "
+    "je me suis trompe trompee".split())
 
 
 # Après une reprise, l'élève dit quelque chose de nouveau : « non le BUS »,
@@ -13490,6 +13493,13 @@ SPOKEN_SYMBOLS = (
     (re.compile(r"(?<!\w)n[°º](?=\s?\d)", re.IGNORECASE), " numéro "),
     (re.compile(r"\s?%"), " pour cent "),
     (re.compile(r"\s?€"), " euros "),
+    # Une fraction dite en mots, relue en chiffres des deux côtés : « un tiers »
+    # écrit « 1/3 » (RTX, 17/10), « 1/4 » reste refusé.
+    (re.compile(r"\bun demi\b", re.IGNORECASE), " 1/2 "),
+    (re.compile(r"\bun tiers\b", re.IGNORECASE), " 1/3 "),
+    (re.compile(r"\bun quart\b", re.IGNORECASE), " 1/4 "),
+    (re.compile(r"\bdeux tiers\b", re.IGNORECASE), " 2/3 "),
+    (re.compile(r"\btrois quarts\b", re.IGNORECASE), " 3/4 "),
 )
 # « le premier novembre » écrit « le 1er novembre » : le même jour.
 FIRST_OF_MONTH = re.compile(rf"\bpremi(?:er|ère|ere)\s+(?=(?:{_MONTHS})\b)", re.IGNORECASE)
@@ -13537,6 +13547,9 @@ def faithful_word_dropped(dictated: str, text: str) -> bool:
                | FAITHFUL_AUXILIARY_WORDS)
     symbols = {symbol.casefold() for symbol in re.findall(r"\d\s?([^\W\d_]{1,3})(?![^\W\d_])", text or "")}
     ignored |= {word for word, symbol in FAITHFUL_UNIT_SYMBOLS.items() if symbol in symbols}
+    # « Formule F égale MA » écrit « F = MA » : le « = » dit déjà la formule.
+    if "egale" in written:
+        ignored |= {"formule"}
     for word in source - written - ignored:
         if not any(
             difflib.SequenceMatcher(None, word, other).ratio() >= FAITHFUL_SPELLING_SIMILARITY
