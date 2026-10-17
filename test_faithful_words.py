@@ -178,6 +178,23 @@ class FaithfulWordTests(unittest.TestCase):
         self.assertIsNotNone(main.rewrite_refusal(
             "Le projet compte pour 50% de la note.", "Le projet compte pour 40% de la note.", style))
 
+    def test_a_formula_written_in_symbols_is_kept(self):
+        # Banc v2 du RTX sur Gemini (17/10) : la formule bien écrite était refusée.
+        style = "default_improve_transcriptions"
+        for said, wrote in (
+                ("Formule P égale rho GH.", "Formule : P = ρGH."),
+                ("formule delta égale b au carré moins 4 a c", "Formule : Δ = b² - 4ac."),
+                ("R égale rho V L divisé par mu", "R = ρVL / μ."),
+                ("la tension U égale R I, comment dire, c'est la loi d'Ohm",
+                 "La tension U = RI, c'est la loi d'Ohm."),
+                ("le rendu est en salle 312, non, je me suis trompé, 315",
+                 "Le rendu est en salle 315.")):
+            with self.subTest(said=said):
+                self.assertIsNone(main.rewrite_refusal(said, wrote, style, resolved=wrote))
+        # Une autre formule reste refusée.
+        self.assertIsNotNone(main.rewrite_refusal(
+            "formule P égale rho GH", "Formule : P = mv².", style))
+
     def test_the_rule_applies_to_faithful_styles_only(self):
         said = "Définition, l'hypoténuse est le côté opposé à l'angle droit dans un triangle rectangle."
         written = "Définition : l'hypoténuse est le côté opposé à l'angle droit dans un rectangle."

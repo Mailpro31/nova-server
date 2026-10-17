@@ -12441,13 +12441,24 @@ def without_fillers(text: str) -> str:
 # comme un mot perdu, « tu vois » retiré ou rendu « vous voyez » compté comme
 # un changement de personne. Le texte rendu à l'élève n'est pas touché ici.
 _TICS_FOR_CHECKS = re.compile(
-    r"\b(?:du coup|en fait|en gros|enfin bref|tu vois|vous voyez|tu sais|vous savez)\b",
-    re.IGNORECASE)
+    r"\b(?:du coup|en fait|en gros|enfin bref|tu vois|vous voyez|tu sais|vous savez|"
+    r"comment dire|c'est tout)\b|,\s*quoi\b", re.IGNORECASE)
+# Une formule écrite en symboles, relue en mots : « P = ρGH » se compare à
+# « P égale rho GH ». Banc v2 du RTX sur Gemini (17/10) : 9 refus sur 10 en
+# dictation-not-kept étaient des formules bien écrites (« Δ = b² - 4ac »).
+_FORMULA_SYMBOLS = (("±", " plus ou moins "), ("=", " égale "), ("²", " au carré "),
+                    ("³", " au cube "), ("√", " racine "), ("Δ", " delta "), ("ρ", " rho "),
+                    ("μ", " mu "), ("π", " pi "), ("σ", " sigma "), ("×", " fois "))
+_FORMULA_DIVIDE = re.compile(r"(?<=\w)\s*/\s*(?=\w)")
 
 
 def for_checks(text: str) -> str:
-    """Le texte tel que les contrôles le comparent : sans les tics de l'oral."""
-    return _TICS_FOR_CHECKS.sub(" ", without_fillers(text or ""))
+    """Le texte tel que les contrôles le comparent : sans les tics de l'oral,
+    et les symboles d'une formule relus en mots."""
+    out = as_dictated(_TICS_FOR_CHECKS.sub(" ", without_fillers(text or "")))
+    for symbol, words in _FORMULA_SYMBOLS:
+        out = out.replace(symbol, words)
+    return _FORMULA_DIVIDE.sub(" divisé par ", out)
 
 
 def only_hesitations(text: str) -> bool:
@@ -12900,6 +12911,7 @@ def transcript_message(text: str) -> str:
 # la plupart des dictées n'en ont pas, et n'attendent pas un appel de plus.
 SELF_CORRECTION_HINT = re.compile(
     r"\b(non|attends?|pardon|plut[oô]t|enfin|oublie|je veux dire|en fait|oups|je corrige|je rectifie|"
+    r"je me suis tromp[ée]e?|je me trompe|"
     r"no|wait|sorry|i mean|actually|rather)\b",
     re.IGNORECASE,
 )
@@ -13403,6 +13415,10 @@ def without_abandoned(text: str) -> str:
             span = 3
         elif " ".join(words[index:index + 2]) in ("je corrige", "je rectifie"):
             span = 2
+        elif " ".join(words[index:index + 4]) in ("je me suis trompe", "je me suis trompee"):
+            span = 4
+        elif " ".join(words[index:index + 3]) == "je me trompe":
+            span = 3
         elif index + 2 <= len(words) and " ".join(words[index:index + 2]) in ("i mean", "no wait"):
             span = 2
         elif words[index] in ("non", "no") and index + 1 < len(words) and _is_fact_token(words[index + 1]):
@@ -13794,7 +13810,7 @@ def rewrite_refusal(
             for_checks(spoken)):
         return "content-dropped"
     if style_id in FAITHFUL_STYLE_IDS and acronym_dropped(
-            resolve_simple_repairs(resolved or dictated), text):
+            resolve_simple_repairs(resolved or dictated), for_checks(text)):
         return "content-dropped"
     if style_id in FAITHFUL_STYLE_IDS and negation_dropped(
             resolve_simple_repairs(resolved or dictated), text):
