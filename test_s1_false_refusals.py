@@ -65,5 +65,21 @@ class SameMeaningSaidPolitelyTests(unittest.TestCase):
             "Envoie le rapport à M. Martin et à Mme Leroy.", "nova_style_messages"))
 
 
+class InventedMarkersTests(unittest.TestCase):
+    """n° 18 : le modèle met un mot entre accolades (« {{marge du coût}} »)."""
+
+    def test_an_invented_marker_becomes_its_word(self):
+        self.assertEqual(
+            main.without_invented_markers(
+                "on calcule la marge du coût", "On calcule la {{marge du coût}}."),
+            "On calcule la marge du coût.")
+
+    def test_a_real_snippet_marker_is_kept(self):
+        self.assertEqual(
+            main.without_invented_markers(
+                "voici mon adresse {{snippet0}}", "Voici mon adresse {{snippet0}}."),
+            "Voici mon adresse {{snippet0}}.")
+
+
 if __name__ == "__main__":
     unittest.main()

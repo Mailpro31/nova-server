@@ -14140,6 +14140,19 @@ def rewrite_refusal(
     return None
 
 
+_ANY_MARKER = re.compile(r"\{\{\s*([^{}\r\n]+?)\s*\}\}")
+
+
+def without_invented_markers(dictated: str, text: str) -> str:
+    """Un repère que la dictée n'avait pas redevient son mot.
+
+    Le modèle met parfois un mot entre accolades (« {{marge du coût}} ») : il
+    passait pour un snippet perdu et faisait refuser la dictée (n° 18).
+    """
+    return _ANY_MARKER.sub(
+        lambda m: m.group(0) if m.group(0) in dictated else m.group(1), text)
+
+
 @dataclass(frozen=True)
 class RewriteOutcome:
     """Ce que le circuit de reformulation rend : le texte, ou le motif du refus.
@@ -14173,6 +14186,8 @@ async def rewrite_dictation(
     if answer_repeats_instruction(system_prompt, result):
         # Le modèle a rendu le gabarit au lieu de la dictée.
         return RewriteOutcome(None, "template_echo", resolved)
+    # Après le contrôle du gabarit : « {{output}} » recopié reste un gabarit.
+    result = without_invented_markers(source_text, result)
     refusal = rewrite_refusal(source_text, result, style_id, resolved=resolved)
     if refusal:
         return RewriteOutcome(None, refusal, resolved)
