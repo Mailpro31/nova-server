@@ -13700,6 +13700,8 @@ SPOKEN_SYMBOLS = (
     (re.compile(r"\s?°"), " degrés "),
     # « -2 » se dit « moins 2 » ; « 2020-2021 » n'est pas concerné.
     (re.compile(r"(?<![\w)])[-−]\s?(?=\d)"), " moins "),
+    # « 14 heures » écrit « 14h00 » ou « 14:00 » : la même heure (lot S1, 23/10).
+    (re.compile(r"\b(\d{1,2})\s?(?:h|:)\s?00\b"), r" \1 heures "),
     (re.compile(r"½"), " 1/2 "),
     (re.compile(r"⅓"), " 1/3 "),
     (re.compile(r"¼"), " 1/4 "),
@@ -14079,7 +14081,7 @@ def rewrite_refusal(
     if style_id == "nova_style_meeting":
         if grouped_number_reformatted(dictated, text):
             return "number-format-changed"
-        return facts_refusal(dictated, text, False)
+        return facts_refusal(as_dictated(dictated), as_dictated(text), False)
     # Ce qu'une reprise a abandonne (« le 12, non pardon, le 13 ») n'a pas a
     # survivre ; la valeur retenue, si.
     kept = without_abandoned(resolve_simple_repairs(resolved or dictated))
