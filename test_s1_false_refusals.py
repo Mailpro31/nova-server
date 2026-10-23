@@ -118,5 +118,22 @@ class RoomRepairTests(unittest.TestCase):
                          "On libère la salle à 14 h.")
 
 
+class BlockSnippetTests(unittest.TestCase):
+    """n° 2 : « signature ipsa » restait devant la signature (« Signature : Ipsa. : Sasha »)."""
+
+    SNIPPETS = [{"trigger": "signature ipsa", "content": "Sasha Martin\nÉtudiant IPSA"},
+                {"trigger": "mon adresse", "content": "7 impasse des Bons Voisins"}]
+
+    def test_a_block_replaces_its_trigger(self):
+        text, restores = main.protect_snippets("merci, signature ipsa", self.SNIPPETS)
+        self.assertEqual(text, "merci, {{snippet0}}")
+        self.assertEqual(main.restore_snippets(text, restores),
+                         "merci, Sasha Martin\nÉtudiant IPSA")
+
+    def test_a_one_line_value_keeps_its_trigger(self):
+        text, _ = main.protect_snippets("voici mon adresse", self.SNIPPETS)
+        self.assertEqual(text, "voici mon adresse {{snippet0}}")
+
+
 if __name__ == "__main__":
     unittest.main()

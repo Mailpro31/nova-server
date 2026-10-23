@@ -11200,7 +11200,13 @@ def protect_snippets(text: str, snippets) -> tuple[str, dict[str, str]]:
         marker = f"{{{{snippet{len(restores)}}}}}"
         # Le declencheur voyage avec sa valeur : c'est lui qui dit si le texte
         # qui precede le repere annonce deja la valeur.
-        restores[marker] = (found.group(0), contents[found.group(0).casefold()])
+        content = contents[found.group(0).casefold()]
+        restores[marker] = (found.group(0), content)
+        # Un bloc (une signature) prend la place de son déclencheur : « signature
+        # ipsa » devant la signature n'a pas de sens (n° 2). Une valeur d'une
+        # ligne (« mon adresse ») garde ses mots, qui portent la phrase.
+        if "\n" in content.strip():
+            return marker
         return f"{found.group(0)} {marker}"
 
     return pattern.sub(replace, text), restores
