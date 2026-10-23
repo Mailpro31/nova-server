@@ -135,5 +135,15 @@ class BlockSnippetTests(unittest.TestCase):
         self.assertEqual(text, "voici mon adresse {{snippet0}}")
 
 
+class TrailingRepairWordTests(unittest.TestCase):
+    """n° 17 : « À revoir, attends. » perdait « À revoir »."""
+
+    def test_a_repair_word_with_nothing_after_is_not_a_repair(self):
+        self.assertFalse(main.has_self_correction_hint("À revoir, attends."))
+
+    def test_a_real_repair_is_still_seen(self):
+        self.assertTrue(main.has_self_correction_hint("mardi, non attends, mercredi"))
+
+
 if __name__ == "__main__":
     unittest.main()

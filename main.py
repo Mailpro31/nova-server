@@ -13137,7 +13137,11 @@ REWRITE_MARKER_TOKEN = re.compile(r"\{\{[^{}]*\}\}")
 
 
 def has_self_correction_hint(text: str) -> bool:
-    return bool(SELF_CORRECTION_HINT.search(text or ""))
+    # Rien après le mot de reprise : il ne corrige rien. « À revoir, attends. »
+    # perdait « À revoir » (n° 17).
+    text = text or ""
+    return any(text[match.end():].strip(" \t\n.,;:!?…")
+               for match in SELF_CORRECTION_HINT.finditer(text))
 
 
 def _resolution_words(text: str) -> list[str]:
