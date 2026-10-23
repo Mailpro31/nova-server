@@ -10,6 +10,8 @@ import unittest
 from test_main import AdminTestCase  # noqa: F401
 import main
 
+main.init_db()
+
 
 class PresentableFallbackTests(unittest.TestCase):
     def test_the_first_letter_is_capitalised(self):

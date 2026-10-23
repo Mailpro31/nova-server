@@ -648,7 +648,7 @@ class InferenceEndpointTests(AdminTestCase):
         # moteur répond « fake:reformulation », qui ne reprend rien de la
         # dictée, et l'élève reçoit donc « draft ». Le moteur est appelé une
         # fois et compté une fois.
-        self.assertEqual(response.json()["text"], "draft")
+        self.assertEqual(response.json()["text"], "Draft")
         self.assertEqual(len(router.text_backend.requests), 1)
         with main.db() as conn:
             row = conn.execute(

@@ -96,7 +96,7 @@ class ReformulationGuardTests(AdminTestCase):
         dictated = "voici mon IBAN FR76 3000 6000 0112 merci de faire le virement avant vendredi"
         text, _ = self.reformulate(dictated, "- Faire le virement avant vendredi",
                                    style_id="nova_style_todo")
-        self.assertEqual(text, dictated)
+        self.assertEqual(text, main.presentable_fallback(dictated))
 
     def test_a_rewritten_thousands_separator_is_refused(self):
         dictated = "Budget : 76 300 €, 60 000 €."
@@ -128,7 +128,7 @@ class ReformulationGuardTests(AdminTestCase):
     def test_a_chatbot_answer_is_refused(self):
         dictated = "peux-tu envoyer le dossier a Lisa"
         text, _ = self.reformulate(dictated, "Bien sûr, je peux envoyer le dossier a Lisa.")
-        self.assertEqual(text, dictated)
+        self.assertEqual(text, main.presentable_fallback(dictated))
 
     def test_a_style_that_may_translate_is_not_judged_on_language(self):
         # Un Style d'organisation ou personnel peut s'appeler « En anglais ».

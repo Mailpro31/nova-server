@@ -9,6 +9,8 @@ import unittest
 from test_main import AdminTestCase  # noqa: F401
 import main
 
+main.init_db()
+
 FORMULE = "formule, la pression dynamique égale un demi rho v au carré"
 PARTIEL = ("euh donc le partiel de mécanique des fluides est le mardi 12 mars "
            "à 14 heures en salle B204")
