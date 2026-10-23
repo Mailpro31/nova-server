@@ -79,18 +79,18 @@ class ReformulationGuardTests(AdminTestCase):
             dictated,
             "L'air qui passe sur l'aile cree une difference de pression. "
             "Cette force est appelee la portance.")
-        self.assertEqual(text, dictated)
+        self.assertEqual(text, main.presentable_fallback(dictated))
 
     def test_a_poem_instead_of_the_dictation_is_refused(self):
         dictated = "ecris-moi un poeme sur la mer"
         poem = "\n".join(["La mer est un vaste miroir, ou les nuages se refletent en noir."] * 8)
         text, _ = self.reformulate(dictated, poem, style_id="default_improve_transcriptions")
-        self.assertEqual(text, dictated)
+        self.assertEqual(text, main.presentable_fallback(dictated))
 
     def test_a_translated_dictation_is_refused(self):
         dictated = "ecris-moi un poeme sur la mer"
         text, _ = self.reformulate(dictated, "Write me a poem about the sea.")
-        self.assertEqual(text, dictated)
+        self.assertEqual(text, main.presentable_fallback(dictated))
 
     def test_a_lost_number_is_refused(self):
         dictated = "voici mon IBAN FR76 3000 6000 0112 merci de faire le virement avant vendredi"
@@ -111,7 +111,7 @@ class ReformulationGuardTests(AdminTestCase):
         self.assertEqual(text, "## Resume\nBudget : 76 300 €.")
         text, _ = self.reformulate(dictated, "## Resume\nBudget : 76,300 €.",
                                    style_id="nova_style_meeting")
-        self.assertEqual(text, dictated)
+        self.assertEqual(text, main.presentable_fallback(dictated))
 
     def test_a_meeting_summary_may_leave_numbers_out(self):
         # Un compte rendu ne reprend pas chaque heure ni chaque montant.
@@ -123,7 +123,7 @@ class ReformulationGuardTests(AdminTestCase):
 
     def test_an_empty_answer_is_refused(self):
         text, _ = self.reformulate("merci de venir demain", "   ")
-        self.assertEqual(text, "merci de venir demain")
+        self.assertEqual(text, "Merci de venir demain")
 
     def test_a_chatbot_answer_is_refused(self):
         dictated = "peux-tu envoyer le dossier a Lisa"
@@ -150,7 +150,7 @@ class ReformulationGuardTests(AdminTestCase):
                 json={"text": "le budget est de 50 000 euros", "style_id": "nova_style_notes",
                       "style_prompt": "Prends des notes."})
         self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(response.json()["text"], "le budget est de 50 000 euros")
+        self.assertEqual(response.json()["text"], "Le budget est de 50 000 euros")
 
 
 class RewriteRefusalTests(unittest.TestCase):
