@@ -13263,11 +13263,14 @@ SIMPLE_REPAIRS = (
 # enfin à 128 » (RTX, 17/10 : jamais résolu, ni par la règle ni par le modèle).
 # Un « non » seul suffit ici : un code n'a pas d'autre lecture.
 _ROOM_CODE_REPAIR = re.compile(
-    r"(?<!\w)[A-Z]\s?\d{2,4}\b\s*[,.]?\s*(?:euh\s*,?\s*)?"
+    r"(?<!\w)[A-Z]\s?\d{2,4}\b\s*[,.]?\s*(?:(?i:euh|tu vois)\s*,?\s*)*"
     r"(?:non(?:\s*,?\s*(?:non|pardon|attends?))?|pardon|attends?|plut[oô]t|enfin)\s*,?\s*"
     r"(?=(?:à\s+)?[A-Z]?\d{2,4}\b)")
 # Avant la règle des nombres : « salle B 305 non pardon 305 » gardait B305.
 SIMPLE_REPAIRS = (_ROOM_CODE_REPAIR,) + SIMPLE_REPAIRS
+# Whisper écrit « salle à 119 » pour la salle A119 (n° 13). Une heure reste :
+# « la salle à 14 h ».
+_ROOM_A = re.compile(r"\b(salle\s+)à\s+(\d{2,4})\b(?!\s*h\b|\s*heures?\b)", re.IGNORECASE)
 
 
 def resolve_simple_repairs(text: str) -> str:
@@ -13275,7 +13278,7 @@ def resolve_simple_repairs(text: str) -> str:
     → « 11 h ». Seule la valeur abandonnée et les mots de la reprise partent."""
     for pattern in SIMPLE_REPAIRS:
         text = pattern.sub("", text)
-    return text
+    return _ROOM_A.sub(lambda m: f"{m.group(1)}A{m.group(2)}", text)
 
 
 async def resolve_self_corrections(text: str) -> str:

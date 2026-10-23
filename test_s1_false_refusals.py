@@ -101,5 +101,22 @@ class RoomCodeTests(unittest.TestCase):
             "Le vecteur A 12 composantes.")
 
 
+class RoomRepairTests(unittest.TestCase):
+    def test_a_filler_between_the_code_and_its_repair(self):
+        """n° 15 : « Tu vois, euh non » gardait l'ancien code."""
+        self.assertEqual(
+            main.resolve_simple_repairs("Le TD est en salle C122. Tu vois, euh non, B119."),
+            "Le TD est en salle B119.")
+
+    def test_a_after_salle_is_the_letter_a(self):
+        """n° 13 : Whisper écrit « à 119 » pour la salle A119."""
+        self.assertEqual(main.resolve_simple_repairs("Rendez-vous en salle à 119."),
+                         "Rendez-vous en salle A119.")
+
+    def test_an_hour_after_salle_is_left_alone(self):
+        self.assertEqual(main.resolve_simple_repairs("On libère la salle à 14 h."),
+                         "On libère la salle à 14 h.")
+
+
 if __name__ == "__main__":
     unittest.main()
