@@ -2365,12 +2365,12 @@ class PolicySetting:
 POLICY_SETTINGS: dict[str, PolicySetting] = {
     setting.key: setting
     for setting in (
-        PolicySetting("ai_skills_enabled", bool, True, "aiSkills"),
+        PolicySetting("ai_skills_enabled", bool, False, "aiSkills"),
         PolicySetting("organization_vocabulary_enabled", bool, True, "dictionary"),
-        PolicySetting("voice_commands_enabled", bool, True, "commands"),
-        PolicySetting("engineering_notes_enabled", bool, True, "engineeringNotes"),
+        PolicySetting("voice_commands_enabled", bool, False, "commands"),
+        PolicySetting("engineering_notes_enabled", bool, False, "engineeringNotes"),
         PolicySetting("file_import_enabled", bool, True, "fileTranscription"),
-        PolicySetting("learning_enabled", bool, True, "learning"),
+        PolicySetting("learning_enabled", bool, False, "learning"),
         # Les categories de l'application. `styles_enabled` ferme la categorie
         # Styles et la distribution des Styles d'organisation, jamais la
         # reformulation des dictees : `/api/reformulate` reste ouverte, sans
@@ -2383,13 +2383,13 @@ POLICY_SETTINGS: dict[str, PolicySetting] = {
         # Les cles nomment ce qu'elles designent sans reprendre les mots
         # « prompt » ou « history » : le document de policy ne doit jamais
         # ressembler a du contenu de personne, et un test le verifie mot a mot.
-        PolicySetting("generated_instructions_enabled", bool, True, "prompts"),
+        PolicySetting("generated_instructions_enabled", bool, False, "prompts"),
         PolicySetting("past_dictations_enabled", bool, True, "history"),
         # Le mode reunion capture les autres participants : c'est la
         # fonction qu'un service juridique ou un comite d'entreprise voudra
         # encadrer en premier. Le poste sait deja la retirer sur annonce ;
         # sans cette cle, l'organisation n'avait aucun moyen de le demander.
-        PolicySetting("meeting_enabled", bool, True, "meeting"),
+        PolicySetting("meeting_enabled", bool, False, "meeting"),
         # Une duree, pas un interrupteur : elle ne ferme aucune capacite. Elle
         # protege le moteur partage d'un enregistrement sans fin. Le poste
         # previent avant la limite et arrete ; `/api/transcribe` refuse ce qui
