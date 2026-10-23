@@ -12510,6 +12510,17 @@ def without_fillers(text: str) -> str:
     return re.sub(r"[ \t]{2,}", " ", out).strip()
 
 
+_LEADING_DONC = re.compile(r"^donc\b\s*,?\s*", re.IGNORECASE)
+
+
+def presentable_fallback(text: str) -> str:
+    """La dictée rendue après un refus, lisible comme une phrase : sans tics,
+    sans le « donc » de l'oral en tête, avec une majuscule (test réel des
+    Styles du 20/10 : « écris un mail… », « donc le partiel… »)."""
+    out = _LEADING_DONC.sub("", without_fillers(text))
+    return out[:1].upper() + out[1:]
+
+
 # Les tics qu'un contrôle ne compte jamais, avec ou sans ponctuation. Banc
 # v2 du RTX (17/10, 45 refus tirés au hasard) : « coup » de « du coup » compté
 # comme un mot perdu, « tu vois » retiré ou rendu « vous voyez » compté comme
@@ -14223,7 +14234,7 @@ async def reformulate(body: ReformulateRequest, user: str = Depends(current_user
             raise
         observability.log("reformulation.engine_unavailable", level="warning",
                           style=style_id or "", code=error.detail.get("code", ""))
-        return fallback
+        return {"text": presentable_fallback(fallback["text"])}
     count_usage(
         user, "reformulation",
         latency_ms=(time.monotonic() - started) * 1000.0,
@@ -14232,9 +14243,9 @@ async def reformulate(body: ReformulateRequest, user: str = Depends(current_user
     # que l'élève voulait écrire. Banc de synthèse du RTX (11/10) : « le 12
     # octobre, enfin le 19 » refusé au Style revenait avec la reprise, alors que
     # « le 19 octobre » était prêt. Sa résolution a déjà passé ses contrôles.
-    resolved_fallback = {"text": without_fillers(restore_snippets(
+    resolved_fallback = {"text": presentable_fallback(restore_snippets(
         enforce_vocabulary(outcome.resolved, vocabulary), snippet_restores)
-        or fallback["text"])} if outcome.resolved else {"text": without_fillers(fallback["text"])}
+        or fallback["text"])} if outcome.resolved else {"text": presentable_fallback(fallback["text"])}
     if outcome.text is None:
         # Une reformulation coupée, un gabarit recopié, une réponse, une
         # traduction, un nombre perdu : la dictée est rendue, jamais un texte
