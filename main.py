@@ -12722,6 +12722,23 @@ def refine_plausible(transcript: str, refined: str, vocabulary: list[str]) -> bo
     return new_terms <= AUDIO_REFINE_MAX_NEW_TERMS
 
 
+_ROOM_CODE_SPLIT = re.compile(r"\b([A-Z]) (\d{2,4})\b")
+_ROOM_AFTER_SALLE = re.compile(r"(\bsalle\s+)([A-Z]) (\d{2,4})\b", re.IGNORECASE)
+
+
+def joined_room_codes(transcript: str, refined: str) -> str:
+    """Un code de salle reste collé : « A112 », pas « A 112 » (n° 7).
+
+    Recollé quand Whisper l'avait écrit ainsi, ou quand il suit « salle ». Une
+    lettre suivie d'un nombre ailleurs (« vecteur A 12 ») n'est pas touchée.
+    """
+    joined = {code.upper() for code in re.findall(r"\b[A-Za-z]\d{2,4}\b", transcript)}
+    refined = _ROOM_AFTER_SALLE.sub(lambda m: f"{m.group(1)}{m.group(2)}{m.group(3)}", refined)
+    return _ROOM_CODE_SPLIT.sub(
+        lambda m: m.group(1) + m.group(2) if m.group(1) + m.group(2) in joined else m.group(0),
+        refined)
+
+
 async def refined_transcription(audio: bytes, filename: str, transcript: str,
                                 vocabulary: list[tuple[str, str]]) -> str:
     """La transcription relue avec l'audio et le vocabulaire, ou celle de
@@ -12749,7 +12766,7 @@ async def refined_transcription(audio: bytes, filename: str, transcript: str,
     if not refine_plausible(transcript, refined, terms):
         observability.log("transcription.refine_rejected", level="warning")
         return transcript
-    return refined
+    return joined_room_codes(transcript, refined)
 
 
 async def transcribe_audio(

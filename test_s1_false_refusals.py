@@ -81,5 +81,25 @@ class InventedMarkersTests(unittest.TestCase):
             "Voici mon adresse {{snippet0}}.")
 
 
+class RoomCodeTests(unittest.TestCase):
+    """n° 7 : la relecture audio écrivait « A 112 » au lieu de « A112 »."""
+
+    def test_a_room_code_whisper_wrote_joined_stays_joined(self):
+        self.assertEqual(
+            main.joined_room_codes("rendez-vous en A112 demain", "Rendez-vous en A 112 demain."),
+            "Rendez-vous en A112 demain.")
+
+    def test_a_code_after_salle_is_joined(self):
+        self.assertEqual(
+            main.joined_room_codes("cours en salle b 204", "Cours en salle B 204."),
+            "Cours en salle B204.")
+
+    def test_a_letter_and_a_number_elsewhere_are_left_alone(self):
+        self.assertEqual(
+            main.joined_room_codes("le vecteur a 12 composantes",
+                                   "Le vecteur A 12 composantes."),
+            "Le vecteur A 12 composantes.")
+
+
 if __name__ == "__main__":
     unittest.main()
