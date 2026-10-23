@@ -264,9 +264,9 @@ class LearnStaysCoreTests(unittest.TestCase):
     def test_the_capability_is_declared_for_every_edition(self):
         self.assertIn("learning", main.public_campus_config()["capabilities"])
 
-    def test_the_capability_is_open_by_default(self):
-        """Une organisation qui n'a rien configure ne perd pas Learn."""
-        self.assertTrue(main.POLICY_SETTINGS["learning_enabled"].default)
+    def test_the_capability_is_closed_until_the_organization_opens_it(self):
+        """Learn est une fonction optionnelle : fermée par défaut (lot 3, 20/10)."""
+        self.assertFalse(main.POLICY_SETTINGS["learning_enabled"].default)
 
     def test_no_learn_route_asks_which_nature_serves_it(self):
         """Aucune route Learn ne lit `org_type`, ni directement ni par un voisin."""

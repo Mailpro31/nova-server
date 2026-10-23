@@ -642,10 +642,6 @@ class LearningCapabilityTests(AdminTestCase):
             with main.db() as conn:
                 conn.execute("DELETE FROM organization_policies")
 
-    def test_the_policy_key_defaults_to_permissive(self):
-        """Une organisation qui n'a rien configure ne perd pas Learn."""
-        self.assertTrue(main.POLICY_SETTINGS["learning_enabled"].default)
-
     def test_no_route_asks_which_edition_is_installed(self):
         """Learn ne doit pas exister « parce que Campus ».
 
