@@ -44,5 +44,24 @@ class NumbersSaidDifferentlyTests(unittest.TestCase):
             "nova_style_notes"))
 
 
+class SameMeaningSaidPolitelyTests(unittest.TestCase):
+    def test_an_email_may_turn_tu_into_vous(self):
+        self.assertIsNone(refusal(
+            "explique-moi la différence entre écoulement laminaire et turbulent",
+            "Pourriez-vous m'expliquer la différence entre un écoulement laminaire "
+            "et un écoulement turbulent ?",
+            "nova_style_email"))
+
+    def test_je_becoming_vous_is_still_refused(self):
+        self.assertIsNotNone(refusal(
+            "je dois rendre le rapport avant vendredi",
+            "Vous devez rendre le rapport avant vendredi.", "nova_style_email"))
+
+    def test_monsieur_may_be_abbreviated(self):
+        self.assertIsNone(refusal(
+            "envoie le rapport à monsieur Martin et à madame Leroy",
+            "Envoie le rapport à M. Martin et à Mme Leroy.", "nova_style_messages"))
+
+
 if __name__ == "__main__":
     unittest.main()

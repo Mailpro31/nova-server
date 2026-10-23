@@ -11742,7 +11742,7 @@ def answer_preamble(text: str, answer: str) -> bool:
 # qu'aucun possessif ne bouge, et `person_changed` ne le voit pas. « j'ai
 # oublié » devenu « je m'oublie » ajoute un pronom que l'élève n'a pas écrit.
 PERSON_PRONOUNS = {
-    "je": "je", "j": "je", "jai": "je", "me": "me", "m": "me", "moi": "moi",
+    "je": "je", "j": "je", "jai": "je", "me": "me", "m": "me", "moi": "me",
     "tu": "tu", "te": "te", "t": "te", "toi": "toi", "on": "nous", "nous": "nous",
     "vous": "vous", "quelquun": "quelquun", "i": "i", "you": "you", "we": "we",
     "someone": "someone", "somebody": "someone", "anyone": "anyone",
@@ -11760,7 +11760,7 @@ def _person_pronouns(value: str) -> Counter:
                    and word not in ("j", "m", "t"))
 
 
-def pronouns_swapped(text: str, answer: str) -> bool:
+def pronouns_swapped(text: str, answer: str, polite: bool = False) -> bool:
     """Un pronom de personne est apparu pendant qu'un autre disparaissait.
 
     Une correction peut ajouter un pronom oublié (« jai » → « j'ai » compte
@@ -11768,6 +11768,10 @@ def pronouns_swapped(text: str, answer: str) -> bool:
     personne par une autre.
     """
     said, wrote = _person_pronouns(text), _person_pronouns(answer)
+    if polite:
+        # Un e-mail vouvoie : « explique-moi » devient « Pourriez-vous
+        # m'expliquer », à la même personne (lot S1, 23/10).
+        said["vous"] += sum(said.pop(word, 0) for word in ("tu", "te", "toi"))
     if wrote - said and said - wrote:
         return True
     # « Je peux vous l'envoyer » réécrit « Il pourra être envoyé » : le
@@ -13687,6 +13691,9 @@ def unit_changed(dictated: str, text: str) -> bool:
 # « n° 3 », « 340 m/s ». Les contrôles des mots les lisent comme dits : sans
 # cela, la mise au propre attendue d'une dictée était refusée.
 SPOKEN_SYMBOLS = (
+    # « monsieur Martin » écrit « M. Martin » (lot S1, 23/10).
+    (re.compile(r"\bM\.\s?(?=[A-ZÉ])"), " monsieur "),
+    (re.compile(r"\bMme\b"), " madame "),
     (re.compile(r"(?<!\w)km/h(?!\w)", re.IGNORECASE), " kilomètres par heure "),
     (re.compile(r"(?<!\w)m/s²"), " mètres par seconde au carré "),
     (re.compile(r"(?<!\w)m/s(?!\w)"), " mètres par seconde "),
@@ -14053,7 +14060,7 @@ def rewrite_refusal(
     # les notes de cours, qui peuvent tourner « je vais montrer » en « on
     # montre », n'y sont pas soumises.
     if style_id in GUARDED_STYLE_IDS and pronouns_swapped(
-            for_checks(resolved or dictated), for_checks(text)):
+            for_checks(resolved or dictated), for_checks(text), style_id == "nova_style_email"):
         return "person-changed"
     # Du code LaTeX que l'élève n'a pas dicté : « la dérivée de x au carré »
     # devenue « \( x^2 \) », illisible dans Word (test de Sash, 07/10).
