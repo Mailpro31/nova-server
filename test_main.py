@@ -155,6 +155,7 @@ class NovaServerTests(unittest.TestCase):
         cls.client = TestClient(main.app)
 
     def setUp(self):
+        open_optional_features(self)
         with main.db() as conn:
             for table in (
                 "auth_codes",
