@@ -128,7 +128,7 @@ class BlockSnippetTests(unittest.TestCase):
         text, restores = main.protect_snippets("merci, signature ipsa", self.SNIPPETS)
         self.assertEqual(text, "merci, {{snippet0}}")
         self.assertEqual(main.restore_snippets(text, restores),
-                         "merci, Sasha Martin\nÉtudiant IPSA")
+                         "merci,\nSasha Martin\nÉtudiant IPSA")
 
     def test_a_one_line_value_keeps_its_trigger(self):
         text, _ = main.protect_snippets("voici mon adresse", self.SNIPPETS)
@@ -143,6 +143,41 @@ class TrailingRepairWordTests(unittest.TestCase):
 
     def test_a_real_repair_is_still_seen(self):
         self.assertTrue(main.has_self_correction_hint("mardi, non attends, mercredi"))
+
+
+class VerificationOf24OctoberTests(unittest.TestCase):
+    """Rejeu du PC fixe sur b66d475 (24/10, release s1-verif-b66d475)."""
+
+    def test_notes_that_answer_the_question_are_refused(self):
+        answer = ("## Écoulement laminaire et turbulent\n### Écoulement laminaire\n"
+                  "L'écoulement laminaire est caractérisé par un **mouvement fluide régulier "
+                  "et ordonné**, où les particules se déplacent en **parallèle sans se "
+                  "mélanger**.\n\n> Il se produit à de **faibles nombres de Reynolds**.\n\n"
+                  "### Écoulement turbulent\nL'écoulement turbulent est caractérisé par un "
+                  "**mouvement fluide irrégulier et chaotique**, avec des **tourbillons**.")
+        self.assertIsNotNone(refusal(
+            "explique-moi la différence entre écoulement laminaire et turbulent",
+            answer, "nova_style_notes"))
+
+    def test_notes_with_headings_are_still_accepted(self):
+        self.assertIsNone(refusal(
+            "rendre le TP de mécanique lundi et réviser le chapitre trois",
+            "## À faire\n- Rendre le **TP de mécanique** lundi\n- Réviser le **chapitre 3**",
+            "nova_style_notes"))
+
+    def test_rendez_vous_is_not_an_addressee(self):
+        reason = main.rewrite_refusal(
+            "rendez-vous à 14 heures, non attends, à 15 heures en salle A112",
+            "- Se rendre à 15h en salle A112", "nova_style_todo",
+            resolved="rendez-vous à 15 heures en salle A112")
+        self.assertNotEqual(reason, "person-changed")
+
+    def test_a_signature_starts_on_its_own_line(self):
+        text, restores = main.protect_snippets(
+            "je rattraperai le TD, signature ipsa", BlockSnippetTests.SNIPPETS)
+        self.assertEqual(
+            main.restore_snippets("Je rattraperai le TD {{snippet0}}", restores),
+            "Je rattraperai le TD\nSasha Martin\nÉtudiant IPSA")
 
 
 if __name__ == "__main__":

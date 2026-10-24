@@ -11292,6 +11292,9 @@ def restore_snippets(text: str, restores: dict[str, tuple[str, str]],
             trigger_word = trigger.split()[-1] if trigger.split() else ""
             if not prefix or prefix.endswith("\n"):
                 separator = ""
+            elif "\n" in content.strip():
+                # Un bloc (une signature) commence sur sa ligne (24/10).
+                separator = "\n"
             elif prefix.endswith(ANNOUNCES_VALUE):
                 separator = " "
             elif trigger_word and last_word.casefold() == trigger_word.casefold():
@@ -11758,6 +11761,8 @@ PERSON_PRONOUNS = {
 def _person_pronouns(value: str) -> Counter:
     folded = fold_accents((value or "").lower()).replace("’", "'")
     folded = re.sub(r"quelqu\s*'\s*un", "quelquun", folded)
+    # « rendez-vous » est un nom : son « vous » ne désigne personne (24/10).
+    folded = folded.replace("rendez-vous", "rendezvous")
     # « j' », « m' », « t' » : avec leur apostrophe seulement. Le « T » de
     # « PV = nRT » passait pour « te » (sondage du 17/10).
     return Counter(PERSON_PRONOUNS[word.rstrip("'")]
@@ -14104,6 +14109,8 @@ def rewrite_refusal(
     # Les notes de cours ont leurs propres controles, plus stricts, et les
     # motifs du poste : les nombres y sont compares en chiffres comme en
     # lettres.
+    if invented_answer(resolved or dictated, text, style_id):
+        return "output-expanded-excessively"
     if style_id == COURSE_NOTES_STYLE:
         return course_notes_refusal(dictated, text)
     # La version que l'élève venait de rejeter, à la place de sa correction.
@@ -14181,6 +14188,24 @@ def without_invented_markers(dictated: str, text: str) -> str:
     """
     return _ANY_MARKER.sub(
         lambda m: m.group(0) if m.group(0) in dictated else m.group(1), text)
+
+
+# Combien de mots absents de la dictée un Style peut ajouter : des titres, pas
+# une réponse. Rejeu du PC fixe (24/10) : Notes répondait à « explique-moi la
+# différence… » avec 28 mots nouveaux (5 au plus ailleurs), Réunion avec 113
+# (25 au plus pour ses sections).
+INVENTED_WORDS_LIMIT = {"nova_style_notes": (12, 2), "nova_style_meeting": (40, 4)}
+_CONTENT_WORD = re.compile(r"[a-z]{4,}")
+
+
+def invented_answer(dictated: str, text: str, style_id: str) -> bool:
+    if style_id not in INVENTED_WORDS_LIMIT:
+        return False
+    floor, factor = INVENTED_WORDS_LIMIT[style_id]
+    said = set(_CONTENT_WORD.findall(fold_accents(dictated.lower())))
+    new = [word for word in _CONTENT_WORD.findall(fold_accents(text.lower()))
+           if word not in said]
+    return len(new) > max(floor, factor * len(said))
 
 
 @dataclass(frozen=True)
