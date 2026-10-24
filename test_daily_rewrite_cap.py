@@ -7,6 +7,7 @@ manque.
 """
 
 import json
+import os
 import time
 import unittest
 from unittest.mock import patch
@@ -89,6 +90,18 @@ class DailyRewriteCapTests(AdminTestCase):
         self.used_today(10_000)
         _, calls = self.reformulate()
         self.assertEqual(len(calls), 1)
+
+
+class EstimatedCostTests(unittest.TestCase):
+    """n° 53 : la page Usage montre un coût, seulement si on lui en a donné un."""
+
+    def test_no_unit_cost_no_figure(self):
+        with patch.dict(os.environ, {"NOVA_COST_PER_DICTATION_USD": ""}):
+            self.assertIsNone(main.estimated_cost_usd(1000))
+
+    def test_the_cost_follows_the_dictations(self):
+        with patch.dict(os.environ, {"NOVA_COST_PER_DICTATION_USD": "0.00057"}):
+            self.assertEqual(main.estimated_cost_usd(10_000), 5.7)
 
 
 if __name__ == "__main__":

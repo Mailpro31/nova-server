@@ -15786,6 +15786,17 @@ def host_timeline(since: str) -> list[dict]:
     ]
 
 
+def estimated_cost_usd(transcriptions: int) -> float | None:
+    """Le coût estimé des dictées, si l'exploitant a renseigné le coût d'une
+    dictée (n° 53 ; mesuré à 0,00057 $ sur OpenRouter le 24/10). Sans lui,
+    rien n'est affiché plutôt qu'un chiffre inventé."""
+    try:
+        unit = float(os.getenv("NOVA_COST_PER_DICTATION_USD", "") or 0)
+    except ValueError:
+        return None
+    return round(transcriptions * unit, 2) if unit > 0 else None
+
+
 def usage_summary(timeline: list[dict]) -> dict:
     """Ce qui se lit en un coup d'oeil, calcule a partir de la meme serie.
 
@@ -15796,7 +15807,7 @@ def usage_summary(timeline: list[dict]) -> dict:
         return {
             "dictations": 0, "people_peak": 0, "busiest_hour": None,
             "latency_ms_average": None, "latency_ms_max": None,
-            "over_five_seconds": 0,
+            "over_five_seconds": 0, "estimated_cost_usd": estimated_cost_usd(0),
         }
     total = sum(h["transcriptions"] + h["reformulations"] for h in timeline)
     busiest = max(timeline, key=lambda h: h["transcriptions"] + h["reformulations"])
@@ -15815,6 +15826,7 @@ def usage_summary(timeline: list[dict]) -> dict:
         # Le nombre d'heures ou le pire cas a depasse l'objectif. Un seul
         # depassement ne condamne rien ; dix heures sur vingt-quatre, si.
         "over_five_seconds": sum(1 for p in peaks if p > 5000),
+        "estimated_cost_usd": estimated_cost_usd(sum(h["transcriptions"] for h in timeline)),
     }
 
 

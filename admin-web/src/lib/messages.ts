@@ -924,6 +924,8 @@ const en = {
     window: { "24": "24 hours", "168": "7 days", "744": "31 days" },
     dictations: "Dictations",
     peoplePeak: "People at peak",
+    estimatedCost: "Estimated AI cost",
+    dollars: (value: number) => `$${value.toFixed(2)}`,
     busiestHour: "Busiest hour",
     latencyAverage: "Average wait",
     latencyPeak: "Worst wait",

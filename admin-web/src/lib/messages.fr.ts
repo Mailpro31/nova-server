@@ -896,6 +896,8 @@ export const fr: Messages = {
     window: { "24": "24 heures", "168": "7 jours", "744": "31 jours" },
     dictations: "Dictées",
     peoplePeak: "Personnes au pic",
+    estimatedCost: "Coût estimé de l’IA",
+    dollars: (value: number) => `${value.toFixed(2).replace(".", ",")} $`,
     busiestHour: "Heure la plus chargée",
     latencyAverage: "Attente moyenne",
     latencyPeak: "Pire attente",

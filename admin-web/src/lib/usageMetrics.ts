@@ -49,6 +49,8 @@ export interface UsageSummary {
   latency_ms_average: number | null;
   latency_ms_max: number | null;
   over_five_seconds: number;
+  /** Absent tant que l'exploitant n'a pas renseigné le coût d'une dictée. */
+  estimated_cost_usd?: number | null;
 }
 
 export interface UsageMetrics {
