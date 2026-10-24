@@ -25,20 +25,19 @@ KEY = "meeting_enabled"
 
 
 class MeetingPolicySchemaTests(unittest.TestCase):
-    def test_the_key_governs_the_capability_and_is_open_by_default(self):
+    def test_the_key_governs_the_capability_and_is_closed_by_default(self):
+        # Fonction optionnelle : fermée tant que l'organisation ne l'ouvre pas
+        # (lot 3, 20/10 ; le mode réunion est suspendu depuis le 01/10).
         setting = main.POLICY_SETTINGS[KEY]
         self.assertIs(setting.kind, bool)
-        self.assertTrue(
-            setting.default,
-            "une cle qui apparait ne doit rien eteindre chez personne",
-        )
+        self.assertFalse(setting.default)
         self.assertEqual(setting.capability, "meeting")
 
-    def test_the_default_document_carries_it_open(self):
-        self.assertTrue(main.DEFAULT_ORGANIZATION_POLICY[KEY])
+    def test_the_default_document_carries_it_closed(self):
+        self.assertFalse(main.DEFAULT_ORGANIZATION_POLICY[KEY])
 
     def test_it_is_validated_like_the_others(self):
-        self.assertEqual(main.validate_policy_settings({KEY: False}), {KEY: False})
+        self.assertEqual(main.validate_policy_settings({KEY: True}), {KEY: True})
         # Un type errone est refuse, pas ignore : une valeur que le serveur ne
         # comprend pas ne doit ni fermer la fonction, ni passer en silence.
         with self.assertRaises(ValueError):

@@ -36,17 +36,18 @@ NEW_KEYS = {
 
 
 class CategoryPolicySchemaTests(unittest.TestCase):
-    def test_each_category_key_governs_its_capability_and_is_open_by_default(self):
+    def test_each_category_key_governs_its_capability(self):
         for key, capability in NEW_KEYS.items():
             with self.subTest(key=key):
                 setting = main.POLICY_SETTINGS[key]
                 self.assertIs(setting.kind, bool)
-                self.assertTrue(setting.default)
+                # Prompts est une fonction optionnelle, fermée par défaut (lot 3).
+                self.assertEqual(setting.default, key != "generated_instructions_enabled")
                 self.assertEqual(setting.capability, capability)
 
-    def test_prompts_and_history_are_announced_open_by_default(self):
+    def test_history_is_open_and_prompts_closed_by_default(self):
         capabilities = main.public_campus_config()["capabilities"]
-        self.assertTrue(capabilities["prompts"])
+        self.assertFalse(capabilities["prompts"])
         self.assertTrue(capabilities["history"])
 
     def test_closing_a_category_closes_its_capability(self):
