@@ -13229,8 +13229,24 @@ def has_self_correction_hint(text: str) -> bool:
     # Rien après le mot de reprise : il ne corrige rien. « À revoir, attends. »
     # perdait « À revoir » (n° 17).
     text = text or ""
-    return any(text[match.end():].strip(" \t\n.,;:!?…")
+    return any(_announces_a_correction(text[match.end():])
                for match in SELF_CORRECTION_HINT.finditer(text))
+
+
+def _announces_a_correction(after: str) -> bool:
+    """Ce qui suit le mot de reprise est-il la valeur corrigée ?
+
+    Une phrase qui finit sur lui suivie d'une longue phrase est une nouvelle
+    idée : « À revoir, attends. Un amplificateur… » (0923, 24/10). Suivie d'une
+    valeur courte, c'est une reprise : « mardi, non. Jeudi. »
+    """
+    rest = after.strip(" \t\n,;:")
+    if not rest:
+        return False
+    if rest[0] not in ".!?…":
+        return True
+    following = re.split(r"[.!?…]", rest.lstrip(".!?… \t\n"), maxsplit=1)[0]
+    return 0 < len(following.split()) <= 3
 
 
 def _resolution_words(text: str) -> list[str]:

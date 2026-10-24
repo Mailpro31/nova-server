@@ -141,6 +141,14 @@ class TrailingRepairWordTests(unittest.TestCase):
     def test_a_repair_word_with_nothing_after_is_not_a_repair(self):
         self.assertFalse(main.has_self_correction_hint("À revoir, attends."))
 
+    def test_a_repair_word_ending_its_sentence_is_not_a_repair(self):
+        """0923 : « À revoir, attends. Un amplificateur… » perdait « À revoir »."""
+        self.assertFalse(main.has_self_correction_hint(
+            "À revoir, attends. Un amplificateur opérationnel idéal a un gain infini."))
+
+    def test_a_short_value_after_the_period_is_still_a_repair(self):
+        self.assertTrue(main.has_self_correction_hint("rendez-vous mardi, non. Jeudi."))
+
     def test_a_real_repair_is_still_seen(self):
         self.assertTrue(main.has_self_correction_hint("mardi, non attends, mercredi"))
 
