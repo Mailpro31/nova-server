@@ -992,6 +992,9 @@ class AIRuntimeAdminTests(AdminTestCase):
                 "/api/control/organization/ai-runtime", headers=headers
             ).json()
         self.assertEqual(body["processing_location"], "external_ai_provider")
+        with patch.dict(os.environ, {"NOVA_AI_ALLOW_PUBLIC_ENDPOINT": "1"}):
+            self.assertEqual(main.public_campus_config()["processing_location"],
+                             "external_ai_provider")
 
     def test_it_admin_applies_dedicated_config_with_revision(self):
         headers = grant_admin_session("it@example.com", "it_admin")

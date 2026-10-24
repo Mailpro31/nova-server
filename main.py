@@ -4427,6 +4427,9 @@ def public_campus_config(organization_id: str | None = None,
         },
         "auth_methods": auth_methods,
         "education_mode": EDUCATION_MODE if EDUCATION_MODE in {"normal", "classroom", "assessment"} else "normal",
+        # Le poste dit à l'élève où part son texte (n° 59, RGPD et AI Act).
+        "processing_location": ("external_ai_provider" if public_endpoint_allowed()
+                                else "organization_private_infrastructure"),
         "ai_skills": {
             "enabled": EDUCATION_MODE != "assessment",
             "required": AI_SKILLS_REQUIRED,
