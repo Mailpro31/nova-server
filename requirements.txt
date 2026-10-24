@@ -13,3 +13,5 @@ pyjwt[crypto]==2.13.0
 psycopg[binary]==3.3.4
 redis==8.1.0
 openpyxl==3.1.5
+# Le texte des PDF de cours, pour « Analyser un document » (n° 8 quinquies).
+pypdf==5.1.0

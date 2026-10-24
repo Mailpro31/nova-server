@@ -17,6 +17,7 @@ import difflib
 import re
 import base64
 import hashlib
+import html
 import ipaddress
 import json
 import secrets
@@ -27,6 +28,7 @@ import time
 import unicodedata
 import uuid
 import wave
+import zipfile
 from collections import Counter
 from contextlib import contextmanager
 from pathlib import Path
@@ -11908,13 +11910,61 @@ async def dictionary_import(file: UploadFile, user: str = Depends(current_user))
             imported += 1
     return {"imported": imported}
 
+# Le texte des fichiers Office est dans des balises `<w:t>` (Word) et `<a:t>`
+# (PowerPoint) : la bibliothèque standard suffit à le relire.
+_OFFICE_TEXT = re.compile(r"<(?:w|a):t(?:\s[^>]*)?>([^<]*)</(?:w|a):t>")
+_OFFICE_PARTS = re.compile(r"word/document\.xml|ppt/slides/slide\d+\.xml")
+
+
+def document_text(filename: str, data: bytes) -> str:
+    """Le texte d'un document de cours : PDF, Word, PowerPoint ou texte brut.
+
+    Le document n'est jamais gardé : seuls les termes que l'élève coche le sont
+    (n° 8 quinquies).
+    """
+    name = (filename or "").lower()
+    if name.endswith(".pdf"):
+        import pypdf  # paresseux : seule cette route en a besoin
+
+        reader = pypdf.PdfReader(io.BytesIO(data))
+        return "\n".join(page.extract_text() or "" for page in reader.pages)
+    if name.endswith((".docx", ".pptx")):
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            parts = sorted(n for n in archive.namelist() if _OFFICE_PARTS.fullmatch(n))
+            xml = "\n".join(archive.read(n).decode("utf-8", errors="replace") for n in parts)
+        return html.unescape("".join(_OFFICE_TEXT.findall(xml)))
+    return data.decode("utf-8", errors="replace")
+
+
+# Sigles, noms composés (« Navier-Stokes ») et mots à majuscule au milieu d'une
+# phrase (« Reynolds ») : la majuscule d'un début de phrase ne dit rien.
+_ACRONYM_OR_COMPOUND = re.compile(r"\b(?:[A-Z]{2,8}\d*|[A-Z][a-zà-ÿ]+(?:-[A-Z][a-zà-ÿ]+)+)\b")
+_CAPITALISED = re.compile(r"(?<=[^\s.!?:])\s+([A-ZÀ-Ý][a-zà-ÿ]{2,})(?![-\w])")
+
+
+def term_candidates(text: str) -> list[str]:
+    found = set(_ACRONYM_OR_COMPOUND.findall(text)) | set(_CAPITALISED.findall(text))
+    return sorted(found)[:100]
+
+
 @app.post("/api/dictionary/analyze", dependencies=[Depends(product_capability("dictionary", "organization_vocabulary"))])
-async def dictionary_analyze(file: UploadFile, user: str = Depends(current_user)):
-    text = (await file.read()).decode("utf-8", errors="replace")[:200_000]
-    candidates = set(re.findall(r"\b(?:[A-Z]{2,8}|[A-Z][a-z]+(?:[- ][A-Z][a-z]+)+)\b", text))
+async def dictionary_analyze(file: UploadFile, preview: bool = False,
+                             user: str = Depends(current_user)):
+    data = await file.read()
+    if len(data) > 20_000_000:
+        raise HTTPException(413, "Document trop volumineux")
+    try:
+        text = document_text(file.filename or "", data)[:200_000]
+    except (zipfile.BadZipFile, ValueError, OSError):
+        raise HTTPException(422, "Document illisible")
+    candidates = term_candidates(text)
+    # L'aperçu rend les termes sans rien ajouter : l'élève coche ceux qu'il
+    # garde (n° 69). Sans lui, l'ancien comportement des postes déjà installés.
+    if preview:
+        return {"terms": candidates}
     added = 0
     with db() as conn:
-        for term in sorted(candidates)[:100]:
+        for term in candidates:
             before = conn.total_changes
             conn.execute(
                 "INSERT OR IGNORE INTO personal_dictionary(email,term,replacement,source) "
