@@ -581,6 +581,13 @@ class IdentityFoundationTests(unittest.TestCase):
         self.assertIsInstance(body["cohort"], str)
         self.assertIsInstance(body["organization"], str)
 
+    def test_me_logs_the_client_version_without_the_address(self):
+        headers = {**self.sign_in(), "X-Nova-Version": "1.0.70"}
+        with self.assertLogs("nova", level="INFO") as logs:
+            self.client.get("/api/me", headers=headers)
+        record = next(r for r in logs.records if r.getMessage() == "client.version")
+        self.assertEqual(record.fields, {"version": "1.0.70"})
+
     def test_me_additions_are_purely_additive(self):
         body = self.client.get("/api/me", headers=self.sign_in()).json()
 
