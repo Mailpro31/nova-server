@@ -124,6 +124,28 @@ class RefusedOutputsTests(unittest.TestCase):
                 self.assertEqual(main.command_refusal(EXPLAIN, source, output),
                                  "number-changed")
 
+    def test_one_half_in_words_and_in_figures_are_the_same_value(self):
+        source = "La pression dynamique est égale à un demi rho v au carré."
+        for output in ("La pression dynamique est égale à 0,5 ρv².",
+                       "La pression dynamique vaut ½ ρ v au carré.",
+                       "La pression dynamique vaut 1/2 rho v au carré."):
+            with self.subTest(output=output):
+                self.assertIsNone(main.command_refusal(SUMMARIZE, source, output))
+        self.assertEqual(main.command_refusal(SUMMARIZE, source,
+                                              "La pression dynamique est égale à 0,25 ρv²."),
+                         "number-changed")
+
+    def test_restating_the_text_label_is_not_a_chatbot_preamble(self):
+        source = "À retenir : la loi d'Ohm relie la tension, l'intensité et la résistance."
+        self.assertIsNone(main.command_refusal(
+            EXPLAIN, source,
+            "Voici ce qu'il faut retenir :\nLa loi d'Ohm relie la tension, l'intensité "
+            "et la résistance d'un circuit."))
+        self.assertEqual(main.command_refusal(
+            EXPLAIN, source,
+            "Voici une explication :\nLa loi d'Ohm relie la tension, l'intensité et la "
+            "résistance d'un circuit."), "chatbot-answer")
+
     def test_a_rewrite_never_adds_a_number_even_small(self):
         self.assertEqual(
             main.command_refusal(SPELLING, "je rend le tp bientot",
