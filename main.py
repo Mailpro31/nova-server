@@ -10917,7 +10917,8 @@ def control_read_audit(
 
 # --- profil de l'utilisateur connecté (pour l'app)
 @app.get("/api/me")
-def me(user: str = Depends(current_user), u=Depends(current_account)):
+def me(user: str = Depends(current_user), u=Depends(current_account),
+       x_nova_version: str = Header(default="")):
     """Profil du membre connecté.
 
     **Strictement additif.** Les trois champs historiques `email`, `role` et
@@ -10928,6 +10929,10 @@ def me(user: str = Depends(current_user), u=Depends(current_account)):
     Les données structurées vivent donc dans des champs nouveaux, et la forme
     du contrat est annoncée par `contract_version`.
     """
+    # Quelle version tourne sur les postes (25/10) : la version seule, sans
+    # l'adresse, tronquée parce qu'elle vient du client.
+    if x_nova_version:
+        observability.log("client.version", version=x_nova_version[:32])
     if u is None:
         return {"email": user}
     # L'organisation vient de la ligne du membre — jamais d'une entrée client,
