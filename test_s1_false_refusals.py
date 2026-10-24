@@ -215,5 +215,27 @@ class ThirdVerificationTests(unittest.TestCase):
                          "Je rattraperai le **TD**.\nSasha Martin\nÉtudiant IPSA")
 
 
+class AllStylesNegationTests(unittest.TestCase):
+    """n° 63 : un Style personnel ou de l'école ne retourne pas une négation."""
+
+    SAID = "je ne viendrai pas au TD le 12 mars"
+
+    def test_a_personal_style_cannot_drop_the_negation(self):
+        self.assertEqual(refusal(self.SAID, "Je viendrai au TD le 12 mars.", "perso_x"),
+                         "negation-dropped")
+
+    def test_a_school_style_cannot_drop_the_negation(self):
+        self.assertEqual(refusal(self.SAID, "Je viendrai au TD le 12 mars.",
+                                 "org_style_rapport"), "negation-dropped")
+
+    def test_a_rephrased_negation_is_kept(self):
+        self.assertIsNone(refusal(self.SAID, "Je serai absent au TD : pas de venue le 12 mars.",
+                                  "perso_x"))
+
+    def test_a_translation_is_not_judged(self):
+        self.assertIsNone(refusal(self.SAID, "I will not come to the tutorial on March 12.",
+                                  "org_style_english"))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -13955,6 +13955,14 @@ def negation_dropped(dictated: str, text: str) -> bool:
     return any(wrote[word] < said[word] for word in NEGATION_WORDS)
 
 
+def negation_vanished(dictated: str, text: str) -> bool:
+    """La dictée niait quelque chose, la sortie plus rien du tout."""
+    said = set(re.findall(r"[a-z]+", fold_accents((dictated or "").casefold())))
+    wrote = set(re.findall(r"[a-z]+", fold_accents((text or "").casefold())))
+    negations = set(NEGATION_WORDS) | {"ne", "n"}
+    return bool(said & negations) and not wrote & negations
+
+
 def faithful_content_added(dictated: str, text: str) -> bool:
     """Un Style fidele a-t-il ajoute du contenu ?"""
     written = course_words(text)
@@ -14152,6 +14160,13 @@ def rewrite_refusal(
     if len(text) > max(1, len(dictated)) * 6 + 160:
         return "output-expanded-excessively"
     if style_id not in GUARDED_STYLE_IDS:
+        # Styles personnels et de l'école : une négation qui disparaît tout à
+        # fait inverse le sens (n° 63). Une traduction change ses mots, elle y
+        # échappe.
+        if (dictation_language(dictated) == dictation_language(text)
+                and negation_vanished(without_repaired_words(
+                    resolve_simple_repairs(resolved or dictated)), text)):
+            return "negation-dropped"
         return None
     source_language = dictation_language(dictated)
     written_language = dictation_language(text)
