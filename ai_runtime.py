@@ -379,6 +379,10 @@ class OpenAICompatibleTextBackend:
         self.reasoning_supported = reasoning_supported
         self.transport = transport
         self._context_window: int | None = None
+        # Une API qui n'a pas `/tokenize` ou n'annonce pas sa fenêtre ne
+        # l'aura pas au prochain appel : on ne la sonde qu'une fois (24/10).
+        self._tokenize_missing = False
+        self._window_missing = False
 
     @property
     def _engine_root(self) -> str:
@@ -395,6 +399,8 @@ class OpenAICompatibleTextBackend:
         Retourne `(None, None)` si l'endpoint est absent ou illisible : c'est
         au repli conservateur de prendre le relais, jamais a une supposition.
         """
+        if self._tokenize_missing:
+            return None, None
         try:
             response = await client.post(
                 f"{self._engine_root}/tokenize",
@@ -406,6 +412,7 @@ class OpenAICompatibleTextBackend:
                 },
             )
             if response.status_code != 200:
+                self._tokenize_missing = response.status_code == 404
                 return None, None
             body = response.json()
         except (httpx.HTTPError, ValueError, json.JSONDecodeError):
@@ -421,6 +428,8 @@ class OpenAICompatibleTextBackend:
         """Fenetre annoncee par `/models`, mise en cache une fois connue."""
         if self._context_window is not None:
             return self._context_window
+        if self._window_missing:
+            return None
         try:
             response = await client.get(
                 f"{self.base_url}/models", headers=_auth_headers(self.token)
@@ -437,6 +446,7 @@ class OpenAICompatibleTextBackend:
             if item.get("id") == self.model and isinstance(window, int) and window > 0:
                 self._context_window = window
                 return window
+        self._window_missing = True
         return None
 
     @staticmethod

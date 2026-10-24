@@ -183,7 +183,7 @@ class ReformulateSnippetTests(AdminTestCase):
                                    "Voici le numéro, merci de faire le virement.")
         self.assertEqual(
             text,
-            "voici mon iban : FR76 3000 6000 0112 3456 7890 189 merci de faire le virement")
+            "Voici mon iban : FR76 3000 6000 0112 3456 7890 189 merci de faire le virement")
 
     def test_a_lost_marker_behind_its_trigger_is_put_back(self):
         """Mesuré sur le RTX le 05/10 : la reformulation est gardée."""
@@ -196,7 +196,7 @@ class ReformulateSnippetTests(AdminTestCase):
     def test_a_refused_answer_returns_the_dictation_with_its_snippet(self):
         text, _ = self.reformulate("ecris a mon mail pour le partiel de l'ipsa",
                                    "Write to the email address for the exam.")
-        self.assertEqual(text, "ecris a mon mail : contact@ipsa.fr pour le partiel de l'IPSA")
+        self.assertEqual(text, "Ecris a mon mail : contact@ipsa.fr pour le partiel de l'IPSA")
 
     def test_a_truncated_answer_returns_the_dictation_with_its_snippet(self):
         token = self.sign_in(EMAIL)
@@ -211,7 +211,7 @@ class ReformulateSnippetTests(AdminTestCase):
                 json={"text": "voici mon iban", "style_id": "nova_style_messages",
                       "style_prompt": "Message court."})
         self.assertEqual(response.json()["text"],
-                         "voici mon iban : FR76 3000 6000 0112 3456 7890 189")
+                         "Voici mon iban : FR76 3000 6000 0112 3456 7890 189")
 
 
     def test_a_stopped_text_engine_returns_the_dictation_with_its_snippet(self):
@@ -230,7 +230,7 @@ class ReformulateSnippetTests(AdminTestCase):
                       "style_prompt": "Message court."})
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["text"],
-                         "voici mon iban : FR76 3000 6000 0112 3456 7890 189 pour l'IPSA")
+                         "Voici mon iban : FR76 3000 6000 0112 3456 7890 189 pour l'IPSA")
 
 
 if __name__ == "__main__":
