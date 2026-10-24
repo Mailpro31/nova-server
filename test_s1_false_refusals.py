@@ -237,5 +237,14 @@ class AllStylesNegationTests(unittest.TestCase):
                                   "org_style_english"))
 
 
+class AfterDeploymentTests(unittest.TestCase):
+    """Mesure du PC fixe avant le déploiement (abc8197, 24/10) : 0746 et 0419."""
+
+    def test_a_corrected_room_written_joined_is_kept(self):
+        said = "Le TP est en salle C219, enfin à 128."
+        self.assertIsNone(main.rewrite_refusal(
+            said, "Le TP est en salle A128.", "default_improve_transcriptions", resolved=said))
+
+
 if __name__ == "__main__":
     unittest.main()
