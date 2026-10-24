@@ -11949,8 +11949,12 @@ def document_text(filename: str, data: bytes) -> str:
     if name.endswith(".pdf"):
         import pypdf  # paresseux : seule cette route en a besoin
 
-        reader = pypdf.PdfReader(io.BytesIO(data))
-        return "\n".join(page.extract_text() or "" for page in reader.pages)
+        # Un PDF abîmé, tronqué ou chiffré est illisible, pas une panne (25/10).
+        try:
+            reader = pypdf.PdfReader(io.BytesIO(data))
+            return "\n".join(page.extract_text() or "" for page in reader.pages)
+        except pypdf.errors.PyPdfError as error:
+            raise ValueError("PDF illisible") from error
     if name.endswith((".docx", ".pptx")):
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
             parts = sorted(n for n in archive.namelist() if _OFFICE_PARTS.fullmatch(n))

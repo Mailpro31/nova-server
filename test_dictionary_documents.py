@@ -61,6 +61,11 @@ class DocumentTextTests(unittest.TestCase):
     def test_a_pdf_is_read(self):
         self.assertIn("ONERA", main.document_text("cours.pdf", pdf("Essais ONERA")))
 
+    def test_a_broken_pdf_is_unreadable_not_a_crash(self):
+        """Contrôle réel du PC fixe (25/10) : un PDF abîmé donnait une erreur 500."""
+        with self.assertRaises(ValueError):
+            main.document_text("cours.pdf", b"%PDF-1.4 pas un pdf")
+
     def test_plain_text_is_read(self):
         self.assertEqual(main.document_text("notes.txt", "Bernoulli".encode()), "Bernoulli")
 
