@@ -11200,7 +11200,13 @@ def protect_snippets(text: str, snippets) -> tuple[str, dict[str, str]]:
         marker = f"{{{{snippet{len(restores)}}}}}"
         # Le declencheur voyage avec sa valeur : c'est lui qui dit si le texte
         # qui precede le repere annonce deja la valeur.
-        restores[marker] = (found.group(0), contents[found.group(0).casefold()])
+        content = contents[found.group(0).casefold()]
+        restores[marker] = (found.group(0), content)
+        # Un bloc (une signature) prend la place de son déclencheur : « signature
+        # ipsa » devant la signature n'a pas de sens (n° 2). Une valeur d'une
+        # ligne (« mon adresse ») garde ses mots, qui portent la phrase.
+        if "\n" in content.strip():
+            return marker
         return f"{found.group(0)} {marker}"
 
     return pattern.sub(replace, text), restores
@@ -11286,6 +11292,18 @@ def restore_snippets(text: str, restores: dict[str, tuple[str, str]],
             trigger_word = trigger.split()[-1] if trigger.split() else ""
             if not prefix or prefix.endswith("\n"):
                 separator = ""
+            elif "\n" in content.strip():
+                # Un bloc (une signature) commence sur sa ligne (24/10), après
+                # le point de la phrase, jamais collé au snippet.
+                separator = "\n"
+                # La phrase se termine avant la signature : « …le TD, » et
+                # « …le **TD** » prennent un point (troisième rejeu, 24/10).
+                if rest.lstrip(" ").startswith("."):
+                    rest = rest.lstrip(" ")[1:]
+                if prefix.endswith(","):
+                    prefix = prefix[:-1] + "."
+                elif prefix[-1:].isalnum() or prefix.endswith("*"):
+                    prefix += "."
             elif prefix.endswith(ANNOUNCES_VALUE):
                 separator = " "
             elif trigger_word and last_word.casefold() == trigger_word.casefold():
@@ -11742,7 +11760,7 @@ def answer_preamble(text: str, answer: str) -> bool:
 # qu'aucun possessif ne bouge, et `person_changed` ne le voit pas. « j'ai
 # oublié » devenu « je m'oublie » ajoute un pronom que l'élève n'a pas écrit.
 PERSON_PRONOUNS = {
-    "je": "je", "j": "je", "jai": "je", "me": "me", "m": "me", "moi": "moi",
+    "je": "je", "j": "je", "jai": "je", "me": "me", "m": "me", "moi": "me",
     "tu": "tu", "te": "te", "t": "te", "toi": "toi", "on": "nous", "nous": "nous",
     "vous": "vous", "quelquun": "quelquun", "i": "i", "you": "you", "we": "we",
     "someone": "someone", "somebody": "someone", "anyone": "anyone",
@@ -11752,6 +11770,8 @@ PERSON_PRONOUNS = {
 def _person_pronouns(value: str) -> Counter:
     folded = fold_accents((value or "").lower()).replace("’", "'")
     folded = re.sub(r"quelqu\s*'\s*un", "quelquun", folded)
+    # « rendez-vous » est un nom : son « vous » ne désigne personne (24/10).
+    folded = folded.replace("rendez-vous", "rendezvous")
     # « j' », « m' », « t' » : avec leur apostrophe seulement. Le « T » de
     # « PV = nRT » passait pour « te » (sondage du 17/10).
     return Counter(PERSON_PRONOUNS[word.rstrip("'")]
@@ -11760,7 +11780,7 @@ def _person_pronouns(value: str) -> Counter:
                    and word not in ("j", "m", "t"))
 
 
-def pronouns_swapped(text: str, answer: str) -> bool:
+def pronouns_swapped(text: str, answer: str, polite: bool = False) -> bool:
     """Un pronom de personne est apparu pendant qu'un autre disparaissait.
 
     Une correction peut ajouter un pronom oublié (« jai » → « j'ai » compte
@@ -11768,6 +11788,10 @@ def pronouns_swapped(text: str, answer: str) -> bool:
     personne par une autre.
     """
     said, wrote = _person_pronouns(text), _person_pronouns(answer)
+    if polite:
+        # Un e-mail vouvoie : « explique-moi » devient « Pourriez-vous
+        # m'expliquer », à la même personne (lot S1, 23/10).
+        said["vous"] += sum(said.pop(word, 0) for word in ("tu", "te", "toi"))
     if wrote - said and said - wrote:
         return True
     # « Je peux vous l'envoyer » réécrit « Il pourra être envoyé » : le
@@ -12510,6 +12534,17 @@ def without_fillers(text: str) -> str:
     return re.sub(r"[ \t]{2,}", " ", out).strip()
 
 
+_LEADING_DONC = re.compile(r"^donc\b\s*,?\s*", re.IGNORECASE)
+
+
+def presentable_fallback(text: str) -> str:
+    """La dictée rendue après un refus, lisible comme une phrase : sans tics,
+    sans le « donc » de l'oral en tête, avec une majuscule (test réel des
+    Styles du 20/10 : « écris un mail… », « donc le partiel… »)."""
+    out = _LEADING_DONC.sub("", without_fillers(text))
+    return out[:1].upper() + out[1:]
+
+
 # Les tics qu'un contrôle ne compte jamais, avec ou sans ponctuation. Banc
 # v2 du RTX (17/10, 45 refus tirés au hasard) : « coup » de « du coup » compté
 # comme un mot perdu, « tu vois » retiré ou rendu « vous voyez » compté comme
@@ -12707,6 +12742,23 @@ def refine_plausible(transcript: str, refined: str, vocabulary: list[str]) -> bo
     return new_terms <= AUDIO_REFINE_MAX_NEW_TERMS
 
 
+_ROOM_CODE_SPLIT = re.compile(r"\b([A-Z]) (\d{2,4})\b")
+_ROOM_AFTER_SALLE = re.compile(r"(\bsalle\s+)([A-Z]) (\d{2,4})\b", re.IGNORECASE)
+
+
+def joined_room_codes(transcript: str, refined: str) -> str:
+    """Un code de salle reste collé : « A112 », pas « A 112 » (n° 7).
+
+    Recollé quand Whisper l'avait écrit ainsi, ou quand il suit « salle ». Une
+    lettre suivie d'un nombre ailleurs (« vecteur A 12 ») n'est pas touchée.
+    """
+    joined = {code.upper() for code in re.findall(r"\b[A-Za-z]\d{2,4}\b", transcript)}
+    refined = _ROOM_AFTER_SALLE.sub(lambda m: f"{m.group(1)}{m.group(2)}{m.group(3)}", refined)
+    return _ROOM_CODE_SPLIT.sub(
+        lambda m: m.group(1) + m.group(2) if m.group(1) + m.group(2) in joined else m.group(0),
+        refined)
+
+
 async def refined_transcription(audio: bytes, filename: str, transcript: str,
                                 vocabulary: list[tuple[str, str]]) -> str:
     """La transcription relue avec l'audio et le vocabulaire, ou celle de
@@ -12734,7 +12786,7 @@ async def refined_transcription(audio: bytes, filename: str, transcript: str,
     if not refine_plausible(transcript, refined, terms):
         observability.log("transcription.refine_rejected", level="warning")
         return transcript
-    return refined
+    return joined_room_codes(transcript, refined)
 
 
 async def transcribe_audio(
@@ -13081,6 +13133,8 @@ SELF_CORRECTION_EXAMPLES: tuple[tuple[str, str], ...] = (
      "lis le chapitre 5 en premier c'est le plus urgent ensuite le chapitre 2"),
     ("prends des pommes oublie les pommes prends des poires", "prends des poires"),
     ("on part en voiture non en train", "on part en train"),
+    # « je veux dire » sur un terme (n° 16).
+    ("on fixe le jalon, je veux dire, le chemin critique", "on fixe le chemin critique"),
     ("écris le titre en gras attends en italique", "écris le titre en italique"),
     ("je ne viendrai pas non vraiment pas", "je ne viendrai pas non vraiment pas"),
     ("la prof a dit non au voyage", "la prof a dit non au voyage"),
@@ -13099,7 +13153,11 @@ REWRITE_MARKER_TOKEN = re.compile(r"\{\{[^{}]*\}\}")
 
 
 def has_self_correction_hint(text: str) -> bool:
-    return bool(SELF_CORRECTION_HINT.search(text or ""))
+    # Rien après le mot de reprise : il ne corrige rien. « À revoir, attends. »
+    # perdait « À revoir » (n° 17).
+    text = text or ""
+    return any(text[match.end():].strip(" \t\n.,;:!?…")
+               for match in SELF_CORRECTION_HINT.finditer(text))
 
 
 def _resolution_words(text: str) -> list[str]:
@@ -13231,11 +13289,14 @@ SIMPLE_REPAIRS = (
 # enfin à 128 » (RTX, 17/10 : jamais résolu, ni par la règle ni par le modèle).
 # Un « non » seul suffit ici : un code n'a pas d'autre lecture.
 _ROOM_CODE_REPAIR = re.compile(
-    r"(?<!\w)[A-Z]\s?\d{2,4}\b\s*[,.]?\s*(?:euh\s*,?\s*)?"
+    r"(?<!\w)[A-Z]\s?\d{2,4}\b\s*[,.]?\s*(?:(?i:euh|tu vois)\s*,?\s*)*"
     r"(?:non(?:\s*,?\s*(?:non|pardon|attends?))?|pardon|attends?|plut[oô]t|enfin)\s*,?\s*"
     r"(?=(?:à\s+)?[A-Z]?\d{2,4}\b)")
 # Avant la règle des nombres : « salle B 305 non pardon 305 » gardait B305.
 SIMPLE_REPAIRS = (_ROOM_CODE_REPAIR,) + SIMPLE_REPAIRS
+# Whisper écrit « salle à 119 » pour la salle A119 (n° 13). Une heure reste :
+# « la salle à 14 h ».
+_ROOM_A = re.compile(r"\b(salle\s+)à\s+(\d{2,4})\b(?!\s*h\b|\s*heures?\b)", re.IGNORECASE)
 
 
 def resolve_simple_repairs(text: str) -> str:
@@ -13243,7 +13304,7 @@ def resolve_simple_repairs(text: str) -> str:
     → « 11 h ». Seule la valeur abandonnée et les mots de la reprise partent."""
     for pattern in SIMPLE_REPAIRS:
         text = pattern.sub("", text)
-    return text
+    return _ROOM_A.sub(lambda m: f"{m.group(1)}A{m.group(2)}", text)
 
 
 async def resolve_self_corrections(text: str) -> str:
@@ -13676,6 +13737,9 @@ def unit_changed(dictated: str, text: str) -> bool:
 # « n° 3 », « 340 m/s ». Les contrôles des mots les lisent comme dits : sans
 # cela, la mise au propre attendue d'une dictée était refusée.
 SPOKEN_SYMBOLS = (
+    # « monsieur Martin » écrit « M. Martin » (lot S1, 23/10).
+    (re.compile(r"\bM\.\s?(?=[A-ZÉ])"), " monsieur "),
+    (re.compile(r"\bMme\b"), " madame "),
     (re.compile(r"(?<!\w)km/h(?!\w)", re.IGNORECASE), " kilomètres par heure "),
     (re.compile(r"(?<!\w)m/s²"), " mètres par seconde au carré "),
     (re.compile(r"(?<!\w)m/s(?!\w)"), " mètres par seconde "),
@@ -13689,6 +13753,8 @@ SPOKEN_SYMBOLS = (
     (re.compile(r"\s?°"), " degrés "),
     # « -2 » se dit « moins 2 » ; « 2020-2021 » n'est pas concerné.
     (re.compile(r"(?<![\w)])[-−]\s?(?=\d)"), " moins "),
+    # « 14 heures » écrit « 14h00 » ou « 14:00 » : la même heure (lot S1, 23/10).
+    (re.compile(r"\b(\d{1,2})\s?(?:h|:)\s?00\b"), r" \1 heures "),
     (re.compile(r"½"), " 1/2 "),
     (re.compile(r"⅓"), " 1/3 "),
     (re.compile(r"¼"), " 1/4 "),
@@ -13891,6 +13957,14 @@ def negation_dropped(dictated: str, text: str) -> bool:
     return any(wrote[word] < said[word] for word in NEGATION_WORDS)
 
 
+def negation_vanished(dictated: str, text: str) -> bool:
+    """La dictée niait quelque chose, la sortie plus rien du tout."""
+    said = set(re.findall(r"[a-z]+", fold_accents((dictated or "").casefold())))
+    wrote = set(re.findall(r"[a-z]+", fold_accents((text or "").casefold())))
+    negations = set(NEGATION_WORDS) | {"ne", "n"}
+    return bool(said & negations) and not wrote & negations
+
+
 def faithful_content_added(dictated: str, text: str) -> bool:
     """Un Style fidele a-t-il ajoute du contenu ?"""
     written = course_words(text)
@@ -14040,7 +14114,7 @@ def rewrite_refusal(
     # les notes de cours, qui peuvent tourner « je vais montrer » en « on
     # montre », n'y sont pas soumises.
     if style_id in GUARDED_STYLE_IDS and pronouns_swapped(
-            for_checks(resolved or dictated), for_checks(text)):
+            for_checks(resolved or dictated), for_checks(text), style_id == "nova_style_email"):
         return "person-changed"
     # Du code LaTeX que l'élève n'a pas dicté : « la dérivée de x au carré »
     # devenue « \( x^2 \) », illisible dans Word (test de Sash, 07/10).
@@ -14054,6 +14128,13 @@ def rewrite_refusal(
     # Les notes de cours ont leurs propres controles, plus stricts, et les
     # motifs du poste : les nombres y sont compares en chiffres comme en
     # lettres.
+    if invented_answer(resolved or dictated, text, style_id):
+        return "output-expanded-excessively"
+    # Après les reprises (« Paul, oups, Pierre ») et relu en mots (« °C »).
+    if style_id in GUARDED_STYLE_IDS and dictated_name_dropped(
+            without_repaired_words(resolve_simple_repairs(resolved or dictated)),
+            for_checks(text)):
+        return "content-dropped"
     if style_id == COURSE_NOTES_STYLE:
         return course_notes_refusal(dictated, text)
     # La version que l'élève venait de rejeter, à la place de sa correction.
@@ -14068,7 +14149,7 @@ def rewrite_refusal(
     if style_id == "nova_style_meeting":
         if grouped_number_reformatted(dictated, text):
             return "number-format-changed"
-        return facts_refusal(dictated, text, False)
+        return facts_refusal(as_dictated(dictated), as_dictated(text), False)
     # Ce qu'une reprise a abandonne (« le 12, non pardon, le 13 ») n'a pas a
     # survivre ; la valeur retenue, si.
     kept = without_abandoned(resolve_simple_repairs(resolved or dictated))
@@ -14081,6 +14162,13 @@ def rewrite_refusal(
     if len(text) > max(1, len(dictated)) * 6 + 160:
         return "output-expanded-excessively"
     if style_id not in GUARDED_STYLE_IDS:
+        # Styles personnels et de l'école : une négation qui disparaît tout à
+        # fait inverse le sens (n° 63). Une traduction change ses mots, elle y
+        # échappe.
+        if (dictation_language(dictated) == dictation_language(text)
+                and negation_vanished(without_repaired_words(
+                    resolve_simple_repairs(resolved or dictated)), text)):
+            return "negation-dropped"
         return None
     source_language = dictation_language(dictated)
     written_language = dictation_language(text)
@@ -14120,6 +14208,55 @@ def rewrite_refusal(
     return None
 
 
+_ANY_MARKER = re.compile(r"\{\{\s*([^{}\r\n]+?)\s*\}\}")
+
+
+def without_invented_markers(dictated: str, text: str) -> str:
+    """Un repère que la dictée n'avait pas redevient son mot.
+
+    Le modèle met parfois un mot entre accolades (« {{marge du coût}} ») : il
+    passait pour un snippet perdu et faisait refuser la dictée (n° 18).
+    """
+    return _ANY_MARKER.sub(
+        lambda m: m.group(0) if m.group(0) in dictated else m.group(1), text)
+
+
+# Combien de mots absents de la dictée un Style peut ajouter : des titres, pas
+# une réponse. Rejeu du PC fixe (24/10) : Notes répondait à « explique-moi la
+# différence… » avec 28 mots nouveaux (5 au plus ailleurs), Réunion avec 113
+# (25 au plus pour ses sections).
+INVENTED_WORDS_LIMIT = {"nova_style_notes": (12, 2), "nova_style_meeting": (40, 4)}
+_CONTENT_WORD = re.compile(r"[a-z]{4,}")
+
+
+# Un mot à majuscule au milieu d'une phrase : un nom propre. Celui d'un début
+# de phrase ne dit rien.
+_DICTATED_NAME = re.compile(r"(?<=[^\s.!?:])\s+([A-ZÀ-Ý][a-zà-ÿ]{2,})\b")
+
+
+def dictated_name_dropped(dictated: str, text: str) -> bool:
+    """Un nom dicté a disparu sans qu'un autre prenne sa place.
+
+    Un nom mal entendu se corrige à l'oreille (« diagramme de Kant » →
+    « Gantt ») : il est remplacé, pas perdu.
+    """
+    said = {fold_accents(name.lower()) for name in _DICTATED_NAME.findall(" " + dictated)}
+    written_text = fold_accents(text.lower())
+    lost = [name for name in said if name not in written_text]
+    added = {fold_accents(name.lower()) for name in _DICTATED_NAME.findall(" " + text)} - said
+    return len(lost) > len(added)
+
+
+def invented_answer(dictated: str, text: str, style_id: str) -> bool:
+    if style_id not in INVENTED_WORDS_LIMIT:
+        return False
+    floor, factor = INVENTED_WORDS_LIMIT[style_id]
+    said = set(_CONTENT_WORD.findall(fold_accents(dictated.lower())))
+    new = [word for word in _CONTENT_WORD.findall(fold_accents(text.lower()))
+           if word not in said]
+    return len(new) > max(floor, factor * len(said))
+
+
 @dataclass(frozen=True)
 class RewriteOutcome:
     """Ce que le circuit de reformulation rend : le texte, ou le motif du refus.
@@ -14153,6 +14290,8 @@ async def rewrite_dictation(
     if answer_repeats_instruction(system_prompt, result):
         # Le modèle a rendu le gabarit au lieu de la dictée.
         return RewriteOutcome(None, "template_echo", resolved)
+    # Après le contrôle du gabarit : « {{output}} » recopié reste un gabarit.
+    result = without_invented_markers(source_text, result)
     refusal = rewrite_refusal(source_text, result, style_id, resolved=resolved)
     if refusal:
         return RewriteOutcome(None, refusal, resolved)
@@ -14223,7 +14362,7 @@ async def reformulate(body: ReformulateRequest, user: str = Depends(current_user
             raise
         observability.log("reformulation.engine_unavailable", level="warning",
                           style=style_id or "", code=error.detail.get("code", ""))
-        return fallback
+        return {"text": presentable_fallback(fallback["text"])}
     count_usage(
         user, "reformulation",
         latency_ms=(time.monotonic() - started) * 1000.0,
@@ -14232,9 +14371,9 @@ async def reformulate(body: ReformulateRequest, user: str = Depends(current_user
     # que l'élève voulait écrire. Banc de synthèse du RTX (11/10) : « le 12
     # octobre, enfin le 19 » refusé au Style revenait avec la reprise, alors que
     # « le 19 octobre » était prêt. Sa résolution a déjà passé ses contrôles.
-    resolved_fallback = {"text": without_fillers(restore_snippets(
+    resolved_fallback = {"text": presentable_fallback(restore_snippets(
         enforce_vocabulary(outcome.resolved, vocabulary), snippet_restores)
-        or fallback["text"])} if outcome.resolved else {"text": without_fillers(fallback["text"])}
+        or fallback["text"])} if outcome.resolved else {"text": presentable_fallback(fallback["text"])}
     if outcome.text is None:
         # Une reformulation coupée, un gabarit recopié, une réponse, une
         # traduction, un nombre perdu : la dictée est rendue, jamais un texte

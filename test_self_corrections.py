@@ -184,7 +184,7 @@ class CorrectionsComeFirstRouteTests(AdminTestCase):
                 json={"text": "appelle Paul enfin non Sarah pour le projet",
                       "style_id": "nova_style_everyday", "style_prompt": "Mets au propre."})
         self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(response.json()["text"], "appelle Sarah pour le projet")
+        self.assertEqual(response.json()["text"], "Appelle Sarah pour le projet")
 
     def test_a_resolution_that_only_drops_the_announcing_words_is_not_one(self):
         # Banc de synthèse du RTX sur cced1b3 (11/10).

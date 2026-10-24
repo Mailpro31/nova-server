@@ -1,0 +1,241 @@
+"""Faux refus du test réel des Styles (lot S1, PC fixe, 23/10).
+
+Chaque cas est une vraie sortie de Gemini 2.5 Flash que le garde-fou
+refusait alors qu'elle dit exactement ce que l'élève a dicté.
+"""
+
+import unittest
+
+from test_main import AdminTestCase  # noqa: F401
+import main
+
+main.init_db()
+
+FORMULE = "formule, la pression dynamique égale un demi rho v au carré"
+PARTIEL = ("euh donc le partiel de mécanique des fluides est le mardi 12 mars "
+           "à 14 heures en salle B204")
+
+
+def refusal(dictated, answer, style):
+    return main.rewrite_refusal(dictated, answer, style, resolved=dictated)
+
+
+class NumbersSaidDifferentlyTests(unittest.TestCase):
+    def test_a_meeting_summary_may_write_un_demi_as_a_fraction(self):
+        self.assertIsNone(refusal(
+            FORMULE, "formule, la pression dynamique égale 1/2 rho v au carré",
+            "nova_style_meeting"))
+
+    def test_an_hour_written_14h00_is_the_14_heures_that_was_said(self):
+        self.assertIsNone(refusal(
+            PARTIEL,
+            "## Partiel de mécanique des fluides\n"
+            "Le partiel aura lieu le **mardi 12 mars** à **14h00** en **salle B204**.",
+            "nova_style_notes"))
+
+    def test_a_changed_hour_is_still_refused(self):
+        self.assertIsNotNone(refusal(
+            PARTIEL,
+            "Le partiel aura lieu le mardi 12 mars à 15h00 en salle B204.",
+            "nova_style_notes"))
+
+    def test_minutes_that_were_not_said_are_still_refused(self):
+        self.assertIsNotNone(refusal(
+            PARTIEL,
+            "Le partiel aura lieu le mardi 12 mars à 14h30 en salle B204.",
+            "nova_style_notes"))
+
+
+class SameMeaningSaidPolitelyTests(unittest.TestCase):
+    def test_an_email_may_turn_tu_into_vous(self):
+        self.assertIsNone(refusal(
+            "explique-moi la différence entre écoulement laminaire et turbulent",
+            "Pourriez-vous m'expliquer la différence entre un écoulement laminaire "
+            "et un écoulement turbulent ?",
+            "nova_style_email"))
+
+    def test_je_becoming_vous_is_still_refused(self):
+        self.assertIsNotNone(refusal(
+            "je dois rendre le rapport avant vendredi",
+            "Vous devez rendre le rapport avant vendredi.", "nova_style_email"))
+
+    def test_monsieur_may_be_abbreviated(self):
+        self.assertIsNone(refusal(
+            "envoie le rapport à monsieur Martin et à madame Leroy",
+            "Envoie le rapport à M. Martin et à Mme Leroy.", "nova_style_messages"))
+
+
+class InventedMarkersTests(unittest.TestCase):
+    """n° 18 : le modèle met un mot entre accolades (« {{marge du coût}} »)."""
+
+    def test_an_invented_marker_becomes_its_word(self):
+        self.assertEqual(
+            main.without_invented_markers(
+                "on calcule la marge du coût", "On calcule la {{marge du coût}}."),
+            "On calcule la marge du coût.")
+
+    def test_a_real_snippet_marker_is_kept(self):
+        self.assertEqual(
+            main.without_invented_markers(
+                "voici mon adresse {{snippet0}}", "Voici mon adresse {{snippet0}}."),
+            "Voici mon adresse {{snippet0}}.")
+
+
+class RoomCodeTests(unittest.TestCase):
+    """n° 7 : la relecture audio écrivait « A 112 » au lieu de « A112 »."""
+
+    def test_a_room_code_whisper_wrote_joined_stays_joined(self):
+        self.assertEqual(
+            main.joined_room_codes("rendez-vous en A112 demain", "Rendez-vous en A 112 demain."),
+            "Rendez-vous en A112 demain.")
+
+    def test_a_code_after_salle_is_joined(self):
+        self.assertEqual(
+            main.joined_room_codes("cours en salle b 204", "Cours en salle B 204."),
+            "Cours en salle B204.")
+
+    def test_a_letter_and_a_number_elsewhere_are_left_alone(self):
+        self.assertEqual(
+            main.joined_room_codes("le vecteur a 12 composantes",
+                                   "Le vecteur A 12 composantes."),
+            "Le vecteur A 12 composantes.")
+
+
+class RoomRepairTests(unittest.TestCase):
+    def test_a_filler_between_the_code_and_its_repair(self):
+        """n° 15 : « Tu vois, euh non » gardait l'ancien code."""
+        self.assertEqual(
+            main.resolve_simple_repairs("Le TD est en salle C122. Tu vois, euh non, B119."),
+            "Le TD est en salle B119.")
+
+    def test_a_after_salle_is_the_letter_a(self):
+        """n° 13 : Whisper écrit « à 119 » pour la salle A119."""
+        self.assertEqual(main.resolve_simple_repairs("Rendez-vous en salle à 119."),
+                         "Rendez-vous en salle A119.")
+
+    def test_an_hour_after_salle_is_left_alone(self):
+        self.assertEqual(main.resolve_simple_repairs("On libère la salle à 14 h."),
+                         "On libère la salle à 14 h.")
+
+
+class BlockSnippetTests(unittest.TestCase):
+    """n° 2 : « signature ipsa » restait devant la signature (« Signature : Ipsa. : Sasha »)."""
+
+    SNIPPETS = [{"trigger": "signature ipsa", "content": "Sasha Martin\nÉtudiant IPSA"},
+                {"trigger": "mon adresse", "content": "7 impasse des Bons Voisins"}]
+
+    def test_a_block_replaces_its_trigger(self):
+        text, restores = main.protect_snippets("merci, signature ipsa", self.SNIPPETS)
+        self.assertEqual(text, "merci, {{snippet0}}")
+        self.assertEqual(main.restore_snippets(text, restores),
+                         "merci.\nSasha Martin\nÉtudiant IPSA")
+
+    def test_a_one_line_value_keeps_its_trigger(self):
+        text, _ = main.protect_snippets("voici mon adresse", self.SNIPPETS)
+        self.assertEqual(text, "voici mon adresse {{snippet0}}")
+
+
+class TrailingRepairWordTests(unittest.TestCase):
+    """n° 17 : « À revoir, attends. » perdait « À revoir »."""
+
+    def test_a_repair_word_with_nothing_after_is_not_a_repair(self):
+        self.assertFalse(main.has_self_correction_hint("À revoir, attends."))
+
+    def test_a_real_repair_is_still_seen(self):
+        self.assertTrue(main.has_self_correction_hint("mardi, non attends, mercredi"))
+
+
+class VerificationOf24OctoberTests(unittest.TestCase):
+    """Rejeu du PC fixe sur b66d475 (24/10, release s1-verif-b66d475)."""
+
+    def test_notes_that_answer_the_question_are_refused(self):
+        answer = ("## Écoulement laminaire et turbulent\n### Écoulement laminaire\n"
+                  "L'écoulement laminaire est caractérisé par un **mouvement fluide régulier "
+                  "et ordonné**, où les particules se déplacent en **parallèle sans se "
+                  "mélanger**.\n\n> Il se produit à de **faibles nombres de Reynolds**.\n\n"
+                  "### Écoulement turbulent\nL'écoulement turbulent est caractérisé par un "
+                  "**mouvement fluide irrégulier et chaotique**, avec des **tourbillons**.")
+        self.assertIsNotNone(refusal(
+            "explique-moi la différence entre écoulement laminaire et turbulent",
+            answer, "nova_style_notes"))
+
+    def test_notes_with_headings_are_still_accepted(self):
+        self.assertIsNone(refusal(
+            "rendre le TP de mécanique lundi et réviser le chapitre trois",
+            "## À faire\n- Rendre le **TP de mécanique** lundi\n- Réviser le **chapitre 3**",
+            "nova_style_notes"))
+
+    def test_rendez_vous_is_not_an_addressee(self):
+        reason = main.rewrite_refusal(
+            "rendez-vous à 14 heures, non attends, à 15 heures en salle A112",
+            "- Se rendre à 15h en salle A112", "nova_style_todo",
+            resolved="rendez-vous à 15 heures en salle A112")
+        self.assertNotEqual(reason, "person-changed")
+
+    def test_a_signature_starts_on_its_own_line(self):
+        text, restores = main.protect_snippets(
+            "je rattraperai le TD, signature ipsa", BlockSnippetTests.SNIPPETS)
+        self.assertEqual(
+            main.restore_snippets("Je rattraperai le TD {{snippet0}}", restores),
+            "Je rattraperai le TD.\nSasha Martin\nÉtudiant IPSA")
+
+
+class SecondVerificationTests(unittest.TestCase):
+    """Second rejeu du PC fixe (3f128d3, 24/10, release s1-verif-3f128d3)."""
+
+    def test_a_dictated_name_cannot_disappear(self):
+        self.assertEqual(refusal(
+            "envoie le rapport à monsieur Martin avec mon adresse {{snippet0}}",
+            "Je vous envoie le rapport avec mon adresse : {{snippet0}}.",
+            "nova_style_email"), "content-dropped")
+
+    def test_a_name_at_the_start_of_a_sentence_is_not_counted(self):
+        self.assertIsNone(refusal(
+            "Lundi on rend le rapport", "On rend le rapport lundi.", "nova_style_everyday"))
+
+    def test_the_sentence_period_goes_before_the_signature(self):
+        _, restores = main.protect_snippets(
+            "je rattraperai le TD signature ipsa", BlockSnippetTests.SNIPPETS)
+        self.assertEqual(
+            main.restore_snippets("Je rattraperai le TD {{snippet0}}.", restores),
+            "Je rattraperai le TD.\nSasha Martin\nÉtudiant IPSA")
+
+
+class ThirdVerificationTests(unittest.TestCase):
+    """Troisième rejeu du PC fixe (3cb4bf0, 24/10) : la ponctuation avant une signature."""
+
+    def test_a_comma_before_the_signature_becomes_a_period(self):
+        _, restores = main.protect_snippets("le TD, signature ipsa", BlockSnippetTests.SNIPPETS)
+        self.assertEqual(main.restore_snippets("Je rattraperai le TD, {{snippet0}}", restores),
+                         "Je rattraperai le TD.\nSasha Martin\nÉtudiant IPSA")
+
+    def test_a_bold_word_before_the_signature_gets_its_period(self):
+        _, restores = main.protect_snippets("le TD signature ipsa", BlockSnippetTests.SNIPPETS)
+        self.assertEqual(main.restore_snippets("Je rattraperai le **TD** {{snippet0}}", restores),
+                         "Je rattraperai le **TD**.\nSasha Martin\nÉtudiant IPSA")
+
+
+class AllStylesNegationTests(unittest.TestCase):
+    """n° 63 : un Style personnel ou de l'école ne retourne pas une négation."""
+
+    SAID = "je ne viendrai pas au TD le 12 mars"
+
+    def test_a_personal_style_cannot_drop_the_negation(self):
+        self.assertEqual(refusal(self.SAID, "Je viendrai au TD le 12 mars.", "perso_x"),
+                         "negation-dropped")
+
+    def test_a_school_style_cannot_drop_the_negation(self):
+        self.assertEqual(refusal(self.SAID, "Je viendrai au TD le 12 mars.",
+                                 "org_style_rapport"), "negation-dropped")
+
+    def test_a_rephrased_negation_is_kept(self):
+        self.assertIsNone(refusal(self.SAID, "Je serai absent au TD : pas de venue le 12 mars.",
+                                  "perso_x"))
+
+    def test_a_translation_is_not_judged(self):
+        self.assertIsNone(refusal(self.SAID, "I will not come to the tutorial on March 12.",
+                                  "org_style_english"))
+
+
+if __name__ == "__main__":
+    unittest.main()

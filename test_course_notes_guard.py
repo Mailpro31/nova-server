@@ -164,7 +164,7 @@ class CourseNotesRouteTests(AdminTestCase):
                 json={"text": dictated, "style_id": COURSE,
                       "style_prompt": "Mets en forme les notes de cours."})
         self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(response.json()["text"], dictated)
+        self.assertEqual(response.json()["text"], main.presentable_fallback(dictated))
 
 
 if __name__ == "__main__":
