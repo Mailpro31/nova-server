@@ -615,6 +615,7 @@ class BusinessPolicyAndPackageTests(AdminTestCase):
                 "daily_rewrites_per_member",
                 # Categories de l'application, communes a toute organisation.
                 "styles_enabled",
+                "personal_styles_enabled",
                 "generated_instructions_enabled",
                 "past_dictations_enabled",
                 # Mode reunion : cle Core. Elle ferme la capture des autres

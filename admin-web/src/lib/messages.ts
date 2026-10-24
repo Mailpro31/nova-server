@@ -886,6 +886,9 @@ const en = {
     // perdent-elles leur mise en forme ? Non.
     stylesBody:
       "Show the Styles category and deliver this organization's Styles. When closed, dictations are still reformulated with the default Style.",
+    personalStylesTitle: "Personal Styles",
+    personalStylesBody:
+      "Allow members to create their own Styles. Built-in Styles and this organization's Styles stay available.",
     generatedInstructionsTitle: "Prompts",
     generatedInstructionsBody: "Show the Prompts category, where members find the prompts their dictations produced.",
     pastDictationsTitle: "History",

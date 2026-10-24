@@ -2377,6 +2377,9 @@ POLICY_SETTINGS: dict[str, PolicySetting] = {
         # reformulation des dictees : `/api/reformulate` reste ouverte, sans
         # quoi une case cochee couperait le coeur du produit.
         PolicySetting("styles_enabled", bool, True, "styles"),
+        # L'école peut fermer la création de Styles personnels (n° 64) : les
+        # Styles intégrés et ceux de l'école restent.
+        PolicySetting("personal_styles_enabled", bool, True, "personalStyles"),
         # Prompts et Historique vivent sur le poste de la personne : aucune
         # route serveur ne les sert. La decision est annoncee au poste, qui
         # retire la categorie ; le serveur n'a rien d'autre a refuser.
@@ -10946,7 +10949,7 @@ def me(user: str = Depends(current_user), u=Depends(current_account)):
     # serveur plus ancien ou une reponse tronquee n'y citerait pas `history`
     # sans l'avoir ferme, et une fonction ne s'eteint jamais sur un silence.
     # Seules les decisions de policy comptent ici, pas le mode pedagogique.
-    closable_core = {"learning", "styles", "prompts", "history", "meeting"}
+    closable_core = {"learning", "styles", "personalStyles", "prompts", "history", "meeting"}
     member_settings = member_policy_document["settings"]
     closed_capabilities = sorted(
         setting.capability

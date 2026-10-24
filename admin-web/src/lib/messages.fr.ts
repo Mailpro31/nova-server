@@ -864,6 +864,9 @@ export const fr: Messages = {
     stylesTitle: "Styles",
     stylesBody:
       "Affiche la catégorie Styles et distribue les Styles de cette organisation. Fermée, les dictées sont toujours mises au propre avec le Style par défaut.",
+    personalStylesTitle: "Styles personnels",
+    personalStylesBody:
+      "Permet aux membres de créer leurs propres Styles. Les Styles intégrés et ceux de l’organisation restent disponibles.",
     generatedInstructionsTitle: "Prompts",
     generatedInstructionsBody: "Affiche la catégorie Prompts, où les membres retrouvent les prompts produits par leurs dictées.",
     pastDictationsTitle: "Historique",

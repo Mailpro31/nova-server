@@ -257,6 +257,11 @@ const POLICY_GROUPS: {
         body: `${t.policies.stylesBody} ${t.policies.sidebarNote}`,
       },
       {
+        key: "personal_styles_enabled",
+        title: t.policies.personalStylesTitle,
+        body: t.policies.personalStylesBody,
+      },
+      {
         key: "past_dictations_enabled",
         title: t.policies.pastDictationsTitle,
         body: `${t.policies.pastDictationsBody} ${t.policies.deviceCategoryNote}`,

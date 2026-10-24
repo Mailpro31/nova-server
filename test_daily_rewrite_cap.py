@@ -72,6 +72,18 @@ class DailyRewriteCapTests(AdminTestCase):
         self.assertEqual(len(calls), 1)
         self.assertEqual(body["text"], "Le partiel est mardi.")
 
+    def test_the_school_can_close_personal_styles(self):
+        """n° 64 : la règle ferme la création de Styles personnels sur le poste."""
+        with main.db() as conn:
+            conn.execute(
+                "INSERT INTO organization_policies(organization_id, schema_version, "
+                "revision, settings, updated_at, updated_by_user_id) VALUES (?,?,?,?,?,?)",
+                (main.nova_organization_id(), main.POLICY_SCHEMA_VERSION, 1,
+                 json.dumps({"personal_styles_enabled": False}), 0.0, None))
+        token = self.sign_in(EMAIL)
+        me = self.client.get("/api/me", headers=self.auth(token)).json()
+        self.assertIn("personalStyles", me["closed_capabilities"])
+
     def test_no_cap_by_default(self):
         self.assertEqual(main.POLICY_SETTINGS["daily_rewrites_per_member"].default, 0)
         self.used_today(10_000)
