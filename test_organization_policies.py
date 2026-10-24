@@ -884,18 +884,20 @@ class PolicyEnforcementMatrixTests(AdminTestCase):
             return self.client.get(path, headers=self.auth(token))
         return self.client.post(path, headers=self.auth(token), json={})
 
-    def deny(self, key: str):
+    def deny(self, *keys: str):
         token = self.admin_session()
         response = self.client.put(
             "/api/control/organization/policy", headers=self.auth(token),
-            json={"expected_revision": 0, "settings": {key: False}})
+            json={"expected_revision": 0, "settings": dict.fromkeys(keys, False)})
         self.assertEqual(response.status_code, 200, response.text)
 
     def test_every_policy_closes_its_route(self):
         for key, (method, path, feature) in self.ROUTES.items():
             with self.subTest(key):
                 clear_policies()
-                self.deny(key)
+                # /api/command sert aussi la bulle de selection : la fermer
+                # demande les deux policies.
+                self.deny(key, *(("selection_bubble_enabled",) if path == "/api/command" else ()))
                 user = self.sign_in("etudiant@example.com")
                 response = self.call(method, path, user)
                 self.assertEqual(response.status_code, 403, path)
@@ -912,7 +914,7 @@ class PolicyEnforcementMatrixTests(AdminTestCase):
             403)
 
     def test_the_error_contract_carries_nothing_else(self):
-        self.deny("voice_commands_enabled")
+        self.deny("voice_commands_enabled", "selection_bubble_enabled")
         user = self.sign_in("etudiant@example.com")
         detail = self.client.post("/api/command", headers=self.auth(user),
                                   json={}).json()["detail"]

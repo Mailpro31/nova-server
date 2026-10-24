@@ -600,6 +600,8 @@ class BusinessPolicyAndPackageTests(AdminTestCase):
                 "ai_skills_enabled",
                 "organization_vocabulary_enabled",
                 "voice_commands_enabled",
+                # Cle Core : la bulle de selection du poste (24/10).
+                "selection_bubble_enabled",
                 "engineering_notes_enabled",
                 "file_import_enabled",
                 # Cle Core apportee par Learn, pas par Business : elle ferme
