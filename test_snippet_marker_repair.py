@@ -48,6 +48,20 @@ class SnippetMarkerRepairTests(unittest.TestCase):
         self.assertIsNone(
             restored("mon matricule", "Mon matricule, je répète, mon matricule."))
 
+    def test_a_signature_dictated_last_comes_back_last(self):
+        """N° 1 : « …, signature ipsa » refusé en E-mail, le modèle ayant écrit
+        sa propre formule de fin sans les mots du déclencheur."""
+        rows = [{"trigger": "signature ipsa", "content": "Sasha\nIPSA Toulouse"}]
+        protected, restores = main.protect_snippets(
+            "écris au professeur que je serai absent signature ipsa", rows)
+        self.assertEqual(
+            main.restore_snippets("Bonjour,\n\nJe serai absent.\n\nCordialement,",
+                                  restores, dictated=protected),
+            "Bonjour,\n\nJe serai absent.\n\nCordialement,\n\nSasha\nIPSA Toulouse")
+
+    def test_a_one_line_value_is_not_moved_to_the_end(self):
+        self.assertIsNone(restored("je vous envoie mon matricule", "Je vous envoie mon identifiant."))
+
     def test_a_kept_marker_is_unchanged(self):
         self.assertEqual(
             restored("voici mon matricule", "Voici mon matricule {{snippet0}}."),

@@ -11306,6 +11306,11 @@ def reattach_lost_markers(text: str, restores: dict[str, tuple[str, str]],
         if len(found) == 1:
             end = found[0].end()
             text = f"{text[:end]} {marker}{text[end:]}"
+        elif not found and "\n" in _content.strip() and dictated.rstrip(
+                " \t\n.,;!?").endswith(marker):
+            # Une signature dictée en dernier, que l'e-mail a remplacée par
+            # sa formule de fin : elle revient en dernier (n° 1, 25/10).
+            text = f"{text.rstrip()}\n\n{marker}"
     return text
 
 
