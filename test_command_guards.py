@@ -107,6 +107,29 @@ class RefusedOutputsTests(unittest.TestCase):
                                  "Partiel le 16 novembre à 14 h en salle B204."),
             "number-changed")
 
+    def test_an_explanation_may_count_in_words(self):
+        """PC fixe, 24/10 : « trois grandeurs », « inférieure à zéro » faisaient
+        refuser de bonnes explications de la bulle (number-changed)."""
+        source = "La loi d'Ohm relie la tension, l'intensité et la résistance."
+        for output in ("Cette loi établit un lien entre trois grandeurs électriques.",
+                       "Une valeur négative est inférieure à zéro."):
+            with self.subTest(output=output):
+                self.assertIsNone(main.command_refusal(EXPLAIN, source, output))
+
+    def test_an_explanation_still_cannot_invent_figures(self):
+        source = "La loi d'Ohm relie la tension, l'intensité et la résistance."
+        for output in ("Cette loi relie 3 grandeurs.", "Il y a dix-sept cas.",
+                       "Il y a trois cents cas."):
+            with self.subTest(output=output):
+                self.assertEqual(main.command_refusal(EXPLAIN, source, output),
+                                 "number-changed")
+
+    def test_a_rewrite_never_adds_a_number_even_small(self):
+        self.assertEqual(
+            main.command_refusal(SPELLING, "je rend le tp bientot",
+                                 "Je rends le TP dans deux jours."),
+            "number-changed")
+
     def test_an_improvement_that_loses_a_number_is_refused(self):
         self.assertEqual(
             main.command_refusal(IMPROVE, MESSAGE,
