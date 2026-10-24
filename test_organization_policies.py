@@ -18,7 +18,7 @@ import time
 import unittest
 from unittest.mock import patch
 
-from test_main import AdminTestCase, grant_admin_session  # noqa: F401
+from test_main import OPTIONAL_FEATURE_KEYS, AdminTestCase, grant_admin_session  # noqa: F401
 
 import main
 
@@ -53,6 +53,9 @@ class PolicySchemaTests(unittest.TestCase):
         C'est la regle qui protege les installations existantes : si un defaut
         valait `False`, la simple mise a jour du serveur eteindrait une
         fonction chez tout le monde.
+
+        Seule exception, voulue : les fonctions optionnelles, fermées pour
+        l'élève tant que l'école ne les ouvre pas (lot 3, 20/10).
         """
         for key, value in main.DEFAULT_ORGANIZATION_POLICY.items():
             with self.subTest(key):
@@ -63,6 +66,8 @@ class PolicySchemaTests(unittest.TestCase):
                 elif key == "daily_rewrites_per_member":
                     # 0 : aucun plafond.
                     self.assertEqual(value, 0)
+                elif key in OPTIONAL_FEATURE_KEYS:
+                    self.assertFalse(value, f"{key} est optionnelle, fermee par defaut")
                 else:
                     self.assertTrue(value, f"{key} devrait etre permissif par defaut")
 
@@ -107,8 +112,8 @@ class PolicySchemaTests(unittest.TestCase):
 
     def test_a_value_differing_from_its_default_is_kept(self):
         self.assertEqual(
-            main.validate_policy_settings({"ai_skills_enabled": False}),
-            {"ai_skills_enabled": False},
+            main.validate_policy_settings({"organization_vocabulary_enabled": False}),
+            {"organization_vocabulary_enabled": False},
         )
 
     def test_a_non_dictionary_is_refused(self):
@@ -142,10 +147,11 @@ class PolicyReadResilienceTests(unittest.TestCase):
                 )
 
     def test_a_wrong_type_in_storage_falls_back_to_its_default(self):
-        overrides = main.read_policy_settings(json.dumps({"ai_skills_enabled": "non"}))
+        overrides = main.read_policy_settings(
+            json.dumps({"organization_vocabulary_enabled": "non"}))
         self.assertEqual(overrides, {})
         self.assertTrue(
-            main.effective_policy_settings(overrides)["ai_skills_enabled"])
+            main.effective_policy_settings(overrides)["organization_vocabulary_enabled"])
 
 
 class EffectiveCapabilityTests(unittest.TestCase):
@@ -673,11 +679,12 @@ class PolicyMigrationTests(unittest.TestCase):
             }
         self.assertIn("organization_policies", tables)
 
-    def test_an_organization_without_a_row_keeps_every_capability(self):
+    def test_an_organization_without_a_row_keeps_its_core_capabilities(self):
+        # Les fonctions optionnelles, elles, restent fermées (lot 3, 20/10).
         clear_policies()
         config = main.public_campus_config()
-        self.assertTrue(config["capabilities"]["aiSkills"])
-        self.assertTrue(config["ai_skills"]["enabled"])
+        self.assertTrue(config["capabilities"]["dictionary"])
+        self.assertFalse(config["capabilities"]["aiSkills"])
         self.assertEqual(config["policy_revision"], 0)
 
     def test_the_schema_version_is_stored_with_the_document(self):

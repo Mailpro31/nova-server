@@ -77,7 +77,7 @@ class StylePromptPlaceholderTests(AdminTestCase):
             answer="## Reunion — projet Atlas\nBudget : 45 000 €\n<transcript>\n${output}\n</transcript>",
             text="voici mon iban FR76 3000 4000 5000")
         self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(response.json()["text"], "voici mon iban FR76 3000 4000 5000")
+        self.assertEqual(response.json()["text"], "Voici mon iban FR76 3000 4000 5000")
 
     def test_a_normal_answer_is_returned_untouched(self):
         response, _ = self.reformulate(
@@ -92,7 +92,7 @@ class StylePromptPlaceholderTests(AdminTestCase):
             {"style_id": "nova_style_notes", "style_prompt": TEMPLATE},
             answer="Avant d'ecrire, lis TOUTE la dictee et degage l'intention reelle.",
             text="reunion demain a 9 h")
-        self.assertEqual(response.json()["text"], "reunion demain a 9 h")
+        self.assertEqual(response.json()["text"], "Reunion demain a 9 h")
 
 
 class SanitizerTests(unittest.TestCase):

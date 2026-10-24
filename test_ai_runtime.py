@@ -648,7 +648,7 @@ class InferenceEndpointTests(AdminTestCase):
         # moteur répond « fake:reformulation », qui ne reprend rien de la
         # dictée, et l'élève reçoit donc « draft ». Le moteur est appelé une
         # fois et compté une fois.
-        self.assertEqual(response.json()["text"], "draft")
+        self.assertEqual(response.json()["text"], "Draft")
         self.assertEqual(len(router.text_backend.requests), 1)
         with main.db() as conn:
             row = conn.execute(
@@ -1332,6 +1332,33 @@ class ContextWindowBoundTests(unittest.IsolatedAsyncioTestCase):
         )
         await backend.generate(self._request("texte"))
         self.assertEqual(seen[0]["max_tokens"], 2048)
+
+    async def test_an_api_without_tokenize_or_window_is_probed_once(self):
+        """Mesure du PC fixe (24/10) : OpenRouter répond 404 à `/tokenize` et
+        n'annonce pas de fenêtre ; les deux sondes revenaient à chaque appel,
+        environ 0,25 s de perdu par dictée."""
+        probes = []
+
+        def handler(request: httpx.Request):
+            if request.url.path == "/tokenize":
+                probes.append("tokenize")
+                return httpx.Response(404, json={"detail": "Not Found"})
+            if request.url.path == "/v1/models":
+                probes.append("models")
+                return httpx.Response(200, json={"data": [{"id": "engine-model"}]})
+            return httpx.Response(
+                200,
+                json={"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]},
+            )
+
+        backend = OpenAICompatibleTextBackend(
+            "http://127.0.0.1:8001/v1",
+            "engine-model",
+            transport=httpx.MockTransport(handler),
+        )
+        for _ in range(3):
+            await backend.generate(self._request("texte"))
+        self.assertEqual(probes, ["tokenize", "models"])
 
     async def test_the_window_is_read_once_and_then_reused(self):
         calls = []

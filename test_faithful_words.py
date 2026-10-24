@@ -347,7 +347,7 @@ class FaithfulWordTests(unittest.TestCase):
                 self.assertIsNone(main.rewrite_refusal(said, wrote, style))
         self.assertEqual(
             main.resolve_simple_repairs("Le cours est déplacé en salle C222, non pardon à 223."),
-            "Le cours est déplacé en salle à 223.")
+            "Le cours est déplacé en salle A223.")
         self.assertEqual(main.resolve_simple_repairs("Le TP est en salle C219, enfin A128."),
                          "Le TP est en salle A128.")
         # Un code suivi d'un « non » qui n'annonce aucun autre code reste.
