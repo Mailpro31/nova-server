@@ -148,6 +148,8 @@ export function AIRuntime() {
           max_queue: view.desired.max_queue,
         };
         const dirty = draft !== null;
+        // Le serveur dit où part le texte (n° 21 bis) : la page ne l'affirme plus.
+        const external = view.processing_location === "external_ai_provider";
         const applied =
           view.desired.revision > 0 &&
           view.reported.applied_revision === view.desired.revision;
@@ -187,10 +189,17 @@ export function AIRuntime() {
               {/* La frontière, dite à l'écran. C'est la question que pose toute
                   DSI devant cette page, et la réponse ne doit pas dépendre d'un
                   document qu'elle n'a pas ouvert. */}
-              <Notice>{t.aiRuntime.privacy}</Notice>
+              <Notice>
+                {external ? t.aiRuntime.privacyExternal : t.aiRuntime.privacy}
+              </Notice>
               <Facts
                 entries={[
-                  [t.aiRuntime.processing, t.aiRuntime.onPremises],
+                  [
+                    t.aiRuntime.processing,
+                    external
+                      ? t.aiRuntime.externalProvider
+                      : t.aiRuntime.onPremises,
+                  ],
                   [
                     t.deployment.mode,
                     <span className="mono">{view.deployment_mode}</span>,
@@ -201,7 +210,11 @@ export function AIRuntime() {
                   ],
                 ]}
               />
-              <p className="policy-hint">{t.aiRuntime.cloudFallbackBody}</p>
+              <p className="policy-hint">
+                {external
+                  ? t.aiRuntime.cloudFallbackExternalBody
+                  : t.aiRuntime.cloudFallbackBody}
+              </p>
             </Panel>
 
             <Panel title={t.aiRuntime.statusTitle}>

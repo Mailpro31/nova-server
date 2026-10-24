@@ -70,6 +70,7 @@ from ai_runtime import (
     ReasoningMode,
     TaskType,
     detect_hardware,
+    public_endpoint_allowed,
     recommend_profile,
     router_from_environment,
     DEFAULT_MAX_QUEUE,
@@ -7078,7 +7079,10 @@ async def ai_runtime_admin_view(organization_id: str) -> dict:
     runtime = await ORGANIZATION_AI_ROUTER.health()
     return {
         "schema_version": config["schema_version"],
-        "processing_location": "organization_private_infrastructure",
+        # Une adresse publique n'est acceptée qu'avec ce choix de l'exploitant :
+        # il suffit à dire que le texte part chez un fournisseur (n° 21 bis).
+        "processing_location": ("external_ai_provider" if public_endpoint_allowed()
+                                else "organization_private_infrastructure"),
         "deployment_mode": NOVA_SERVER_MODE,
         "desired": {
             "revision": config["desired_revision"],

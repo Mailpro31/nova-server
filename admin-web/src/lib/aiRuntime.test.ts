@@ -135,6 +135,16 @@ describe("Privacy boundary", () => {
   });
 });
 
+describe("Where the text goes", () => {
+  test("the page says what the server reports, not a fixed promise", () => {
+    // n° 21 bis : l'écran affirmait que rien ne sortait de l'école alors que
+    // le serveur passait par une API en ligne.
+    expect(code(PAGE)).toContain(
+      'view.processing_location === "external_ai_provider"',
+    );
+  });
+});
+
 describe("Model agnosticism", () => {
   test("no commercial model name is written into the console", () => {
     // Le mapping profil → modèle appartient à la configuration du runtime. Un

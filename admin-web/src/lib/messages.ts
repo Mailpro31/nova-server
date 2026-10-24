@@ -734,6 +734,11 @@ export const t = {
       "Dictation, transcripts, prompts and model output stay on this organization's infrastructure. Nova's control plane stores configuration and health only — never user content.",
     processing: "Processing location",
     onPremises: "Organization private infrastructure",
+    externalProvider: "Online AI provider (API) chosen in the server configuration",
+    privacyExternal:
+      "Transcripts and the selected Style are sent to the online AI provider configured on the server, which refines and rewrites them. Nova's control plane stores configuration and health only — never user content.",
+    cloudFallbackExternalBody:
+      "If the online provider fails three times in a row, the server's local model takes over for 15 seconds.",
     cloudFallback: "Cloud fallback",
     cloudFallbackDisabled: "Disabled",
     cloudFallbackBody:
