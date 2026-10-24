@@ -13229,8 +13229,24 @@ def has_self_correction_hint(text: str) -> bool:
     # Rien après le mot de reprise : il ne corrige rien. « À revoir, attends. »
     # perdait « À revoir » (n° 17).
     text = text or ""
-    return any(text[match.end():].strip(" \t\n.,;:!?…")
+    return any(_announces_a_correction(text[match.end():])
                for match in SELF_CORRECTION_HINT.finditer(text))
+
+
+def _announces_a_correction(after: str) -> bool:
+    """Ce qui suit le mot de reprise est-il la valeur corrigée ?
+
+    Une phrase qui finit sur lui suivie d'une longue phrase est une nouvelle
+    idée : « À revoir, attends. Un amplificateur… » (0923, 24/10). Suivie d'une
+    valeur courte, c'est une reprise : « mardi, non. Jeudi. »
+    """
+    rest = after.strip(" \t\n,;:")
+    if not rest:
+        return False
+    if rest[0] not in ".!?…":
+        return True
+    following = re.split(r"[.!?…]", rest.lstrip(".!?… \t\n"), maxsplit=1)[0]
+    return 0 < len(following.split()) <= 3
 
 
 def _resolution_words(text: str) -> list[str]:
@@ -13305,7 +13321,9 @@ def correction_lost(dictated: str, text: str) -> bool:
             new_words.append(word)
             if len(new_words) == CORRECTION_LOOKAHEAD_WORDS:
                 break
-        if new_words and not any(word in written for word in new_words):
+        # « à 128 » corrigé, écrit « A128 » : le nombre est dans le mot (24/10).
+        if new_words and not any(word in written or any(
+                word.isdigit() and word in kept for kept in written) for word in new_words):
             return True
     return False
 
@@ -15977,7 +15995,7 @@ def host_timeline(since: str) -> list[dict]:
 
 def estimated_cost_usd(transcriptions: int) -> float | None:
     """Le coût estimé des dictées, si l'exploitant a renseigné le coût d'une
-    dictée (n° 53 ; mesuré à 0,00057 $ sur OpenRouter le 24/10). Sans lui,
+    dictée (n° 53 ; 0,00075 $ pour le circuit actuel, mesuré le 24/10). Sans lui,
     rien n'est affiché plutôt qu'un chiffre inventé."""
     try:
         unit = float(os.getenv("NOVA_COST_PER_DICTATION_USD", "") or 0)

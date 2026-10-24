@@ -141,6 +141,14 @@ class TrailingRepairWordTests(unittest.TestCase):
     def test_a_repair_word_with_nothing_after_is_not_a_repair(self):
         self.assertFalse(main.has_self_correction_hint("À revoir, attends."))
 
+    def test_a_repair_word_ending_its_sentence_is_not_a_repair(self):
+        """0923 : « À revoir, attends. Un amplificateur… » perdait « À revoir »."""
+        self.assertFalse(main.has_self_correction_hint(
+            "À revoir, attends. Un amplificateur opérationnel idéal a un gain infini."))
+
+    def test_a_short_value_after_the_period_is_still_a_repair(self):
+        self.assertTrue(main.has_self_correction_hint("rendez-vous mardi, non. Jeudi."))
+
     def test_a_real_repair_is_still_seen(self):
         self.assertTrue(main.has_self_correction_hint("mardi, non attends, mercredi"))
 
@@ -235,6 +243,15 @@ class AllStylesNegationTests(unittest.TestCase):
     def test_a_translation_is_not_judged(self):
         self.assertIsNone(refusal(self.SAID, "I will not come to the tutorial on March 12.",
                                   "org_style_english"))
+
+
+class AfterDeploymentTests(unittest.TestCase):
+    """Mesure du PC fixe avant le déploiement (abc8197, 24/10) : 0746 et 0419."""
+
+    def test_a_corrected_room_written_joined_is_kept(self):
+        said = "Le TP est en salle C219, enfin à 128."
+        self.assertIsNone(main.rewrite_refusal(
+            said, "Le TP est en salle A128.", "default_improve_transcriptions", resolved=said))
 
 
 if __name__ == "__main__":
