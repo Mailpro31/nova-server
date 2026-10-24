@@ -995,6 +995,17 @@ export const t = {
     groups:
       "A group can set its own limit in Configuration, under Settings by group. When a member belongs to several groups, the shortest limit applies.",
     readOnly: "You can view this limit, but not change it.",
+    capTitle: "Daily cleanups per member",
+    capBehaviour:
+      "Each cleanup goes through the AI engine. Past the cap, a member's dictation is pasted as dictated, without cleanup, until the next day. Nothing is lost.",
+    capField: "Cleanups per member and per day (0 = no cap)",
+    capRange: (max: number) => `Whole number, from 0 to ${max}.`,
+    capValue: (count: number) => (count === 0 ? "No cap" : `${count} per day`),
+    capProblems: {
+      empty: "Enter a number.",
+      whole: "Use a whole number.",
+      range: "The cap must be between 0 and 10000.",
+    },
   },
 
   styles: {

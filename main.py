@@ -2397,6 +2397,10 @@ POLICY_SETTINGS: dict[str, PolicySetting] = {
         # la depasse, pour qu'un poste ancien ne la contourne pas.
         PolicySetting("max_dictation_seconds", int, 600, None,
                       minimum=30, maximum=7200),
+        # Mises au propre par membre et par jour ; 0, sans plafond. Atteint, la
+        # dictée est rendue telle quelle (n° 21 ter) : rien n'est perdu.
+        PolicySetting("daily_rewrites_per_member", int, 0, None,
+                      minimum=0, maximum=10000),
         # Des Styles retires un par un, sans fermer la categorie Styles. Des
         # identifiants — Styles integres du poste ou Styles d'organisation —,
         # aucun par defaut : rien n'est retire tant que personne ne l'a decide.
@@ -3277,6 +3281,15 @@ USAGE_MONTHLY_RETENTION_DAYS = 730
 # Décision de Sash, 06/10.
 USAGE_DAILY_RETENTION_DAYS = 90
 HOST_SAMPLE_RETENTION_DAYS = 90
+
+
+def rewrites_today(email: str) -> int:
+    with db() as conn:
+        row = conn.execute(
+            "SELECT reformulations FROM usage WHERE email=? AND day=?",
+            (email, time.strftime("%Y-%m-%d")),
+        ).fetchone()
+    return int(row[0] or 0) if row else 0
 
 
 def count_usage(
@@ -14186,6 +14199,10 @@ async def reformulate(body: ReformulateRequest, user: str = Depends(current_user
     # ses snippets et son vocabulaire -- jamais un declencheur a la place.
     fallback = {"text": restore_snippets(
         enforce_vocabulary(source_text, vocabulary), snippet_restores) or body.text}
+    cap = member_policy(account)["settings"]["daily_rewrites_per_member"]
+    if cap and rewrites_today(user) >= cap:
+        observability.log("reformulation.daily_cap", level="info")
+        return {**fallback, "capped": True}
     style_id = (body.style_id or "").strip()
     style_prompt = (body.style_prompt or "").strip()
     if style_id and style_id in member_policy(account)["settings"]["disabled_style_ids"]:
