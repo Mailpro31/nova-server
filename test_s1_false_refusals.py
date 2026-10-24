@@ -128,7 +128,7 @@ class BlockSnippetTests(unittest.TestCase):
         text, restores = main.protect_snippets("merci, signature ipsa", self.SNIPPETS)
         self.assertEqual(text, "merci, {{snippet0}}")
         self.assertEqual(main.restore_snippets(text, restores),
-                         "merci,\nSasha Martin\nÉtudiant IPSA")
+                         "merci.\nSasha Martin\nÉtudiant IPSA")
 
     def test_a_one_line_value_keeps_its_trigger(self):
         text, _ = main.protect_snippets("voici mon adresse", self.SNIPPETS)
@@ -177,7 +177,7 @@ class VerificationOf24OctoberTests(unittest.TestCase):
             "je rattraperai le TD, signature ipsa", BlockSnippetTests.SNIPPETS)
         self.assertEqual(
             main.restore_snippets("Je rattraperai le TD {{snippet0}}", restores),
-            "Je rattraperai le TD\nSasha Martin\nÉtudiant IPSA")
+            "Je rattraperai le TD.\nSasha Martin\nÉtudiant IPSA")
 
 
 class SecondVerificationTests(unittest.TestCase):
@@ -199,6 +199,20 @@ class SecondVerificationTests(unittest.TestCase):
         self.assertEqual(
             main.restore_snippets("Je rattraperai le TD {{snippet0}}.", restores),
             "Je rattraperai le TD.\nSasha Martin\nÉtudiant IPSA")
+
+
+class ThirdVerificationTests(unittest.TestCase):
+    """Troisième rejeu du PC fixe (3cb4bf0, 24/10) : la ponctuation avant une signature."""
+
+    def test_a_comma_before_the_signature_becomes_a_period(self):
+        _, restores = main.protect_snippets("le TD, signature ipsa", BlockSnippetTests.SNIPPETS)
+        self.assertEqual(main.restore_snippets("Je rattraperai le TD, {{snippet0}}", restores),
+                         "Je rattraperai le TD.\nSasha Martin\nÉtudiant IPSA")
+
+    def test_a_bold_word_before_the_signature_gets_its_period(self):
+        _, restores = main.protect_snippets("le TD signature ipsa", BlockSnippetTests.SNIPPETS)
+        self.assertEqual(main.restore_snippets("Je rattraperai le **TD** {{snippet0}}", restores),
+                         "Je rattraperai le **TD**.\nSasha Martin\nÉtudiant IPSA")
 
 
 if __name__ == "__main__":

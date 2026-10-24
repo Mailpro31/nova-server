@@ -11296,10 +11296,14 @@ def restore_snippets(text: str, restores: dict[str, tuple[str, str]],
                 # Un bloc (une signature) commence sur sa ligne (24/10), après
                 # le point de la phrase, jamais collé au snippet.
                 separator = "\n"
+                # La phrase se termine avant la signature : « …le TD, » et
+                # « …le **TD** » prennent un point (troisième rejeu, 24/10).
                 if rest.lstrip(" ").startswith("."):
                     rest = rest.lstrip(" ")[1:]
-                    if prefix[-1:].isalnum():
-                        prefix += "."
+                if prefix.endswith(","):
+                    prefix = prefix[:-1] + "."
+                elif prefix[-1:].isalnum() or prefix.endswith("*"):
+                    prefix += "."
             elif prefix.endswith(ANNOUNCES_VALUE):
                 separator = " "
             elif trigger_word and last_word.casefold() == trigger_word.casefold():
