@@ -11665,10 +11665,18 @@ COUNT_WORD = re.compile(
     re.IGNORECASE)
 
 
+# « un demi » et « 0,5 » sont la même valeur. PC fixe, 24/10 : « un demi rho v
+# au carré » résumé en « 0,5 ρv² » était refusé. Jamais dans une date (« 1/2/2026 »).
+COMMAND_HALF = re.compile(r"(?<![\w/])(?:une?\s+demie?|½|1\s*/\s*2)(?![\w/])", re.IGNORECASE)
+COMMAND_QUARTER = re.compile(r"(?<![\w/])(?:un\s+quart|¼|1\s*/\s*4)(?![\w/])", re.IGNORECASE)
+
+
 def command_numbers(text: str, english: bool) -> str:
     """Le texte prêt pour le contrôle des nombres d'une commande : « 18 h 00 »
-    lu « 18 h », et, en anglais, les nombres en lettres écrits en chiffres."""
+    lu « 18 h », une moitié ou un quart en décimal, et, en anglais, les nombres
+    en lettres écrits en chiffres."""
     text = ZERO_MINUTES.sub(r"\1 h", text or "")
+    text = COMMAND_QUARTER.sub(" 0,25 ", COMMAND_HALF.sub(" 0,5 ", text))
     if not english:
         return text
     return ENGLISH_NUMBER_WORD.sub(
@@ -11810,6 +11818,11 @@ def answer_preamble(text: str, answer: str) -> bool:
         return False
     head = fold_accents(found.group(1).lower())
     if not set(re.findall(r"[a-z]+", head)) & PREAMBLE_WORDS:
+        return False
+    # « Voici ce qu'il faut retenir » reprend l'étiquette « À retenir » du texte :
+    # ce n'est pas une présentation de la réponse (PC fixe, 24/10).
+    named = set(re.findall(r"[a-z]{5,}", head)) - PREAMBLE_WORDS
+    if named and named <= set(re.findall(r"[a-z]{5,}", fold_accents((text or "").lower()))):
         return False
     return head.strip() not in fold_accents((text or "").lower())
 
