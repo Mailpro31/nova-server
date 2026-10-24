@@ -11654,6 +11654,17 @@ ENGLISH_NUMBER_WORD = re.compile(
     r"\b(" + "|".join(ENGLISH_NUMBER_WORDS) + r")\b", re.IGNORECASE)
 
 
+# Les petits nombres en lettres qu'une explication emploie pour compter ce
+# qu'elle décrit (« trois grandeurs », « inférieure à zéro »). Mesure du PC fixe
+# (24/10) : 7 bonnes réponses de la bulle sur 44 refusées pour eux. Pas dans un
+# nombre composé (« dix-sept », « trois cents »), qui reste contrôlé.
+COUNT_WORD = re.compile(
+    r"(?<![\w-])(?:z[ée]ro|deux|trois|quatre|cinq|six|sept|huit|neuf|dix|"
+    r"zero|two|three|four|five|seven|eight|nine|ten)(?![\w-])"
+    r"(?!\s+(?:cents?|mille|millions?|milliards?|hundreds?|thousands?|millions?|billions?)\b)",
+    re.IGNORECASE)
+
+
 def command_numbers(text: str, english: bool) -> str:
     """Le texte prêt pour le contrôle des nombres d'une commande : « 18 h 00 »
     lu « 18 h », et, en anglais, les nombres en lettres écrits en chiffres."""
@@ -11751,7 +11762,12 @@ def command_refusal(instruction: str, text: str, answer: str) -> str | None:
     # « le four », « six » sont aussi du français : les nombres anglais en
     # lettres ne sont lus que dans un texte qui n'est pas français.
     english = source_language != "fr"
-    reason = facts_refusal(command_numbers(text, english), command_numbers(output, english),
+    written = output
+    # Une explication ou un résumé compte ce qu'il décrit ; une réécriture du
+    # texte de l'élève, elle, n'ajoute aucun nombre, même petit.
+    if kind != "rewrite":
+        written = COUNT_WORD.sub(" ", written)
+    reason = facts_refusal(command_numbers(text, english), command_numbers(written, english),
                            kind == "rewrite")
     if reason:
         return reason
