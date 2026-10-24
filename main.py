@@ -2371,6 +2371,9 @@ POLICY_SETTINGS: dict[str, PolicySetting] = {
         PolicySetting("ai_skills_enabled", bool, False, "aiSkills"),
         PolicySetting("organization_vocabulary_enabled", bool, True, "dictionary"),
         PolicySetting("voice_commands_enabled", bool, False, "commands"),
+        # La bulle de sélection du poste (24/10) : expliquer, résumer… un texte
+        # sélectionné. Ouverte par défaut ; elle passe aussi par /api/command.
+        PolicySetting("selection_bubble_enabled", bool, True, "selectionBubble"),
         PolicySetting("engineering_notes_enabled", bool, False, "engineeringNotes"),
         PolicySetting("file_import_enabled", bool, True, "fileTranscription"),
         PolicySetting("learning_enabled", bool, False, "learning"),
@@ -3091,7 +3094,7 @@ def organization_policy_for_account(account) -> dict:
     return organization_id, organization_policy(organization_id)
 
 
-def product_capability(capability: str, feature: str):
+def product_capability(capability: str | tuple[str, ...], feature: str):
     """Garde de route, posee en dependance.
 
     En dependance plutot qu'en corps de fonction : la plupart des routes
@@ -3106,7 +3109,7 @@ def product_capability(capability: str, feature: str):
     return guard
 
 
-def require_product_capability(account, capability: str, feature: str):
+def require_product_capability(account, capability: str | tuple[str, ...], feature: str):
     """Refuse l'operation si l'organisation a ferme la fonction.
 
     Le poste masque deja l'entree correspondante, mais un poste est une
@@ -3120,7 +3123,9 @@ def require_product_capability(account, capability: str, feature: str):
     # La policy du membre, groupes compris : fermer une fonction a un groupe
     # doit la refuser ici aussi, pas seulement la masquer sur le poste.
     capabilities = public_campus_config(organization_id, member_policy(account))["capabilities"]
-    if not capabilities.get(capability):
+    # Plusieurs capacités : l'une d'elles ouverte suffit (une route partagée).
+    wanted = (capability,) if isinstance(capability, str) else capability
+    if not any(capabilities.get(name) for name in wanted):
         raise HTTPException(
             403, {"code": "ORGANIZATION_POLICY_DISABLED", "feature": feature}
         )
@@ -4446,6 +4451,9 @@ def public_campus_config(organization_id: str | None = None,
             "styles": EDUCATION_MODE != "assessment",
             "fileTranscription": EDUCATION_MODE != "assessment",
             "commands": EDUCATION_MODE == "normal",
+            # Fermée en classe et en examen, comme les commandes : elle appelle
+            # un modèle et ouvre des IA extérieures.
+            "selectionBubble": EDUCATION_MODE == "normal",
             "dictionary": EDUCATION_MODE != "assessment",
             "snippets": EDUCATION_MODE != "assessment",
             "formattingRules": EDUCATION_MODE != "assessment",
@@ -14500,7 +14508,9 @@ async def reformulate(body: ReformulateRequest, user: str = Depends(current_user
         return resolved_fallback
     return {"text": without_fillers(restored)}
 
-@app.post("/api/command", dependencies=[Depends(product_capability("commands", "voice_commands"))])
+# Les Commandes Nova et la bulle de sélection partagent cette route.
+@app.post("/api/command", dependencies=[Depends(product_capability(
+    ("commands", "selectionBubble"), "voice_commands"))])
 async def command(body: CommandRequest, user: str = Depends(current_user),
                   account=Depends(current_account)):
     instruction = clean_required(body.instruction, "instruction", 2000)

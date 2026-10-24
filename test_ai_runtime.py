@@ -620,7 +620,7 @@ class InferenceEndpointTests(AdminTestCase):
             **kwargs,
         )
 
-    def deny(self, key: str):
+    def deny(self, *keys: str):
         with main.db() as conn:
             conn.execute(
                 "INSERT INTO organization_policies(organization_id,schema_version,revision,settings,updated_at) "
@@ -629,7 +629,7 @@ class InferenceEndpointTests(AdminTestCase):
                     main.nova_organization_id(),
                     main.POLICY_SCHEMA_VERSION,
                     1,
-                    json.dumps({key: False}),
+                    json.dumps(dict.fromkeys(keys, False)),
                     1,
                 ),
             )
@@ -657,7 +657,7 @@ class InferenceEndpointTests(AdminTestCase):
         self.assertEqual(row["reformulations"], 1)
 
     def test_policy_refuses_command_before_inference(self):
-        self.deny("voice_commands_enabled")
+        self.deny("voice_commands_enabled", "selection_bubble_enabled")
         token = self.sign_in("member@example.com")
         router = self.fake_router()
         with patch.object(main, "ORGANIZATION_AI_ROUTER", router):
@@ -668,6 +668,20 @@ class InferenceEndpointTests(AdminTestCase):
             )
         self.assertEqual(response.status_code, 403)
         self.assertEqual(router.text_backend.requests, [])
+
+    def test_the_selection_bubble_alone_opens_commands(self):
+        """24/10 : les Commandes Nova fermées (le défaut) refusaient aussi la
+        bulle de sélection, qui affichait « Commande échouée »."""
+        self.deny("voice_commands_enabled")
+        token = self.sign_in("member@example.com")
+        router = self.fake_router()
+        with patch.object(main, "ORGANIZATION_AI_ROUTER", router):
+            response = self.client.post(
+                "/api/command",
+                headers=self.auth(token),
+                json={"instruction": "explain", "text": "draft"},
+            )
+        self.assertEqual(response.status_code, 200, response.text)
 
     def test_classroom_stays_closed_however_capable_the_runtime_is(self):
         """Le runtime est une infrastructure, jamais une autorisation.
