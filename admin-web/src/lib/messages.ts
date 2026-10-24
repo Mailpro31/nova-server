@@ -43,7 +43,6 @@ export const t = {
     overview: "Overview",
     people: "People",
     features: "App features",
-    learn: "Learn",
     content: "Content",
     limits: "Limits",
     signIn: "Sign-in and security",
@@ -876,6 +875,12 @@ export const t = {
     restoreDefaults: "Restore defaults",
     restoreDefaultsHint: "Fills in Nova's default values. Nothing changes until you save.",
     groupSidebar: "Sidebar categories",
+    groupOptional: "Optional features",
+    optionalNote:
+      "Off by default: Nova keeps the app simple for students until you turn a feature on.",
+    meetingTitle: "Meeting mode",
+    meetingBody:
+      "Show the Meeting category, which captures the other participants of an online meeting and writes a report.",
     groupOther: "Other features",
     groupMemberView: "What members see",
     memberGroupsTitle: "Show members their groups",

@@ -34,7 +34,6 @@ describe("Domains", () => {
       "overview",
       "people",
       "features",
-      "learn",
       "content",
       "limits",
       "signIn",
@@ -97,5 +96,34 @@ describe("Look", () => {
     for (const token of ["#1f1f22", "#28282c", "#0a84ff", "#f5f5f7", "#ececee", "Segoe UI Variable Text"]) {
       expect(CSS).toContain(token);
     }
+  });
+});
+
+describe("Optional features", () => {
+  // n° 52 : la console mettait en avant ce que l'application masque. Les
+  // fonctions fermées par défaut ont une seule place, en tête de Configuration.
+  test("they are grouped first, meeting mode included", () => {
+    const rest = code(readFileSync("src/pages/Rest.tsx", "utf8"));
+    const optional = rest.indexOf("title: t.policies.groupOptional");
+    const sidebar = rest.indexOf("title: t.policies.groupSidebar");
+    expect(optional).toBeGreaterThan(-1);
+    expect(optional).toBeLessThan(sidebar);
+    const group = rest.slice(optional, sidebar);
+    for (const key of [
+      "learning_enabled",
+      "voice_commands_enabled",
+      "ai_skills_enabled",
+      "generated_instructions_enabled",
+      "engineering_notes_enabled",
+      "meeting_enabled",
+    ]) {
+      expect(group).toContain(`key: "${key}"`);
+    }
+  });
+
+  test("Learn sits with the app features, not in its own domain", () => {
+    expect(
+      NAV_SECTIONS.find((section) => section.id === "features")?.pages,
+    ).toEqual(["configuration", "learn"]);
   });
 });

@@ -209,10 +209,9 @@ const POLICY_GROUPS: {
   items: { key: string; title: string; body: string }[];
 }[] = [
   {
-    // Les categories de la barre laterale de Nova, sous le nom que le membre
-    // y lit, dans le meme ordre. Accueil et Reglages n'y sont pas : sans eux,
-    // l'application ne s'utilise plus.
-    title: t.policies.groupSidebar,
+    // Fermees par defaut (lot 3) : une seule place, en tete, avec un
+    // interrupteur chacune (n° 52).
+    title: t.policies.groupOptional,
     items: [
       {
         key: "learning_enabled",
@@ -230,11 +229,6 @@ const POLICY_GROUPS: {
         body: `${t.policies.aiSkillsBody} ${t.policies.sidebarNote}`,
       },
       {
-        key: "styles_enabled",
-        title: t.policies.stylesTitle,
-        body: `${t.policies.stylesBody} ${t.policies.sidebarNote}`,
-      },
-      {
         key: "generated_instructions_enabled",
         title: t.policies.generatedInstructionsTitle,
         body: `${t.policies.generatedInstructionsBody} ${t.policies.deviceCategoryNote}`,
@@ -243,6 +237,24 @@ const POLICY_GROUPS: {
         key: "engineering_notes_enabled",
         title: t.policies.notesTitle,
         body: `${t.policies.notesBody} ${t.policies.sidebarNote}`,
+      },
+      {
+        key: "meeting_enabled",
+        title: t.policies.meetingTitle,
+        body: `${t.policies.meetingBody} ${t.policies.optionalNote}`,
+      },
+    ],
+  },
+  {
+    // Les categories de la barre laterale de Nova, sous le nom que le membre
+    // y lit. Accueil et Reglages n'y sont pas : sans eux, l'application ne
+    // s'utilise plus.
+    title: t.policies.groupSidebar,
+    items: [
+      {
+        key: "styles_enabled",
+        title: t.policies.stylesTitle,
+        body: `${t.policies.stylesBody} ${t.policies.sidebarNote}`,
       },
       {
         key: "past_dictations_enabled",
