@@ -41,3 +41,31 @@ export function limitProblem(input: string): LimitProblem | null {
     return "range";
   return null;
 }
+
+/**
+ * Mises au propre par membre et par jour (n° 21 ter). 0 : aucun plafond.
+ * Atteint, la dictée est collée telle quelle, sans mise au propre.
+ */
+export const REWRITE_CAP_KEY = "daily_rewrites_per_member";
+export const MAX_REWRITE_CAP = 10000;
+
+export function rewriteCap(settings: PolicySettings): number {
+  const value = settings[REWRITE_CAP_KEY];
+  return typeof value === "number" ? value : 0;
+}
+
+export function withRewriteCap(
+  settings: PolicySettings,
+  cap: number,
+): PolicySettings {
+  return { ...settings, [REWRITE_CAP_KEY]: cap };
+}
+
+export function capProblem(input: string): LimitProblem | null {
+  const trimmed = input.trim();
+  const value = Number(trimmed);
+  if (trimmed === "" || !Number.isFinite(value)) return "empty";
+  if (!Number.isInteger(value)) return "whole";
+  if (value < 0 || value > MAX_REWRITE_CAP) return "range";
+  return null;
+}

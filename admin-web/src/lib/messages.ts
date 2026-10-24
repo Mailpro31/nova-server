@@ -1,23 +1,17 @@
 /**
- * Textes de l'interface.
+ * Textes de l'interface, en anglais ; le français est dans `messages.fr.ts`.
  *
- * ## Pourquoi l'anglais, et pourquoi un seul fichier
- *
- * Nova Desktop porte 21 langues, avec un contrôle de complétude. Les dupliquer
- * pour une console qui n'a pas encore d'utilisateur reviendrait à faire traduire
- * 21 fois des libellés qui vont bouger à chaque phase.
- *
- * Nova Admin commence donc en anglais — la langue de fait des consoles
- * d'administration — avec **toutes** ses chaînes rassemblées ici. Le jour où la
- * traduction sera utile, il n'y aura pas à parcourir les composants : ce module
- * devient le catalogue par défaut, et rien d'autre ne change.
+ * Toutes les chaînes visibles sont ici, pour que chaque langue ait les mêmes
+ * clés : le type `Messages` le vérifie. La console suit la langue du
+ * navigateur (n° 28 : une école française la lit en français).
  *
  * Aucune chaîne visible ne doit être écrite en dur dans un composant.
  */
 
 import type { ApiErrorKind } from "./api";
+import { fr } from "./messages.fr";
 
-export const t = {
+const en = {
   product: "Nova Admin",
 
   nav: {
@@ -43,7 +37,6 @@ export const t = {
     overview: "Overview",
     people: "People",
     features: "App features",
-    learn: "Learn",
     content: "Content",
     limits: "Limits",
     signIn: "Sign-in and security",
@@ -734,6 +727,11 @@ export const t = {
       "Dictation, transcripts, prompts and model output stay on this organization's infrastructure. Nova's control plane stores configuration and health only — never user content.",
     processing: "Processing location",
     onPremises: "Organization private infrastructure",
+    externalProvider: "Online AI provider (API) chosen in the server configuration",
+    privacyExternal:
+      "Transcripts and the selected Style are sent to the online AI provider configured on the server, which refines and rewrites them. Nova's control plane stores configuration and health only — never user content.",
+    cloudFallbackExternalBody:
+      "If the online provider fails three times in a row, the server's local model takes over for 15 seconds.",
     cloudFallback: "Cloud fallback",
     cloudFallbackDisabled: "Disabled",
     cloudFallbackBody:
@@ -871,6 +869,12 @@ export const t = {
     restoreDefaults: "Restore defaults",
     restoreDefaultsHint: "Fills in Nova's default values. Nothing changes until you save.",
     groupSidebar: "Sidebar categories",
+    groupOptional: "Optional features",
+    optionalNote:
+      "Off by default: Nova keeps the app simple for students until you turn a feature on.",
+    meetingTitle: "Meeting mode",
+    meetingBody:
+      "Show the Meeting category, which captures the other participants of an online meeting and writes a report.",
     groupOther: "Other features",
     groupMemberView: "What members see",
     memberGroupsTitle: "Show members their groups",
@@ -882,6 +886,9 @@ export const t = {
     // perdent-elles leur mise en forme ? Non.
     stylesBody:
       "Show the Styles category and deliver this organization's Styles. When closed, dictations are still reformulated with the default Style.",
+    personalStylesTitle: "Personal Styles",
+    personalStylesBody:
+      "Allow members to create their own Styles. Built-in Styles and this organization's Styles stay available.",
     generatedInstructionsTitle: "Prompts",
     generatedInstructionsBody: "Show the Prompts category, where members find the prompts their dictations produced.",
     pastDictationsTitle: "History",
@@ -917,6 +924,8 @@ export const t = {
     window: { "24": "24 hours", "168": "7 days", "744": "31 days" },
     dictations: "Dictations",
     peoplePeak: "People at peak",
+    estimatedCost: "Estimated AI cost",
+    dollars: (value: number) => `$${value.toFixed(2)}`,
     busiestHour: "Busiest hour",
     latencyAverage: "Average wait",
     latencyPeak: "Worst wait",
@@ -990,6 +999,17 @@ export const t = {
     groups:
       "A group can set its own limit in Configuration, under Settings by group. When a member belongs to several groups, the shortest limit applies.",
     readOnly: "You can view this limit, but not change it.",
+    capTitle: "Daily cleanups per member",
+    capBehaviour:
+      "Each cleanup goes through the AI engine. Past the cap, a member's dictation is pasted as dictated, without cleanup, until the next day. Nothing is lost.",
+    capField: "Cleanups per member and per day (0 = no cap)",
+    capRange: (max: number) => `Whole number, from 0 to ${max}.`,
+    capValue: (count: number) => (count === 0 ? "No cap" : `${count} per day`),
+    capProblems: {
+      empty: "Enter a number.",
+      whole: "Use a whole number.",
+      range: "The cap must be between 0 and 10000.",
+    },
   },
 
   styles: {
@@ -1323,15 +1343,80 @@ export const t = {
     boundary:
       "Nova Admin manages configuration. Dictated audio, transcripts and prompts never pass through it.",
   },
+
+  // Les messages d'échec, dans la langue de la console.
+  errors: {
+    userNotFound:
+      "This account no longer exists.",
+    memberStatusInvalid:
+      "That status is not recognised.",
+    memberRoleInvalid:
+      "That member type is not recognised.",
+    securityRoleInvalid:
+      "That role is not recognised.",
+    concurrencyOutOfRange:
+      "These concurrency values are out of range. Reload and try again.",
+    profileInvalid:
+      "That model profile is not recognised.",
+    policyKeyUnknown:
+      "This console sent a setting the Nova service does not recognise. Update Nova Admin.",
+    policyValueInvalid:
+      "One of these settings has an unexpected value. Reload and try again.",
+    network:
+      "Cannot reach the Nova service. Check your connection and try again.",
+    unauthenticated:
+      "Your session has ended. Sign in again.",
+    stepUpRequired:
+      "Administering requires a recent sign-in.",
+    adminSessionExpired:
+      "Your administration session has ended. Re-authenticate to continue.",
+    forbidden:
+      "Your account does not have permission for this.",
+    notFound:
+      "This organization is not available.",
+    conflict:
+      "This change conflicts with the current configuration.",
+    invalid:
+      "The server rejected these values. Check the fields and try again.",
+    contractMismatch:
+      "This console is older than the Nova service it is talking to. Update Nova Admin.",
+    server:
+      "The Nova service could not complete this request.",
+  },
 } as const;
+
+/** Le catalogue sans ses valeurs littérales : chaque langue a les mêmes clés. */
+type Widen<T> = T extends string
+  ? string
+  : T extends (...args: infer A) => infer R
+    ? (...args: A) => Widen<R>
+    : T extends readonly (infer U)[]
+      ? readonly Widen<U>[]
+      : T extends object
+        ? { [K in keyof T]: Widen<T[K]> }
+        : T;
+
+export type Messages = Widen<typeof en>;
+
+// La console suit la langue du navigateur : une école française la lit en
+// français (n° 28). Sans navigateur, comme dans les tests, l'anglais.
+const french =
+  typeof document !== "undefined" &&
+  typeof navigator !== "undefined" &&
+  navigator.language.toLowerCase().startsWith("fr");
+
+export const t: Messages = french ? fr : en;
+
+// Un lecteur d'écran prononce la page dans sa langue.
+if (french) document.documentElement.lang = "fr";
 
 /** Message lisible pour un échec. Jamais de trace technique à l'écran. */
 export function errorMessage(kind: ApiErrorKind, code?: string | null): string {
   if (code === "PROVIDER_LAST_ACTIVE") return t.identity.lastActive;
   if (code === "ADMIN_LAST_IDENTITY_MANAGER") return t.administrators.lastManager;
-  if (code === "USER_NOT_FOUND") return "This account no longer exists.";
-  if (code === "MEMBER_STATUS_INVALID") return "That status is not recognised.";
-  if (code === "MEMBER_ROLE_INVALID") return "That member type is not recognised.";
+  if (code === "USER_NOT_FOUND") return t.errors.userNotFound;
+  if (code === "MEMBER_STATUS_INVALID") return t.errors.memberStatusInvalid;
+  if (code === "MEMBER_ROLE_INVALID") return t.errors.memberRoleInvalid;
   if (code === "MEMBER_EMAIL_OUTSIDE_DOMAINS") return t.members.outsideDomains;
   if (code === "MEMBER_EMAIL_INVALID") return t.members.emailInvalid;
   if (code === "MEMBER_ALREADY_EXISTS") return t.members.alreadyExists;
@@ -1361,7 +1446,7 @@ export function errorMessage(kind: ApiErrorKind, code?: string | null): string {
   if (code === "GROUP_NAME_TAKEN") return t.groups.nameTaken;
   if (code === "GROUP_NAME_INVALID") return t.groups.nameInvalid;
   if (code === "GROUP_MANAGED_BY_DIRECTORY") return t.groups.managedByDirectory;
-  if (code === "SECURITY_ROLE_INVALID") return "That role is not recognised.";
+  if (code === "SECURITY_ROLE_INVALID") return t.errors.securityRoleInvalid;
   if (code === "POLICY_REVISION_CONFLICT") return t.policies.conflict;
   if (code === "GROUP_POLICY_REVISION_CONFLICT") return t.groupPolicies.conflict;
   if (code === "GROUP_NOT_FOUND") return t.groupPolicies.notFound;
@@ -1376,35 +1461,35 @@ export function errorMessage(kind: ApiErrorKind, code?: string | null): string {
   if (code === "AI_RUNTIME_HARDWARE_INCOMPATIBLE")
     return t.aiRuntime.hardwareIncompatible;
   if (code?.startsWith("AI_RUNTIME_CONCURRENCY"))
-    return "These concurrency values are out of range. Reload and try again.";
+    return t.errors.concurrencyOutOfRange;
   if (code === "AI_RUNTIME_PROFILE_INVALID")
-    return "That model profile is not recognised.";
+    return t.errors.profileInvalid;
   // Le motif porte la cle fautive — `POLICY_KEY_UNKNOWN:ai_skils`. La console
   // ne l'affiche pas telle quelle : un nom de champ interne n'aide personne.
   if (code?.startsWith("POLICY_KEY_UNKNOWN"))
-    return "This console sent a setting the Nova service does not recognise. Update Nova Admin.";
+    return t.errors.policyKeyUnknown;
   if (code?.startsWith("POLICY_VALUE_INVALID"))
-    return "One of these settings has an unexpected value. Reload and try again.";
+    return t.errors.policyValueInvalid;
   switch (kind) {
     case "network":
-      return "Cannot reach the Nova service. Check your connection and try again.";
+      return t.errors.network;
     case "unauthenticated":
-      return "Your session has ended. Sign in again.";
+      return t.errors.unauthenticated;
     case "step_up_required":
-      return "Administering requires a recent sign-in.";
+      return t.errors.stepUpRequired;
     case "admin_session_expired":
-      return "Your administration session has ended. Re-authenticate to continue.";
+      return t.errors.adminSessionExpired;
     case "forbidden":
-      return "Your account does not have permission for this.";
+      return t.errors.forbidden;
     case "not_found":
-      return "This organization is not available.";
+      return t.errors.notFound;
     case "conflict":
-      return "This change conflicts with the current configuration.";
+      return t.errors.conflict;
     case "invalid":
-      return "The server rejected these values. Check the fields and try again.";
+      return t.errors.invalid;
     case "contract_mismatch":
-      return "This console is older than the Nova service it is talking to. Update Nova Admin.";
+      return t.errors.contractMismatch;
     default:
-      return "The Nova service could not complete this request.";
+      return t.errors.server;
   }
 }

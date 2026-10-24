@@ -610,8 +610,12 @@ class BusinessPolicyAndPackageTests(AdminTestCase):
                 # Cle Core : borne la duree d'une dictee pour proteger le
                 # moteur partage, quelle que soit la nature de l'organisation.
                 "max_dictation_seconds",
+                # Cle Core : plafond de mises au propre par membre et par jour
+                # (n° 21 ter), quelle que soit la nature de l'organisation.
+                "daily_rewrites_per_member",
                 # Categories de l'application, communes a toute organisation.
                 "styles_enabled",
+                "personal_styles_enabled",
                 "generated_instructions_enabled",
                 "past_dictations_enabled",
                 # Mode reunion : cle Core. Elle ferme la capture des autres

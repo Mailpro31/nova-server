@@ -10,6 +10,9 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import {
+  capProblem,
+  rewriteCap,
+  withRewriteCap,
   DICTATION_LIMIT_KEY,
   dictationLimitMinutes,
   limitProblem,
@@ -83,11 +86,17 @@ describe("Limits page", () => {
     const source = code(PAGE);
     expect(source).toContain("control.policy()");
     expect(source).toContain(
-      "const next = withDictationLimit(view.settings, minutes);",
+      "next={(value) => withDictationLimit(view.settings, value)}",
     );
-    expect(source).toContain("control!.updatePolicy(view.revision, next)");
+    expect(source).toContain(
+      "next={(value) => withRewriteCap(view.settings, value)}",
+    );
+    expect(source).toContain("revision={view.revision}");
+    expect(source).toContain(
+      "control!.updatePolicy(props.revision, props.next(Number(input)))",
+    );
     const save = source.slice(source.indexOf("async function save()"));
-    expect(save).toContain("retry()");
+    expect(save).toContain("props.onReload()");
   });
 
   test("editing is gated on policy_manage and a conflict is never overwritten", () => {
@@ -114,5 +123,25 @@ describe("Limits page", () => {
     for (const value of Object.values(t.limits)) {
       if (typeof value === "string") expect(value).not.toContain("_");
     }
+  });
+});
+
+describe("daily rewrite cap", () => {
+  test("no cap until the organization sets one", () => {
+    expect(rewriteCap({})).toBe(0);
+  });
+
+  test("the whole document is sent with the cap", () => {
+    expect(withRewriteCap({ learning_enabled: false }, 40)).toEqual({
+      learning_enabled: false,
+      daily_rewrites_per_member: 40,
+    });
+  });
+
+  test("a cap is a whole number from 0", () => {
+    expect(capProblem("0")).toBeNull();
+    expect(capProblem("2.5")).toBe("whole");
+    expect(capProblem("-1")).toBe("range");
+    expect(capProblem("")).toBe("empty");
   });
 });

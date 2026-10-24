@@ -979,6 +979,23 @@ class AIRuntimeAdminTests(AdminTestCase):
         for key in forbidden:
             self.assertNotIn(key, serialized)
 
+    def test_an_external_api_is_said_on_the_runtime_page(self):
+        """n° 21 bis : la console disait que rien ne sortait de l'école alors
+        que le serveur passait par une API en ligne (Gemini, 17/10)."""
+        headers = grant_admin_session("reader@example.com", "read_only")
+        router = OrganizationAIRouter(
+            FakeTextInferenceBackend(), FakeSpeechInferenceBackend()
+        )
+        with patch.object(main, "ORGANIZATION_AI_ROUTER", router), \
+                patch.dict(os.environ, {"NOVA_AI_ALLOW_PUBLIC_ENDPOINT": "1"}):
+            body = self.client.get(
+                "/api/control/organization/ai-runtime", headers=headers
+            ).json()
+        self.assertEqual(body["processing_location"], "external_ai_provider")
+        with patch.dict(os.environ, {"NOVA_AI_ALLOW_PUBLIC_ENDPOINT": "1"}):
+            self.assertEqual(main.public_campus_config()["processing_location"],
+                             "external_ai_provider")
+
     def test_it_admin_applies_dedicated_config_with_revision(self):
         headers = grant_admin_session("it@example.com", "it_admin")
         router = OrganizationAIRouter(

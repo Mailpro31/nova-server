@@ -72,6 +72,7 @@ from ai_runtime import (
     ReasoningMode,
     TaskType,
     detect_hardware,
+    public_endpoint_allowed,
     recommend_profile,
     router_from_environment,
     DEFAULT_MAX_QUEUE,
@@ -2378,6 +2379,9 @@ POLICY_SETTINGS: dict[str, PolicySetting] = {
         # reformulation des dictees : `/api/reformulate` reste ouverte, sans
         # quoi une case cochee couperait le coeur du produit.
         PolicySetting("styles_enabled", bool, True, "styles"),
+        # L'école peut fermer la création de Styles personnels (n° 64) : les
+        # Styles intégrés et ceux de l'école restent.
+        PolicySetting("personal_styles_enabled", bool, True, "personalStyles"),
         # Prompts et Historique vivent sur le poste de la personne : aucune
         # route serveur ne les sert. La decision est annoncee au poste, qui
         # retire la categorie ; le serveur n'a rien d'autre a refuser.
@@ -2398,6 +2402,10 @@ POLICY_SETTINGS: dict[str, PolicySetting] = {
         # la depasse, pour qu'un poste ancien ne la contourne pas.
         PolicySetting("max_dictation_seconds", int, 600, None,
                       minimum=30, maximum=7200),
+        # Mises au propre par membre et par jour ; 0, sans plafond. Atteint, la
+        # dictée est rendue telle quelle (n° 21 ter) : rien n'est perdu.
+        PolicySetting("daily_rewrites_per_member", int, 0, None,
+                      minimum=0, maximum=10000),
         # Des Styles retires un par un, sans fermer la categorie Styles. Des
         # identifiants — Styles integres du poste ou Styles d'organisation —,
         # aucun par defaut : rien n'est retire tant que personne ne l'a decide.
@@ -3278,6 +3286,15 @@ USAGE_MONTHLY_RETENTION_DAYS = 730
 # Décision de Sash, 06/10.
 USAGE_DAILY_RETENTION_DAYS = 90
 HOST_SAMPLE_RETENTION_DAYS = 90
+
+
+def rewrites_today(email: str) -> int:
+    with db() as conn:
+        row = conn.execute(
+            "SELECT reformulations FROM usage WHERE email=? AND day=?",
+            (email, time.strftime("%Y-%m-%d")),
+        ).fetchone()
+    return int(row[0] or 0) if row else 0
 
 
 def count_usage(
@@ -4415,6 +4432,9 @@ def public_campus_config(organization_id: str | None = None,
         },
         "auth_methods": auth_methods,
         "education_mode": EDUCATION_MODE if EDUCATION_MODE in {"normal", "classroom", "assessment"} else "normal",
+        # Le poste dit à l'élève où part son texte (n° 59, RGPD et AI Act).
+        "processing_location": ("external_ai_provider" if public_endpoint_allowed()
+                                else "organization_private_infrastructure"),
         "ai_skills": {
             "enabled": EDUCATION_MODE != "assessment",
             "required": AI_SKILLS_REQUIRED,
@@ -7080,7 +7100,10 @@ async def ai_runtime_admin_view(organization_id: str) -> dict:
     runtime = await ORGANIZATION_AI_ROUTER.health()
     return {
         "schema_version": config["schema_version"],
-        "processing_location": "organization_private_infrastructure",
+        # Une adresse publique n'est acceptée qu'avec ce choix de l'exploitant :
+        # il suffit à dire que le texte part chez un fournisseur (n° 21 bis).
+        "processing_location": ("external_ai_provider" if public_endpoint_allowed()
+                                else "organization_private_infrastructure"),
         "deployment_mode": NOVA_SERVER_MODE,
         "desired": {
             "revision": config["desired_revision"],
@@ -10928,7 +10951,7 @@ def me(user: str = Depends(current_user), u=Depends(current_account)):
     # serveur plus ancien ou une reponse tronquee n'y citerait pas `history`
     # sans l'avoir ferme, et une fonction ne s'eteint jamais sur un silence.
     # Seules les decisions de policy comptent ici, pas le mode pedagogique.
-    closable_core = {"learning", "styles", "prompts", "history", "meeting"}
+    closable_core = {"learning", "styles", "personalStyles", "prompts", "history", "meeting"}
     member_settings = member_policy_document["settings"]
     closed_capabilities = sorted(
         setting.capability
@@ -14371,6 +14394,10 @@ async def reformulate(body: ReformulateRequest, user: str = Depends(current_user
     # ses snippets et son vocabulaire -- jamais un declencheur a la place.
     fallback = {"text": restore_snippets(
         enforce_vocabulary(source_text, vocabulary), snippet_restores) or body.text}
+    cap = member_policy(account)["settings"]["daily_rewrites_per_member"]
+    if cap and rewrites_today(user) >= cap:
+        observability.log("reformulation.daily_cap", level="info")
+        return {**fallback, "capped": True}
     style_id = (body.style_id or "").strip()
     style_prompt = (body.style_prompt or "").strip()
     if style_id and style_id in member_policy(account)["settings"]["disabled_style_ids"]:
@@ -15948,6 +15975,17 @@ def host_timeline(since: str) -> list[dict]:
     ]
 
 
+def estimated_cost_usd(transcriptions: int) -> float | None:
+    """Le coût estimé des dictées, si l'exploitant a renseigné le coût d'une
+    dictée (n° 53 ; mesuré à 0,00057 $ sur OpenRouter le 24/10). Sans lui,
+    rien n'est affiché plutôt qu'un chiffre inventé."""
+    try:
+        unit = float(os.getenv("NOVA_COST_PER_DICTATION_USD", "") or 0)
+    except ValueError:
+        return None
+    return round(transcriptions * unit, 2) if unit > 0 else None
+
+
 def usage_summary(timeline: list[dict]) -> dict:
     """Ce qui se lit en un coup d'oeil, calcule a partir de la meme serie.
 
@@ -15958,7 +15996,7 @@ def usage_summary(timeline: list[dict]) -> dict:
         return {
             "dictations": 0, "people_peak": 0, "busiest_hour": None,
             "latency_ms_average": None, "latency_ms_max": None,
-            "over_five_seconds": 0,
+            "over_five_seconds": 0, "estimated_cost_usd": estimated_cost_usd(0),
         }
     total = sum(h["transcriptions"] + h["reformulations"] for h in timeline)
     busiest = max(timeline, key=lambda h: h["transcriptions"] + h["reformulations"])
@@ -15977,6 +16015,7 @@ def usage_summary(timeline: list[dict]) -> dict:
         # Le nombre d'heures ou le pire cas a depasse l'objectif. Un seul
         # depassement ne condamne rien ; dix heures sur vingt-quatre, si.
         "over_five_seconds": sum(1 for p in peaks if p > 5000),
+        "estimated_cost_usd": estimated_cost_usd(sum(h["transcriptions"] for h in timeline)),
     }
 
 

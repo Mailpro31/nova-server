@@ -225,6 +225,14 @@ export function UsageMetrics() {
               <Facts
                 entries={[
                   [t.usageMetrics.dictations, String(summary.dictations)],
+                  ...(summary.estimated_cost_usd != null
+                    ? [
+                        [
+                          t.usageMetrics.estimatedCost,
+                          t.usageMetrics.dollars(summary.estimated_cost_usd),
+                        ] as [string, string],
+                      ]
+                    : []),
                   [t.usageMetrics.peoplePeak, String(summary.people_peak)],
                   [
                     t.usageMetrics.busiestHour,
