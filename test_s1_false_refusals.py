@@ -180,5 +180,26 @@ class VerificationOf24OctoberTests(unittest.TestCase):
             "Je rattraperai le TD\nSasha Martin\nÉtudiant IPSA")
 
 
+class SecondVerificationTests(unittest.TestCase):
+    """Second rejeu du PC fixe (3f128d3, 24/10, release s1-verif-3f128d3)."""
+
+    def test_a_dictated_name_cannot_disappear(self):
+        self.assertEqual(refusal(
+            "envoie le rapport à monsieur Martin avec mon adresse {{snippet0}}",
+            "Je vous envoie le rapport avec mon adresse : {{snippet0}}.",
+            "nova_style_email"), "content-dropped")
+
+    def test_a_name_at_the_start_of_a_sentence_is_not_counted(self):
+        self.assertIsNone(refusal(
+            "Lundi on rend le rapport", "On rend le rapport lundi.", "nova_style_everyday"))
+
+    def test_the_sentence_period_goes_before_the_signature(self):
+        _, restores = main.protect_snippets(
+            "je rattraperai le TD signature ipsa", BlockSnippetTests.SNIPPETS)
+        self.assertEqual(
+            main.restore_snippets("Je rattraperai le TD {{snippet0}}.", restores),
+            "Je rattraperai le TD.\nSasha Martin\nÉtudiant IPSA")
+
+
 if __name__ == "__main__":
     unittest.main()

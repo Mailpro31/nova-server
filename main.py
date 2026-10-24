@@ -11293,8 +11293,13 @@ def restore_snippets(text: str, restores: dict[str, tuple[str, str]],
             if not prefix or prefix.endswith("\n"):
                 separator = ""
             elif "\n" in content.strip():
-                # Un bloc (une signature) commence sur sa ligne (24/10).
+                # Un bloc (une signature) commence sur sa ligne (24/10), après
+                # le point de la phrase, jamais collé au snippet.
                 separator = "\n"
+                if rest.lstrip(" ").startswith("."):
+                    rest = rest.lstrip(" ")[1:]
+                    if prefix[-1:].isalnum():
+                        prefix += "."
             elif prefix.endswith(ANNOUNCES_VALUE):
                 separator = " "
             elif trigger_word and last_word.casefold() == trigger_word.casefold():
@@ -14111,6 +14116,11 @@ def rewrite_refusal(
     # lettres.
     if invented_answer(resolved or dictated, text, style_id):
         return "output-expanded-excessively"
+    # Après les reprises (« Paul, oups, Pierre ») et relu en mots (« °C »).
+    if style_id in GUARDED_STYLE_IDS and dictated_name_dropped(
+            without_repaired_words(resolve_simple_repairs(resolved or dictated)),
+            for_checks(text)):
+        return "content-dropped"
     if style_id == COURSE_NOTES_STYLE:
         return course_notes_refusal(dictated, text)
     # La version que l'élève venait de rejeter, à la place de sa correction.
@@ -14196,6 +14206,24 @@ def without_invented_markers(dictated: str, text: str) -> str:
 # (25 au plus pour ses sections).
 INVENTED_WORDS_LIMIT = {"nova_style_notes": (12, 2), "nova_style_meeting": (40, 4)}
 _CONTENT_WORD = re.compile(r"[a-z]{4,}")
+
+
+# Un mot à majuscule au milieu d'une phrase : un nom propre. Celui d'un début
+# de phrase ne dit rien.
+_DICTATED_NAME = re.compile(r"(?<=[^\s.!?:])\s+([A-ZÀ-Ý][a-zà-ÿ]{2,})\b")
+
+
+def dictated_name_dropped(dictated: str, text: str) -> bool:
+    """Un nom dicté a disparu sans qu'un autre prenne sa place.
+
+    Un nom mal entendu se corrige à l'oreille (« diagramme de Kant » →
+    « Gantt ») : il est remplacé, pas perdu.
+    """
+    said = {fold_accents(name.lower()) for name in _DICTATED_NAME.findall(" " + dictated)}
+    written_text = fold_accents(text.lower())
+    lost = [name for name in said if name not in written_text]
+    added = {fold_accents(name.lower()) for name in _DICTATED_NAME.findall(" " + text)} - said
+    return len(lost) > len(added)
 
 
 def invented_answer(dictated: str, text: str, style_id: str) -> bool:
