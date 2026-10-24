@@ -13133,6 +13133,8 @@ SELF_CORRECTION_EXAMPLES: tuple[tuple[str, str], ...] = (
      "lis le chapitre 5 en premier c'est le plus urgent ensuite le chapitre 2"),
     ("prends des pommes oublie les pommes prends des poires", "prends des poires"),
     ("on part en voiture non en train", "on part en train"),
+    # « je veux dire » sur un terme (n° 16).
+    ("on fixe le jalon, je veux dire, le chemin critique", "on fixe le chemin critique"),
     ("écris le titre en gras attends en italique", "écris le titre en italique"),
     ("je ne viendrai pas non vraiment pas", "je ne viendrai pas non vraiment pas"),
     ("la prof a dit non au voyage", "la prof a dit non au voyage"),
