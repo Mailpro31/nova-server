@@ -155,6 +155,7 @@ class NovaServerTests(unittest.TestCase):
         cls.client = TestClient(main.app)
 
     def setUp(self):
+        open_optional_features(self)
         with main.db() as conn:
             for table in (
                 "auth_codes",
@@ -4061,6 +4062,25 @@ class OrganizationDiscoveryTests(unittest.TestCase):
 # ═══════════════════ Phase 22 — administration moderne ════════════════════
 
 
+# Fermées par défaut pour l'élève (lot 3, 20/10) ; une école les ouvre dans la
+# console. Les tests de ces fonctions jouent ce cas : une école qui les a ouvertes.
+OPTIONAL_FEATURE_KEYS = (
+    "ai_skills_enabled", "voice_commands_enabled", "engineering_notes_enabled",
+    "learning_enabled", "generated_instructions_enabled", "meeting_enabled",
+)
+
+
+def open_optional_features(case: unittest.TestCase) -> None:
+    for key in OPTIONAL_FEATURE_KEYS:
+        opened = patch.object(main.POLICY_SETTINGS[key], "default", True)
+        opened.start()
+        case.addCleanup(opened.stop)
+    defaults = patch.dict(main.DEFAULT_ORGANIZATION_POLICY,
+                          {key: True for key in OPTIONAL_FEATURE_KEYS})
+    defaults.start()
+    case.addCleanup(defaults.stop)
+
+
 class AdminTestCase(unittest.TestCase):
     """Socle commun : un compte, une session Nova, un rôle, un step-up réel.
 
@@ -4082,6 +4102,7 @@ class AdminTestCase(unittest.TestCase):
         cls.private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 
     def setUp(self):
+        open_optional_features(self)
         with main.db() as conn:
             # Comptes et sessions compris : un test qui suspend un compte ne
             # doit pas empêcher le suivant de se connecter.
