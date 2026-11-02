@@ -14542,6 +14542,38 @@ async def reformulate(body: ReformulateRequest, user: str = Depends(current_user
         return resolved_fallback
     return {"text": without_fillers(restored)}
 
+
+@app.post("/api/dictate")
+async def dictate(
+    file: UploadFile,
+    user: str = Depends(current_user),
+    account=Depends(current_account),
+    content_length: int | None = Header(default=None),
+    language: str | None = None,
+    style_id: str | None = Form(default=None, max_length=MAX_INFERENCE_ID_CHARS),
+    style_prompt: str | None = Form(default=None, max_length=MAX_STYLE_PROMPT_CHARS),
+):
+    """Un seul appel par dictée (n° 39) : `/api/transcribe` puis `/api/reformulate`.
+
+    Les deux routes sont appelées telles quelles : mêmes quotas, mêmes
+    garde-fous. `relue` est la transcription, `final` le texte du Style. Une
+    erreur du Style rend la transcription, comme le poste le faisait quand
+    `/api/reformulate` échouait : la dictée n'est jamais perdue.
+    """
+    heard = await transcribe(file, user, account, content_length, language)
+    text = heard["text"]
+    result = {"relue": text, "final": text, "unclear": bool(heard.get("unclear"))}
+    if not text.strip() or result["unclear"] or len(text) > MAX_INFERENCE_TEXT_CHARS:
+        return result
+    try:
+        styled = await reformulate(
+            ReformulateRequest(text=text, style_id=style_id, style_prompt=style_prompt),
+            user, account)
+    except HTTPException as error:
+        code = error.detail.get("code", "") if isinstance(error.detail, dict) else error.detail
+        return {**result, "style_error": str(code)}
+    return {**result, "final": styled["text"], **({"capped": True} if styled.get("capped") else {})}
+
 # Les Commandes Nova et la bulle de sélection partagent cette route.
 @app.post("/api/command", dependencies=[Depends(product_capability(
     ("commands", "selectionBubble"), "voice_commands"))])
