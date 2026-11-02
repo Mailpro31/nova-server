@@ -10924,6 +10924,9 @@ def control_read_audit(
 
 
 # --- profil de l'utilisateur connecté (pour l'app)
+CLIENT_VERSION = re.compile(r"\d{1,4}\.\d{1,4}\.\d{1,4}")
+
+
 @app.get("/api/me")
 def me(user: str = Depends(current_user), u=Depends(current_account),
        x_nova_version: str = Header(default="")):
@@ -10943,6 +10946,12 @@ def me(user: str = Depends(current_user), u=Depends(current_account),
         observability.log("client.version", version=x_nova_version[:32])
     if u is None:
         return {"email": user}
+    # Gardée pour l'écran des versions installées (2.6) : une version, rien
+    # d'autre, puisque la valeur vient du client.
+    if CLIENT_VERSION.fullmatch(x_nova_version):
+        with db() as conn:
+            conn.execute("UPDATE users SET app_version=?, last_seen=? WHERE user_id=?",
+                         (x_nova_version, time.time(), u["user_id"]))
     # L'organisation vient de la ligne du membre — jamais d'une entrée client,
     # et plus de l'organisation active : en multi-tenant, ce ne serait pas
     # forcément la sienne.
@@ -16172,6 +16181,8 @@ ADOPTION_MIN_PEOPLE = 3
 # Trois jours de dictée dans la semaine : une personne qui revient, et non un
 # essai isolé.
 ADOPTION_REGULAR_DAYS = 3
+# Les versions installées : les postes vus ces 30 derniers jours.
+ADOPTION_VERSION_DAYS = 30
 
 
 _ADOPTION_EMPTY = {"people": None, "regular_people": None, "dictations": None,
@@ -16236,6 +16247,11 @@ def adoption_report(now: float | None = None) -> dict:
             "SELECT email, month, transcriptions, reformulations, audio_seconds "
             "FROM usage_monthly"
         ).fetchall()
+        versions = conn.execute(
+            "SELECT app_version AS version, COUNT(*) AS people FROM users "
+            "WHERE app_version IS NOT NULL AND last_seen >= ? GROUP BY app_version",
+            (stamp - ADOPTION_VERSION_DAYS * 86400,),
+        ).fetchall()
         first_hour = conn.execute("SELECT MIN(hour) FROM usage_hourly").fetchone()[0]
         first_month = conn.execute("SELECT MIN(month) FROM usage_monthly").fetchone()[0]
 
@@ -16288,6 +16304,11 @@ def adoption_report(now: float | None = None) -> dict:
         "min_people": ADOPTION_MIN_PEOPLE,
         "regular_days": ADOPTION_REGULAR_DAYS,
         "measured_from": measured_from,
+        # Un compte par version, sans masquage : une version ne dit rien de
+        # la personne, et la DSI doit voir le dernier poste en retard.
+        "version_days": ADOPTION_VERSION_DAYS,
+        "versions": newest_versions_first(
+            [{"version": row["version"], "people": row["people"]} for row in versions]),
         "weeks": [week_entry(index, start, week)
                   for index, (start, week) in enumerate(weeks.items())],
         "months": [
@@ -16299,6 +16320,11 @@ def adoption_report(now: float | None = None) -> dict:
             for key, month in sorted(months.items())
         ],
     }
+
+
+def newest_versions_first(versions: list[dict]) -> list[dict]:
+    return sorted(versions, reverse=True,
+                  key=lambda entry: tuple(int(part) for part in entry["version"].split(".")))
 
 
 @app.get("/api/control/organization/adoption")

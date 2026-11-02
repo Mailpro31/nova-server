@@ -588,6 +588,33 @@ class IdentityFoundationTests(unittest.TestCase):
         record = next(r for r in logs.records if r.getMessage() == "client.version")
         self.assertEqual(record.fields, {"version": "1.0.70"})
 
+    def test_installed_versions_are_counted_without_names(self):
+        # 2.6 : la console compte les postes par version, sans aucun nom.
+        headers = self.sign_in()
+        self.client.get("/api/me", headers={**headers, "X-Nova-Version": "1.0.71"})
+        self.assertIn({"version": "1.0.71", "people": 1},
+                      main.adoption_report()["versions"])
+
+        # Ce qui n'est pas une version ne remplace pas la version gardée.
+        self.client.get("/api/me", headers={**headers, "X-Nova-Version": "<b>x</b>"})
+        versions = main.adoption_report()["versions"]
+        self.assertIn({"version": "1.0.71", "people": 1}, versions)
+        self.assertNotIn("<b>x</b>", [entry["version"] for entry in versions])
+
+        # Un poste qu'on n'a pas vu depuis plus de 30 jours ne compte plus.
+        with main.db() as conn:
+            conn.execute("UPDATE users SET last_seen=0 WHERE email=?",
+                         ("student@example.com",))
+        self.assertNotIn({"version": "1.0.71", "people": 1},
+                         main.adoption_report()["versions"])
+
+    def test_installed_versions_are_listed_newest_first(self):
+        self.assertEqual(
+            main.newest_versions_first([{"version": "1.0.9", "people": 2},
+                                        {"version": "1.0.71", "people": 1}]),
+            [{"version": "1.0.71", "people": 1}, {"version": "1.0.9", "people": 2}],
+        )
+
     def test_me_additions_are_purely_additive(self):
         body = self.client.get("/api/me", headers=self.sign_in()).json()
 
