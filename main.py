@@ -12847,6 +12847,10 @@ AUDIO_REFINE_MAX_TERMS = 300
 # truffée de termes du vocabulaire que Whisper n'a pas entendus. Banc du RTX
 # (17/10) : un glossaire recopié en entier sur 600 dictées.
 AUDIO_REFINE_MAX_GROWTH = 2.0
+# Ni beaucoup plus courte : banc 0.1 du PC fixe (02/11), une dictée de
+# plusieurs mots relue « i », collée « I ». Une relecture corrige des mots,
+# elle n'en supprime pas la moitié.
+AUDIO_REFINE_MIN_KEPT = 0.5
 AUDIO_REFINE_MAX_NEW_TERMS = 3
 # Une relecture en panne ou trop lente 3 fois de suite est mise de côté 15 s :
 # les dictées suivantes gardent Whisper sans attendre (comme le texte).
@@ -12859,6 +12863,8 @@ _audio_refine_failures = 0
 def refine_plausible(transcript: str, refined: str, vocabulary: list[str]) -> bool:
     said, wrote = len(transcript.split()), len(refined.split())
     if not refined.strip() or wrote > said * AUDIO_REFINE_MAX_GROWTH + 8:
+        return False
+    if said >= 4 and wrote < said * AUDIO_REFINE_MIN_KEPT:
         return False
     before, after = transcript.casefold(), refined.casefold()
     new_terms = sum(1 for term in vocabulary

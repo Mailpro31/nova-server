@@ -110,6 +110,13 @@ class RefinedTranscriptionTests(unittest.TestCase):
         long_answer = " ".join(["mot"] * 30)
         self.assertEqual(self.refined(FakeRefiner(long_answer)), "le nombre de à Maquin")
 
+    def test_a_reading_that_drops_most_of_the_dictation_is_rejected(self):
+        # Banc 0.1 du PC fixe (02/11) : une dictée relue « i ».
+        self.assertEqual(self.refined(FakeRefiner("I")), "le nombre de à Maquin")
+        self.assertEqual(self.refined(FakeRefiner("Le nombre de Mach.")), "Le nombre de Mach.")
+        # Une dictée très courte peut légitimement perdre un mot.
+        self.assertEqual(self.refined(FakeRefiner("Oui."), transcript="euh oui"), "Oui.")
+
 
 if __name__ == "__main__":
     unittest.main()
