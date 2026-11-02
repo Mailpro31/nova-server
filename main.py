@@ -49,6 +49,7 @@ import deployment
 import google_directory
 import group_rules
 import migrations
+import licence
 import observability
 import production_config
 import learning
@@ -3109,6 +3110,24 @@ def product_capability(capability: str | tuple[str, ...], feature: str):
     return guard
 
 
+# La licence de l'école (4.1), posée par la DSI dans la configuration du
+# serveur. Elle n'est pas secrète : elle est signée (`licence.py`).
+NOVA_LICENCE = os.getenv("NOVA_LICENCE", "")
+# Ce qui s'arrête quand la licence est échue depuis plus que le délai de
+# grâce : les fonctions annexes. Jamais la dictée ni ses Styles.
+LICENCE_DEGRADED_CAPABILITIES = frozenset({"commands", "selectionBubble", "aiSkills"})
+
+
+def licence_degraded() -> bool:
+    return licence.licence_state(NOVA_LICENCE)["degraded"]
+
+
+def refuse_when_licence_degraded(capability: str | tuple[str, ...], feature: str):
+    wanted = (capability,) if isinstance(capability, str) else capability
+    if LICENCE_DEGRADED_CAPABILITIES.intersection(wanted) and licence_degraded():
+        raise HTTPException(403, {"code": "LICENCE_EXPIRED", "feature": feature})
+
+
 def require_product_capability(account, capability: str | tuple[str, ...], feature: str):
     """Refuse l'operation si l'organisation a ferme la fonction.
 
@@ -3119,6 +3138,7 @@ def require_product_capability(account, capability: str | tuple[str, ...], featu
     Le refus porte un code stable et le nom de la fonction — de quoi afficher
     un message juste — et rien d'autre : ni etat interne, ni configuration.
     """
+    refuse_when_licence_degraded(capability, feature)
     organization_id, _ = organization_policy_for_account(account)
     # La policy du membre, groupes compris : fermer une fonction a un groupe
     # doit la refuser ici aussi, pas seulement la masquer sur le poste.
@@ -16320,6 +16340,16 @@ def adoption_report(now: float | None = None) -> dict:
             for key, month in sorted(months.items())
         ],
     }
+
+
+@app.get("/api/control/organization/licence")
+def control_read_licence(
+    principal: AdminPrincipal = Depends(
+        require_admin_capability(CAPABILITY_DIAGNOSTICS_READ)
+    ),
+):
+    """L'état de la licence de l'école : palier, dates, échéance (2.1)."""
+    return licence.licence_state(NOVA_LICENCE)
 
 
 def newest_versions_first(versions: list[dict]) -> list[dict]:
