@@ -7,6 +7,12 @@
 
 import type { AdoptionReport } from "./adoption";
 import type { UsageMetrics } from "./usageMetrics";
+
+export interface ClientVersionCount {
+  version: string;
+  members: number;
+  last_seen: string;
+}
 import { ApiClient } from "./api";
 import type {
   CustomLessonDraft,
@@ -740,6 +746,13 @@ export class ControlPlane {
   /** L'adoption par semaine et par mois : des comptes, aucun nom. */
   adoption() {
     return this.client.request<AdoptionReport>("/api/control/organization/adoption");
+  }
+
+  /** Combien de postes tournent sur chaque version de Nova Desktop : des comptes, aucun nom. */
+  clientVersions() {
+    return this.client.request<{ versions: ClientVersionCount[] }>(
+      "/api/control/organization/client-versions",
+    );
   }
 
   usageMetrics(hours: number, members = false) {

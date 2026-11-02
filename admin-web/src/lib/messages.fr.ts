@@ -562,6 +562,13 @@ export const fr: Messages = {
     releaseError: "Le manifeste de version est configuré mais n’a pas pu être validé.",
     desktopVersion: "Version",
     minimumVersion: "Version minimale prise en charge",
+    versionsTitle: "Versions installées",
+    versionsNone:
+      "Aucun poste n'a encore annoncé sa version. Elle est envoyée quand Nova Desktop se connecte.",
+    versionsMembers: "Membres",
+    versionsLastSeen: "Dernier contact (UTC)",
+    versionsNote:
+      "Une ligne par membre, remplacée à chaque connexion : des comptes, aucun nom ni détail de machine. Nova Desktop vérifie ses mises à jour toutes les 6 heures et prévient le membre, sauf si la politique de mise à jour du profil est manuelle.",
     artifact: "Fichier",
     digest: "SHA-256",
     signed: "Signature",

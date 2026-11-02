@@ -268,6 +268,48 @@ function EmailDiscovery({ organizationId }: { organizationId: string }) {
   );
 }
 
+/** Les postes par version : de quoi savoir qui relancer après une mise à jour. */
+function ClientVersions() {
+  const { control } = useSession();
+  const [state, retry] = useResource(
+    control ? () => control.clientVersions() : null,
+    [control],
+  );
+  return (
+    <Panel title={t.deployment.versionsTitle}>
+      <AsyncSection state={state} onRetry={retry}>
+        {({ versions }) =>
+          versions.length === 0 ? (
+            <Notice>{t.deployment.versionsNone}</Notice>
+          ) : (
+            <table className="usage-members">
+              <thead>
+                <tr>
+                  <th>{t.deployment.desktopVersion}</th>
+                  <th>{t.deployment.versionsMembers}</th>
+                  <th>{t.deployment.versionsLastSeen}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {versions.map((row) => (
+                  <tr key={row.version}>
+                    <td className="mono">{row.version}</td>
+                    <td>{row.members}</td>
+                    <td className="mono">
+                      {row.last_seen.replace("T", " ").replace("Z", "")}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )
+        }
+      </AsyncSection>
+      <Notice>{t.deployment.versionsNote}</Notice>
+    </Panel>
+  );
+}
+
 export function DesktopDeployment() {
   const { control, session } = useSession();
   const organizationId = session.admin?.organizationId ?? "";
@@ -411,6 +453,8 @@ export function DesktopDeployment() {
                 </>
               )}
             </Panel>
+
+            <ClientVersions />
 
             <Panel title={t.deployment.profilesTitle}>
               {!mayManage ? <Notice>{t.deployment.readOnly}</Notice> : null}

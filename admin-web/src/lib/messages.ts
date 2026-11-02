@@ -570,6 +570,12 @@ const en = {
     releaseError: "The release manifest is configured but could not be trusted.",
     desktopVersion: "Version",
     minimumVersion: "Minimum supported version",
+    versionsTitle: "Versions in use",
+    versionsNone: "No workstation has reported its version yet. It is sent when Nova Desktop signs in.",
+    versionsMembers: "Members",
+    versionsLastSeen: "Last seen (UTC)",
+    versionsNote:
+      "One line per member, replaced at each sign-in: counts only, no name and no machine detail. Nova Desktop checks for updates every 6 hours and notifies the member, unless the profile's update policy is manual.",
     artifact: "Artifact",
     digest: "SHA-256",
     signed: "Signature",

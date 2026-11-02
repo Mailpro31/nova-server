@@ -10923,6 +10923,53 @@ def control_read_audit(
     }
 
 
+# La forme d'une version annoncée par un poste : « 1.0.71 », « 1.0.71-beta.2 ».
+# Elle vient du client : tout le reste est ignoré plutôt que stocké.
+CLIENT_VERSION_PATTERN = re.compile(r"[0-9A-Za-z.+-]{1,32}")
+
+
+def record_client_version(account, version: str) -> None:
+    """Retient la dernière version de Nova Desktop vue pour ce membre.
+
+    Une ligne par membre, remplacée : la console compte les postes par
+    version sans garder d'historique. Un membre sans `user_id` (compte
+    antérieur à l'identité par organisation) n'est pas compté.
+    """
+    if not account["user_id"] or not CLIENT_VERSION_PATTERN.fullmatch(version or ""):
+        return
+    with db() as conn:
+        conn.execute(
+            """INSERT INTO client_versions(user_id, organization_id, version, seen_at)
+               VALUES (?,?,?,?)
+               ON CONFLICT(user_id) DO UPDATE SET
+               organization_id = excluded.organization_id,
+               version = excluded.version,
+               seen_at = excluded.seen_at""",
+            (account["user_id"], account["organization_id"], version,
+             time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())),
+        )
+
+
+def client_version_report(organization_id: str) -> list[dict]:
+    """Les postes par version, la plus récente d'abord. Des comptes, aucun nom."""
+    with db() as conn:
+        rows = conn.execute(
+            """SELECT version, COUNT(*) AS members, MAX(seen_at) AS last_seen
+               FROM client_versions WHERE organization_id=?
+               GROUP BY version""",
+            (organization_id,),
+        ).fetchall()
+
+    def order(row):
+        # « 1.0.9 » avant « 1.0.10 » : un tri de chaînes les inverserait.
+        return [int(p) if p.isdigit() else -1 for p in re.split(r"[.+-]", row["version"])]
+
+    return [
+        {"version": r["version"], "members": r["members"], "last_seen": r["last_seen"]}
+        for r in sorted(rows, key=order, reverse=True)
+    ]
+
+
 # --- profil de l'utilisateur connecté (pour l'app)
 @app.get("/api/me")
 def me(user: str = Depends(current_user), u=Depends(current_account),
@@ -10943,6 +10990,7 @@ def me(user: str = Depends(current_user), u=Depends(current_account),
         observability.log("client.version", version=x_nova_version[:32])
     if u is None:
         return {"email": user}
+    record_client_version(u, x_nova_version)
     # L'organisation vient de la ligne du membre — jamais d'une entrée client,
     # et plus de l'organisation active : en multi-tenant, ce ne serait pas
     # forcément la sienne.
@@ -16246,6 +16294,20 @@ def control_read_adoption(
     """L'adoption par semaine et par mois. Des comptes, aucun nom : rien
     n'est inscrit au journal, comme pour les totaux du suivi d'usage."""
     return adoption_report()
+
+
+@app.get("/api/control/organization/client-versions")
+def control_read_client_versions(
+    principal: AdminPrincipal = Depends(
+        require_admin_capability(CAPABILITY_DIAGNOSTICS_READ)
+    ),
+):
+    """Combien de postes tournent sur chaque version de Nova Desktop.
+
+    Des comptes par version, jamais de nom : comme les totaux d'usage, la
+    lecture n'est pas inscrite au journal.
+    """
+    return {"versions": client_version_report(principal.organization_id)}
 
 
 @app.get("/api/control/organization/usage-metrics")
