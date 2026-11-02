@@ -74,6 +74,8 @@ x-nova-environment: &nova-environment
     NOVA_AI_REASONING_ALLOWED: "${NOVA_AI_REASONING_ALLOWED:-false}"
     NOVA_AI_MAX_CONCURRENT_TEXT: "${NOVA_AI_MAX_CONCURRENT_TEXT:-2}"
     NOVA_AI_MAX_CONCURRENT_SPEECH: "${NOVA_AI_MAX_CONCURRENT_SPEECH:-1}"
+    # Voix naturelle (1.1) : `http://voice:8880/v1` avec le service ci-dessous.
+    NOVA_VOICE_BASE_URL: "${NOVA_VOICE_BASE_URL:-}"
     NOVA_AI_MAX_QUEUE: "${NOVA_AI_MAX_QUEUE:-16}"
     NOVA_AI_QUEUE_WAIT_SECONDS: "${NOVA_AI_QUEUE_WAIT_SECONDS:-8}"
     # Profil `custom` : declare par le deploiement, ou pas du tout. Les deux
@@ -246,6 +248,17 @@ services:
               capabilities: [gpu]
     restart: unless-stopped
     profiles: ["speech-gguf"]
+
+  # La voix naturelle (1.1) : Kokoro-FastAPI (Apache 2.0), sur le processeur,
+  # voix française ff_siwis (corpus SIWIS, CC BY 4.0 : citer la source). Le
+  # texte lu reste sur le serveur de l'école. Pour l'utiliser :
+  #   NOVA_VOICE_BASE_URL=http://voice:8880/v1
+  #   docker compose --profile voice up -d voice api
+  # Retour arrière : retirer NOVA_VOICE_BASE_URL ; le poste reprend la voix Windows.
+  voice:
+    image: "${NOVA_VOICE_IMAGE:-ghcr.io/remsky/kokoro-fastapi-cpu:v0.9.0}"
+    restart: unless-stopped
+    profiles: ["voice"]
 
   llm:
     image: vllm/vllm-openai:latest

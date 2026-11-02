@@ -1414,3 +1414,55 @@ def audio_refiner_from_environment() -> AudioRefineBackend | None:
     token = secrets_provider.resolve_value(os.getenv("NOVA_AI_SPEECH_REFINE_TOKEN", "")) or ""
     observability.log("ai.speech_refine_enabled", level="warning", url=url, model=model)
     return AudioRefineBackend(url, model, token=token)
+
+
+class VoiceBackend:
+    """La voix naturelle (1.1) : un moteur de synthèse au format OpenAI
+    (`/v1/audio/speech`, Kokoro-FastAPI par exemple), hébergé avec le serveur.
+    La destination suit les règles des autres moteurs (`validate_private_runtime_url`)."""
+
+    adapter_name = "openai_compatible_voice"
+
+    def __init__(self, base_url: str, model: str, voice: str, *, token: str = "",
+                 timeout: float = 30.0,
+                 transport: httpx.AsyncBaseTransport | None = None):
+        self.base_url = validate_private_runtime_url(base_url)
+        self.model = model.strip()
+        self.voice = voice.strip()
+        self.token = token
+        self.timeout = timeout
+        self.transport = transport
+
+    async def speak(self, text: str, speed: float) -> bytes:
+        payload = {"model": self.model, "input": text, "voice": self.voice,
+                   "response_format": "mp3", "speed": speed}
+        try:
+            timeout = httpx.Timeout(self.timeout, connect=ENGINE_CONNECT_TIMEOUT_SECONDS)
+            async with httpx.AsyncClient(timeout=timeout, transport=self.transport) as client:
+                response = await client.post(
+                    f"{self.base_url}/audio/speech", headers=_auth_headers(self.token),
+                    json=payload)
+        except httpx.TimeoutException as error:
+            raise AIRuntimeError(AI_RUNTIME_TIMEOUT) from error
+        except httpx.HTTPError as error:
+            raise AIRuntimeError(AI_RUNTIME_UNAVAILABLE) from error
+        if response.status_code in {429, 503}:
+            raise AIRuntimeError(AI_RUNTIME_BUSY, retry_after=1)
+        if response.status_code != 200:
+            _log_engine_refusal(self.adapter_name, response)
+            raise AIRuntimeError(AI_RUNTIME_FAILED)
+        return response.content
+
+
+def voice_backend_from_environment() -> VoiceBackend | None:
+    """La voix naturelle, si et seulement si le déploiement l'a configurée."""
+    url = os.getenv("NOVA_VOICE_BASE_URL", "").strip()
+    if not url:
+        return None
+    import secrets_provider
+
+    token = secrets_provider.resolve_value(os.getenv("NOVA_VOICE_TOKEN", "")) or ""
+    model = os.getenv("NOVA_VOICE_MODEL", "kokoro")
+    voice = os.getenv("NOVA_VOICE_NAME", "ff_siwis")
+    observability.log("ai.voice_enabled", level="info", url=url, model=model, voice=voice)
+    return VoiceBackend(url, model, voice, token=token)
