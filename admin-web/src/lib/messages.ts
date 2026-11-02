@@ -978,6 +978,11 @@ const en = {
     notMeasuredYet: "Nothing has been measured on this server yet.",
     empty: "No dictation recorded yet.",
     exportCsv: "Export the report (CSV)",
+    versions: "Installed versions",
+    versionsLead: (days: number) =>
+      `People seen in the last ${days} days, by the Nova version on their computer. Computers on an older version update themselves; this list shows which ones have not yet.`,
+    version: "Version",
+    noVersions: "No computer has reported its version yet.",
   },
   limits: {
     title: "Limits",

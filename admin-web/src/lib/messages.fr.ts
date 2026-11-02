@@ -943,6 +943,11 @@ export const fr: Messages = {
     notMeasuredYet: "Rien n’a encore été mesuré sur ce serveur.",
     empty: "Aucune dictée enregistrée pour l’instant.",
     exportCsv: "Exporter le rapport (CSV)",
+    versions: "Versions installées",
+    versionsLead: (days: number) =>
+      `Les personnes vues ces ${days} derniers jours, selon la version de Nova de leur poste. Un poste en retard se met à jour seul ; cette liste montre ceux qui ne l'ont pas encore fait.`,
+    version: "Version",
+    noVersions: "Aucun poste n'a encore envoyé sa version.",
   },
   limits: {
     title: "Limites",
