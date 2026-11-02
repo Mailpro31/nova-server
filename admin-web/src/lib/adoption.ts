@@ -31,6 +31,9 @@ export interface AdoptionMonth extends AdoptionCounts {
 export interface AdoptionReport {
   min_people: number;
   regular_days: number;
+  /** Les postes vus ces `version_days` derniers jours, par version, la plus récente d'abord. */
+  version_days: number;
+  versions: { version: string; people: number }[];
   /** Le premier jour mesuré (« 2026-09-29 »), ou `null` si rien ne l'est encore. */
   measured_from: string | null;
   weeks: AdoptionWeek[];

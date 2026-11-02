@@ -151,6 +151,29 @@ export function Adoption() {
                 </table>
               )}
 
+              <h4>{t.adoption.versions}</h4>
+              <p className="panel-intro">{t.adoption.versionsLead(report.version_days)}</p>
+              {report.versions.length === 0 ? (
+                <Notice>{t.adoption.noVersions}</Notice>
+              ) : (
+                <table className="usage-members">
+                  <thead>
+                    <tr>
+                      <th>{t.adoption.version}</th>
+                      <th>{t.adoption.people}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {report.versions.map((entry) => (
+                      <tr key={entry.version}>
+                        <td>{entry.version}</td>
+                        <td>{entry.people}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+
               <div className="usage-actions">
                 <button
                   type="button"

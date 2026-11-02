@@ -37,6 +37,8 @@ const UNMEASURED = {
 const REPORT: AdoptionReport = {
   min_people: 3,
   regular_days: 3,
+  version_days: 30,
+  versions: [{ version: "1.0.71", people: 4 }],
   measured_from: "2026-09-29",
   weeks: [
     { week_start: "2026-09-21", ...UNMEASURED },
