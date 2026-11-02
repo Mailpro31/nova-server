@@ -16,7 +16,7 @@ class ClientVersionTests(AdminTestCase):
         with main.db() as conn:
             conn.execute("DELETE FROM client_versions")
 
-    def sign_in(self, email):
+    def member_headers(self, email):
         self.client.post("/api/auth/request", json={"email": email, "machine": "poste-1"})
         with main.db() as conn:
             code = conn.execute(
@@ -29,7 +29,7 @@ class ClientVersionTests(AdminTestCase):
         return {"Authorization": f"Bearer {response.json()['token']}"}
 
     def me(self, email, version):
-        headers = {**self.sign_in(email), "X-Nova-Version": version}
+        headers = {**self.member_headers(email), "X-Nova-Version": version}
         self.assertEqual(self.client.get("/api/me", headers=headers).status_code, 200)
 
     def read(self, role=main.SECURITY_ROLE_ORGANIZATION_ADMIN):
