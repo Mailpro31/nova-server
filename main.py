@@ -11792,8 +11792,7 @@ def command_refusal(instruction: str, text: str, answer: str) -> str | None:
         return "summary-not-shorter"
     if kind == "rewrite":
         ratio = kept_word_ratio(text, output)
-        if ratio is not None and ratio < MIN_KEPT_WORDS and not (
-                (heard_word_ratio(text, output) or 0) >= MIN_HEARD_WORDS):
+        if ratio is not None and ratio < MIN_KEPT_WORDS and not sounds_kept(text, output):
             return "text-not-kept"
         if person_changed(text, output) or pronouns_swapped(text, output):
             return "person-changed"
@@ -13589,6 +13588,27 @@ def heard_word_ratio(written_by_student: str, corrected: str) -> float | None:
         any(difflib.SequenceMatcher(None, word_sound(word), sound).ratio() >= 0.75
             for sound in heard)
         for word in source) / len(source)
+
+
+# Le retour compte autant : chaque mot de la correction doit s'entendre chez
+# l'élève, sinon « la dérivée seconde » ou « le programme Python » passent.
+# Pièges du PC fixe (02/11) : à 0,80, aucune des 30 bonnes corrections n'est
+# refusée. « l'attention » pour « la tention » reste un vrai homophone.
+# shortcut: un seul mot ajouté dans une phrase longue (« le programme
+# Python ») reste sous le seuil ; 0,85 l'attrape mais refuse 2 bonnes
+# corrections sur 30. À revoir avec un banc plus large.
+MIN_HEARD_BACK = 0.80
+STUDENT_NEGATIONS = frozenset("ne n pa pas jamais rien aucun aucune personne".split())
+
+
+def sounds_kept(written_by_student: str, corrected: str) -> bool:
+    """Une correction phonétique : les mêmes mots, entendus dans les deux sens,
+    et la négation de l'élève gardée (« je conpren pa »)."""
+    if (STUDENT_NEGATIONS & set(dictation_words(written_by_student))
+            and not STUDENT_NEGATIONS & set(dictation_words(corrected))):
+        return False
+    return ((heard_word_ratio(written_by_student, corrected) or 0) >= MIN_HEARD_WORDS
+            and (heard_word_ratio(corrected, written_by_student) or 0) >= MIN_HEARD_BACK)
 
 
 # --- Notes de cours : le controle le plus strict ------------------------------

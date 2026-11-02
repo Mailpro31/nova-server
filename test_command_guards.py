@@ -494,6 +494,18 @@ class PhoneticCorrectionTests(unittest.TestCase):
                                  "Le logiciel ne fonctionne pas au démarrage."),
             "text-not-kept")
 
+    def test_a_phonetic_correction_that_adds_or_negates_stays_refused(self):
+        # Pièges du PC fixe (02/11) : chaque mot de l'élève s'entend encore,
+        # mais la sortie ajoute un mot ou perd la négation.
+        for text, invented in (
+            ("il fo kalkulé la dérivé de f", "Il faut calculer la dérivée seconde de f."),
+            ("il fau aplicé le téorème de pitagor", "Il faut appliquer le théorème de Thalès."),
+            ("je conpren pa pourkoi la limite et infini",
+             "Je comprends pourquoi la limite est infinie."),
+        ):
+            with self.subTest(invented=invented):
+                self.assertEqual(main.command_refusal(IMPROVE, text, invented), "text-not-kept")
+
     def test_heard_word_ratio(self):
         self.assertEqual(main.heard_word_ratio("il fo kalkulé", "Il faut calculer."), 1.0)
         self.assertLess(main.heard_word_ratio("il fo kalkulé", "On doit dériver."), 0.75)
