@@ -309,3 +309,51 @@ class UnrequestedListTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EnglishExamplesTests(unittest.IsolatedAsyncioTestCase):
+    """Une dictée anglaise reçoit des reprises anglaises (1.7)."""
+
+    async def examples_for(self, text: str) -> list[str]:
+        seen = {}
+
+        async def engine(task_type, instruction, message, examples):
+            seen["answers"] = [answer for _, answer in examples]
+            return text
+
+        with patch.object(main, "execute_text_with_examples", engine):
+            await main.resolve_self_corrections(text)
+        return seen["answers"]
+
+    async def test_an_english_dictation_gets_english_examples(self):
+        answers = await self.examples_for("the meeting is on monday no wait on thursday at the lab")
+        self.assertEqual(answers, [answer for _, answer in main.SELF_CORRECTION_EXAMPLES_EN])
+
+    async def test_a_french_or_unclear_dictation_keeps_the_french_ones(self):
+        answers = await self.examples_for("appelle Paul enfin non Sarah pour le projet")
+        self.assertEqual(answers, [answer for _, answer in main.SELF_CORRECTION_EXAMPLES])
+
+    def test_english_examples_show_a_kept_no_too(self):
+        kept = [dictated for dictated, answer in main.SELF_CORRECTION_EXAMPLES_EN
+                if dictated == answer]
+        self.assertGreaterEqual(len(kept), 2)
+
+
+class EnglishFillersTests(unittest.TestCase):
+    """Banc anglais du RTX (05/11) : le Style gardait um, uh, you know, basically."""
+
+    def test_english_fillers_go(self):
+        for dictated, clean in (
+            ("Um, the derivative of a constant is zero.", "The derivative of a constant is zero."),
+            ("So, you know, the lift increases.", "So the lift increases."),
+            ("Basically, the pressure drops.", "The pressure drops."),
+            ("It is, like, really fast.", "It is really fast."),
+            ("Okay so, the first law.", "The first law."),
+        ):
+            with self.subTest(dictated):
+                self.assertEqual(main.without_fillers(dictated), clean)
+
+    def test_the_same_words_with_a_meaning_stay(self):
+        for dictated in ("I like this course.", "You know the answer.", "Le bon, la brute."):
+            with self.subTest(dictated):
+                self.assertEqual(main.without_fillers(dictated), dictated)
