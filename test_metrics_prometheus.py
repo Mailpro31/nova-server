@@ -230,6 +230,9 @@ class MetricsPrometheusTests(unittest.TestCase):
         with open(os.path.join(here, "docker-compose.yml"), encoding="utf-8") as handle:
             compose = yaml.safe_load(handle)
         self.assertIn("NOVA_METRICS_TOKEN", compose["x-nova-environment"])
+        with open(os.path.join(here, "docker-compose.production.yml"), encoding="utf-8") as handle:
+            production = yaml.safe_load(handle)
+        self.assertIn("NOVA_METRICS_TOKEN", production["services"]["api"]["environment"])
         with open(os.path.join(here, ".env.production.example"), encoding="utf-8") as handle:
             self.assertIn("NOVA_METRICS_TOKEN=", handle.read())
 
