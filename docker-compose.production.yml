@@ -132,6 +132,7 @@ services:
       NOVA_AI_EUR_PER_MTOK_OUTPUT: "${NOVA_AI_EUR_PER_MTOK_OUTPUT:-}"
       NOVA_AI_REFINE_EUR_PER_CALL: "${NOVA_AI_REFINE_EUR_PER_CALL:-}"
       NOVA_LICENCE: "${NOVA_LICENCE:-}"
+      NOVA_VERTEX_CREDENTIALS_FILE: "${NOVA_VERTEX_CREDENTIALS_FILE:-}"
 
       # -- Reseau et bornes ----------------------------------------------------
       # `X-Forwarded-For` n'est lu que si la connexion vient d'une adresse

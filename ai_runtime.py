@@ -26,6 +26,7 @@ from urllib.parse import urlparse
 import httpx
 
 import observability
+import vertex_auth
 
 
 class TaskType(str, Enum):
@@ -335,7 +336,10 @@ def validate_private_runtime_url(value: str) -> str:
     return value.rstrip("/")
 
 
-def _auth_headers(token: str) -> dict[str, str]:
+async def _auth_headers(token: "str | vertex_auth.ServiceAccountToken") -> dict[str, str]:
+    """La clé fixe d'un moteur, ou le jeton Vertex AI du moment (3.1)."""
+    if isinstance(token, vertex_auth.ServiceAccountToken):
+        token = await token.bearer()
     return {"Authorization": f"Bearer {token}"} if token else {}
 
 
@@ -412,7 +416,7 @@ class OpenAICompatibleTextBackend:
         try:
             response = await client.post(
                 f"{self._engine_root}/tokenize",
-                headers=_auth_headers(self.token),
+                headers=await _auth_headers(self.token),
                 json={
                     "model": self.model,
                     "messages": messages,
@@ -440,7 +444,7 @@ class OpenAICompatibleTextBackend:
             return None
         try:
             response = await client.get(
-                f"{self.base_url}/models", headers=_auth_headers(self.token)
+                f"{self.base_url}/models", headers=await _auth_headers(self.token)
             )
             if response.status_code != 200:
                 return None
@@ -529,7 +533,7 @@ class OpenAICompatibleTextBackend:
                 )
                 response = await client.post(
                     f"{self.base_url}/chat/completions",
-                    headers=_auth_headers(self.token),
+                    headers=await _auth_headers(self.token),
                     json=payload,
                 )
         except (httpx.ConnectTimeout, httpx.ConnectError) as error:
@@ -588,7 +592,7 @@ class OpenAICompatibleTextBackend:
                 timeout=self.health_timeout, transport=self.transport
             ) as client:
                 response = await client.get(
-                    f"{self.base_url}/models", headers=_auth_headers(self.token)
+                    f"{self.base_url}/models", headers=await _auth_headers(self.token)
                 )
             latency = round((time.monotonic() - started) * 1000)
             if response.status_code in {425, 503}:
@@ -657,7 +661,7 @@ class WhisperCompatibleSpeechBackend:
             ) as client:
                 response = await client.post(
                     f"{self.base_url}/v1/audio/transcriptions",
-                    headers=_auth_headers(self.token),
+                    headers=await _auth_headers(self.token),
                     files={"file": (request.filename, request.audio)},
                     data=data,
                 )
@@ -715,7 +719,7 @@ class WhisperCompatibleSpeechBackend:
                 timeout=self.health_timeout, transport=self.transport
             ) as client:
                 response = await client.get(
-                    f"{self.base_url}/health", headers=_auth_headers(self.token)
+                    f"{self.base_url}/health", headers=await _auth_headers(self.token)
                 )
             latency = round((time.monotonic() - started) * 1000)
             if response.status_code in {425, 503}:
@@ -1307,6 +1311,9 @@ def router_from_environment() -> OrganizationAIRouter:
     # Une clé par moteur : la mise au propre peut passer par une API externe
     # pendant que la transcription reste locale, sans recevoir cette clé.
     text_token = secrets_provider.resolve_value(os.getenv("NOVA_AI_TEXT_TOKEN", "")) or token
+    # Gemini via Vertex AI : le compte de service de l'école remplace la clé
+    # du moteur texte externe ; le moteur local garde la sienne.
+    text_token = vertex_auth.token_from_environment() or text_token
     speech_token = secrets_provider.resolve_value(os.getenv("NOVA_AI_SPEECH_TOKEN", "")) or token
     if public_endpoint_allowed():
         observability.log("ai.public_endpoint_allowed", level="warning",
@@ -1416,7 +1423,7 @@ class AudioRefineBackend:
             async with httpx.AsyncClient(timeout=timeout, transport=self.transport) as client:
                 response = await client.post(
                     f"{self.base_url}/chat/completions",
-                    headers=_auth_headers(self.token), json=payload)
+                    headers=await _auth_headers(self.token), json=payload)
         except httpx.TimeoutException as error:
             raise AIRuntimeError(AI_RUNTIME_TIMEOUT) from error
         except httpx.HTTPError as error:
@@ -1440,6 +1447,7 @@ def audio_refiner_from_environment() -> AudioRefineBackend | None:
         return None
     import secrets_provider
 
-    token = secrets_provider.resolve_value(os.getenv("NOVA_AI_SPEECH_REFINE_TOKEN", "")) or ""
+    token = (vertex_auth.token_from_environment()
+             or secrets_provider.resolve_value(os.getenv("NOVA_AI_SPEECH_REFINE_TOKEN", "")) or "")
     observability.log("ai.speech_refine_enabled", level="warning", url=url, model=model)
     return AudioRefineBackend(url, model, token=token)
