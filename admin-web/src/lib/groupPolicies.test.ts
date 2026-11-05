@@ -14,7 +14,9 @@ import {
   choiceOf,
   countOverrides,
   dictationMinutes,
+  examUntil,
   withDictationMinutes,
+  withExamHours,
 } from "./groupPolicies";
 
 const PAGE = readFileSync("src/pages/GroupPolicies.tsx", "utf8");
@@ -111,5 +113,26 @@ describe("Messages", () => {
       t.groupPolicies.conflict,
     );
     expect(errorMessage("not_found", "GROUP_NOT_FOUND")).toBe(t.groupPolicies.notFound);
+  });
+});
+
+describe("le mode examen d'un groupe", () => {
+  const now = Date.UTC(2026, 10, 5, 8, 0, 0);
+
+  test("un examen de deux heures finit deux heures plus tard", () => {
+    const overrides = withExamHours({}, 2, now);
+    expect(overrides.exam_until).toBe(now / 1000 + 7200);
+    expect(examUntil(overrides, now)).toBe(now / 1000 + 7200);
+  });
+
+  test("un examen passé n'est plus en cours, et l'arrêter retire la surcharge", () => {
+    const overrides = withExamHours({ learning_enabled: false }, 1, now);
+    expect(examUntil(overrides, now + 3_600_001)).toBeNull();
+    expect(withExamHours(overrides, null, now)).toEqual({ learning_enabled: false });
+  });
+
+  test("l'éditeur du groupe propose de lancer et d'arrêter un examen", () => {
+    expect(code(PAGE)).toContain("withExamHours(");
+    expect(code(PAGE)).toContain("examUntil(");
   });
 });

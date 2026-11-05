@@ -1042,6 +1042,16 @@ const en = {
       count === 1 ? "1 setting changed for this group" : `${count} settings changed for this group`,
     edit: "Edit",
     view: "View",
+    examTitle: "Exam mode",
+    examBody:
+      "Members of this group keep dictation only: no AI, no bubble, no past dictations, no file import. Everything reopens at the planned time. Save to apply.",
+    examOff: "No exam in progress",
+    examRunning: (end: Date) =>
+      `Exam in progress until ${end.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`,
+    examStart: "Start an exam…",
+    examChange: "Change the end…",
+    examHours: (hours: number) => (hours === 1 ? "For 1 hour" : `For ${hours} hours`),
+    examStop: "Stop the exam now",
     close: "Close",
     inherit: "Follow the organization",
     on: "Enabled for this group",

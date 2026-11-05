@@ -2410,6 +2410,9 @@ POLICY_SETTINGS: dict[str, PolicySetting] = {
         # dictée est rendue telle quelle (n° 21 ter) : rien n'est perdu.
         PolicySetting("daily_rewrites_per_member", int, 0, None,
                       minimum=0, maximum=10000),
+        # Le mode examen (1.8) : jusqu'a cette heure (secondes depuis 1970), il
+        # ne reste aux membres que la dictee. 0 : pas d'examen.
+        PolicySetting("exam_until", int, 0, None, minimum=0, maximum=4102444800),
         # Des Styles retires un par un, sans fermer la categorie Styles. Des
         # identifiants — Styles integres du poste ou Styles d'organisation —,
         # aucun par defaut : rien n'est retire tant que personne ne l'a decide.
@@ -2576,6 +2579,19 @@ def validate_group_policy_settings(candidate: dict) -> dict:
     return {key: POLICY_SETTINGS[key].normalize(candidate[key]) for key in sorted(candidate)}
 
 
+def exam_active(settings: dict) -> bool:
+    return settings.get("exam_until", 0) > time.time()
+
+
+# Ce qu'un examen ferme : chaque fonction de l'application, sauf la dictee et
+# le vocabulaire, qui corrige l'orthographe des mots du cours sans rien ecrire
+# a la place de l'eleve.
+EXAM_CLOSED_SETTINGS = tuple(
+    key for key, setting in POLICY_SETTINGS.items()
+    if setting.kind is bool and setting.capability not in (None, "dictionary")
+)
+
+
 def resolve_group_policy_settings(settings: dict, group_overrides: list[dict]) -> dict:
     """Reglages de l'organisation, puis surcharges des groupes du membre.
 
@@ -2590,7 +2606,11 @@ def resolve_group_policy_settings(settings: dict, group_overrides: list[dict]) -
         values = [overrides[key] for overrides in group_overrides if key in overrides]
         if not values:
             continue
-        if setting.kind is int:
+        if key == "exam_until":
+            # L'examen le plus long l'emporte, et un groupe n'annule jamais
+            # celui que l'ecole a pose pour tout le monde.
+            resolved[key] = max(values + [resolved[key]])
+        elif setting.kind is int:
             resolved[key] = min(values)
         elif setting.kind is list:
             # Deux groupes additionnent les Styles qu'ils retirent.
@@ -2624,10 +2644,17 @@ def member_policy(account) -> dict:
             (organization_id, account["user_id"]),
         ).fetchall()
     group_overrides = [read_policy_settings(row["settings"]) for row in rows]
+    settings = resolve_group_policy_settings(policy["settings"], group_overrides)
+    exam = exam_active(settings)
+    if exam:
+        settings = {**settings, **dict.fromkeys(EXAM_CLOSED_SETTINGS, False)}
     return {
         **policy,
-        "revision": policy["revision"] + sum(row["revision"] for row in rows),
-        "settings": resolve_group_policy_settings(policy["settings"], group_overrides),
+        # Pendant un examen, son heure de fin s'ajoute au repere : il bouge au
+        # debut, a l'arret anticipe, et a la fin prevue sans aucune ecriture.
+        "revision": policy["revision"] + sum(row["revision"] for row in rows)
+        + (settings["exam_until"] if exam else 0),
+        "settings": settings,
     }
 
 
@@ -4527,6 +4554,9 @@ def public_campus_config(organization_id: str | None = None,
     config["style_policy"] = {
         "disabled_style_ids": list(policy["settings"]["disabled_style_ids"]),
     }
+    # L'heure de fin d'un examen en cours, pour que le poste l'annonce.
+    config["exam"] = {"until": policy["settings"]["exam_until"]
+                      if exam_active(policy["settings"]) else 0}
     return config
 
 # ---------------------------------------------------------------- app
@@ -11037,6 +11067,7 @@ def me(user: str = Depends(current_user), u=Depends(current_account),
         # route, pas `/api/config`.
         "limits": member_config["limits"],
         "style_policy": member_config["style_policy"],
+        "exam": member_config["exam"],
         "closed_capabilities": closed_capabilities,
     }
 
@@ -12953,6 +12984,7 @@ async def refined_transcription(audio: bytes, filename: str, transcript: str,
 async def transcribe_audio(
     file: UploadFile, user: str, task_type: TaskType, max_bytes: int,
     language: str | None = None, organization_id: str | None = None,
+    refine: bool = True,
 ) -> dict:
     """Shared speech service; authorization remains route-specific.
 
@@ -13012,7 +13044,7 @@ async def transcribe_audio(
         observability.log("transcription_vocabulary_unavailable", level="warning")
         vocabulary = []
     text = result.text
-    if dictated:
+    if dictated and refine:
         text = await refined_transcription(audio, file.filename or "audio.wav", text, vocabulary)
     return {"text": enforce_vocabulary(text, vocabulary)}
 
@@ -13052,6 +13084,8 @@ async def transcribe(
         file, user, TaskType.TRANSCRIPTION_REALTIME, MAX_TRANSCRIBE_AUDIO_BYTES,
         language=requested_language(language),
         organization_id=account_organization(account),
+        # En examen, pas de relecture de l'audio par une IA.
+        refine=not exam_active(member_policy(account)["settings"]),
     )
 
 
@@ -14556,7 +14590,11 @@ async def reformulate(body: ReformulateRequest, user: str = Depends(current_user
     # ses snippets et son vocabulaire -- jamais un declencheur a la place.
     fallback = {"text": restore_snippets(
         enforce_vocabulary(source_text, vocabulary), snippet_restores) or body.text}
-    cap = member_policy(account)["settings"]["daily_rewrites_per_member"]
+    settings = member_policy(account)["settings"]
+    # En examen, la dictee revient telle quelle : aucune IA n'ecrit pour l'eleve.
+    if exam_active(settings):
+        return {**fallback, "exam": True}
+    cap = settings["daily_rewrites_per_member"]
     if cap and rewrites_today(user) >= cap:
         observability.log("reformulation.daily_cap", level="info")
         return {**fallback, "capped": True}
