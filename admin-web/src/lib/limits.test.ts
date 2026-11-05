@@ -74,10 +74,11 @@ describe("Limits page", () => {
     expect(ids.indexOf("limits")).toBe(ids.indexOf("content") + 1);
     // Le domaine porte aussi le tableau de bord d'usage : les limites qu'on
     // fixe et l'usage qu'on mesure se lisent l'un apres l'autre. L'adoption,
-    // le bilan par semaine et par mois, vient apres le detail horaire.
+    // le bilan par semaine et par mois, vient apres le detail horaire ;
+    // l'abonnement, palier face aux actifs, ferme le domaine.
     expect(
       NAV_SECTIONS.find((section) => section.id === "limits")?.pages,
-    ).toEqual(["limits", "usage", "adoption"]);
+    ).toEqual(["limits", "usage", "adoption", "subscription"]);
     expect(t.navGroups.limits).toBe("Limits");
     expect(code(APP)).toContain("<Limits />");
   });
