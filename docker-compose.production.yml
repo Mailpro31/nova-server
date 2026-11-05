@@ -210,6 +210,29 @@ services:
     restart: unless-stopped
     profiles: ["connector"]
 
+  # ---------------------------------------------------------------------------
+  # Agent du panel de l'editeur (5.3) : coupe tant que le contrat n'ouvre pas le
+  # profil `panel`. Il ne lit que les chiffres de /api/metrics et les journaux
+  # d'avertissement du service `api`, deja caviardes. Le jeton est ici sa
+  # valeur brute : l'agent ne lit pas les chemins file://.
+  # ---------------------------------------------------------------------------
+  alloy:
+    image: grafana/alloy:v1.5.1
+    command: ["run", "/etc/alloy/config.alloy", "--storage.path=/var/lib/alloy"]
+    environment:
+      NOVA_METRICS_TOKEN: "${NOVA_METRICS_TOKEN:-}"
+      NOVA_PANEL_SCHOOL: "${NOVA_PANEL_SCHOOL:-}"
+      NOVA_PANEL_PROMETHEUS_URL: "${NOVA_PANEL_PROMETHEUS_URL:-}"
+      NOVA_PANEL_LOKI_URL: "${NOVA_PANEL_LOKI_URL:-}"
+    volumes:
+      - ./deploy/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    profiles: ["panel"]
+
 volumes:
   nova-data:
   # Le socket de controle local. Monte uniquement dans `api` et `connector` :
