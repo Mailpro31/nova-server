@@ -89,12 +89,21 @@ class MetricsPrometheusTests(unittest.TestCase):
         secret = os.path.join(TEST_DIRECTORY.name, "metrics_token")
         with open(secret, "w", encoding="utf-8") as handle:
             handle.write(TOKEN + "\n")
+        os.chmod(secret, 0o600)  # secrets_provider refuse un fichier lisible par tous
         with patch.dict(os.environ, {"NOVA_METRICS_TOKEN": f"file://{secret}"}):
             ok = self.client.get("/api/metrics", headers={"Authorization": f"Bearer {TOKEN}"})
             refused = self.client.get("/api/metrics", headers={"Authorization": "Bearer autre"})
         self.assertEqual(ok.status_code, 200)
         self.assertIn("nova_active_users", ok.text)
         self.assertEqual(refused.status_code, 401)
+
+    def test_an_unreadable_token_file_closes_the_route_instead_of_failing(self):
+        missing = os.path.join(TEST_DIRECTORY.name, "absent", "metrics_token")
+        with patch.dict(os.environ, {"NOVA_METRICS_TOKEN": f"file://{missing}"}):
+            response = self.client.get("/api/metrics", headers={"Authorization": f"Bearer {TOKEN}"})
+        self.assertEqual(response.status_code, 401)
+        for name in BUSINESS:
+            self.assertNotIn(name, response.text)
 
     def test_the_right_token_opens_the_business_series(self):
         response = self.scrape()
