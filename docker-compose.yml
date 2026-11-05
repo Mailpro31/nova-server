@@ -82,6 +82,10 @@ x-nova-environment: &nova-environment
     NOVA_AI_CUSTOM_MAX_OUTPUT_TOKENS: "${NOVA_AI_CUSTOM_MAX_OUTPUT_TOKENS:-}"
     NOVA_AI_CUSTOM_TEMPERATURE: "${NOVA_AI_CUSTOM_TEMPERATURE:-}"
     NOVA_AI_CUSTOM_REASONING: "${NOVA_AI_CUSTOM_REASONING:-auto}"
+    # Prix de l'IA externe en euros (enveloppe 2.3) ; vides, rien n'est compté.
+    NOVA_AI_EUR_PER_MTOK_INPUT: "${NOVA_AI_EUR_PER_MTOK_INPUT:-}"
+    NOVA_AI_EUR_PER_MTOK_OUTPUT: "${NOVA_AI_EUR_PER_MTOK_OUTPUT:-}"
+    NOVA_AI_REFINE_EUR_PER_CALL: "${NOVA_AI_REFINE_EUR_PER_CALL:-}"
 
 services:
   # La preparation de la base, explicite : le schema puis les premieres lignes

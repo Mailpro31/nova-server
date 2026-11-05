@@ -124,6 +124,9 @@ services:
       NOVA_AI_MAX_CONCURRENT_SPEECH: "${NOVA_AI_MAX_CONCURRENT_SPEECH:-1}"
       NOVA_AI_MAX_QUEUE: "${NOVA_AI_MAX_QUEUE:-16}"
       NOVA_AI_QUEUE_WAIT_SECONDS: "${NOVA_AI_QUEUE_WAIT_SECONDS:-8}"
+      NOVA_AI_EUR_PER_MTOK_INPUT: "${NOVA_AI_EUR_PER_MTOK_INPUT:-}"
+      NOVA_AI_EUR_PER_MTOK_OUTPUT: "${NOVA_AI_EUR_PER_MTOK_OUTPUT:-}"
+      NOVA_AI_REFINE_EUR_PER_CALL: "${NOVA_AI_REFINE_EUR_PER_CALL:-}"
 
       # -- Reseau et bornes ----------------------------------------------------
       # `X-Forwarded-For` n'est lu que si la connexion vient d'une adresse
