@@ -13300,6 +13300,18 @@ SELF_CORRECTION_EXAMPLES: tuple[tuple[str, str], ...] = (
     ("je ne viendrai pas non vraiment pas", "je ne viendrai pas non vraiment pas"),
     ("la prof a dit non au voyage", "la prof a dit non au voyage"),
 )
+# Les mêmes tournures pour une dictée anglaise (1.7) : des exemples français
+# ne montraient pas au modèle ce que « wait » ou « I mean » retirent.
+SELF_CORRECTION_EXAMPLES_EN: tuple[tuple[str, str], ...] = (
+    ("meeting on monday no wait thursday at 10", "meeting on thursday at 10"),
+    ("call Paul I mean Sarah about the project", "call Sarah about the project"),
+    ("order two pizzas actually three pizzas", "order three pizzas"),
+    ("the lift coefficient is 0.3 sorry 0.5 at this angle",
+     "the lift coefficient is 0.5 at this angle"),
+    ("write the title in bold wait in italics", "write the title in italics"),
+    ("I am not coming no really not", "I am not coming no really not"),
+    ("the teacher said no to the trip", "the teacher said no to the trip"),
+)
 # Le passage s'ajoute au temps d'attente de l'élève : au-delà, on le laisse
 # tomber et le Style reçoit la dictée telle quelle. Un moteur bloqué ajoutait
 # sinon le délai complet d'une reformulation, 30 s, avant même le Style.
@@ -13491,8 +13503,9 @@ async def resolve_self_corrections(text: str) -> str:
     text = resolve_simple_repairs(text)
     if not has_self_correction_hint(text):
         return text
-    examples = tuple(
-        (transcript_message(example), answer) for example, answer in SELF_CORRECTION_EXAMPLES)
+    pairs = (SELF_CORRECTION_EXAMPLES_EN if dictation_language(text) == "en"
+             else SELF_CORRECTION_EXAMPLES)
+    examples = tuple((transcript_message(example), answer) for example, answer in pairs)
     try:
         answer = await asyncio.wait_for(
             execute_text_with_examples(

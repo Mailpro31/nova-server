@@ -309,3 +309,31 @@ class UnrequestedListTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EnglishExamplesTests(unittest.IsolatedAsyncioTestCase):
+    """Une dictée anglaise reçoit des reprises anglaises (1.7)."""
+
+    async def examples_for(self, text: str) -> list[str]:
+        seen = {}
+
+        async def engine(task_type, instruction, message, examples):
+            seen["answers"] = [answer for _, answer in examples]
+            return text
+
+        with patch.object(main, "execute_text_with_examples", engine):
+            await main.resolve_self_corrections(text)
+        return seen["answers"]
+
+    async def test_an_english_dictation_gets_english_examples(self):
+        answers = await self.examples_for("the meeting is on monday no wait on thursday at the lab")
+        self.assertEqual(answers, [answer for _, answer in main.SELF_CORRECTION_EXAMPLES_EN])
+
+    async def test_a_french_or_unclear_dictation_keeps_the_french_ones(self):
+        answers = await self.examples_for("appelle Paul enfin non Sarah pour le projet")
+        self.assertEqual(answers, [answer for _, answer in main.SELF_CORRECTION_EXAMPLES])
+
+    def test_english_examples_show_a_kept_no_too(self):
+        kept = [dictated for dictated, answer in main.SELF_CORRECTION_EXAMPLES_EN
+                if dictated == answer]
+        self.assertGreaterEqual(len(kept), 2)
