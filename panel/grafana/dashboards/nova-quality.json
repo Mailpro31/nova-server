@@ -1,0 +1,222 @@
+{
+  "uid": "nova-quality",
+  "title": "Nova — qualité et bugs",
+  "description": "Refus par motif et par Style, bascules, erreurs, journaux d'erreurs.",
+  "tags": [
+    "nova"
+  ],
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "school",
+        "label": "École",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "nova-prometheus"
+        },
+        "query": "label_values(up, school)",
+        "includeAll": true,
+        "multi": true,
+        "current": {}
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Mises en forme refusées, par motif",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nova-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (reason) (increase(nova_rewrite_refused_total{school=~\"$school\"}[$__rate_interval]))",
+          "legendFormat": "{{reason}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nova-prometheus"
+          }
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Mises en forme refusées, par Style",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nova-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (style) (increase(nova_rewrite_refused_total{school=~\"$school\"}[$__rate_interval]))",
+          "legendFormat": "{{style}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nova-prometheus"
+          }
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Commandes refusées, par motif",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nova-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (reason) (increase(nova_command_refused_total{school=~\"$school\"}[$__rate_interval]))",
+          "legendFormat": "{{reason}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nova-prometheus"
+          }
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Bascules vers le moteur local, par raison",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nova-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (reason) (increase(nova_ai_fallback_total{school=~\"$school\"}[$__rate_interval]))",
+          "legendFormat": "{{reason}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nova-prometheus"
+          }
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Relectures audio non retenues",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nova-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (school) (increase(nova_refine_total{school=~\"$school\"}[$__rate_interval]))",
+          "legendFormat": "{{school}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nova-prometheus"
+          }
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Erreurs serveur",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nova-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (school) (rate(nova_http_errors_total{school=~\"$school\"}[5m]))",
+          "legendFormat": "{{school}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nova-prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 7,
+      "title": "Journaux d'erreurs (caviardés)",
+      "type": "logs",
+      "datasource": {
+        "type": "loki",
+        "uid": "nova-loki"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 60,
+        "w": 24,
+        "h": 10
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{school=~\"$school\", level=~\"warning|error|critical\"}",
+          "legendFormat": "",
+          "datasource": {
+            "type": "loki",
+            "uid": "nova-loki"
+          }
+        }
+      ]
+    }
+  ]
+}

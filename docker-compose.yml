@@ -201,6 +201,25 @@ services:
     restart: unless-stopped
     profiles: ["connector"]
 
+  # Les chiffres et les journaux d'erreurs vers le panel de l'éditeur (5.3).
+  # Coupé par défaut : seul le contrat l'ouvre (`--profile panel`). Le socket
+  # Docker, en lecture seule, sert à ne lire QUE les journaux du service `api`
+  # (voir deploy/alloy/config.alloy).
+  alloy:
+    image: grafana/alloy:v1.5.1
+    command: ["run", "/etc/alloy/config.alloy", "--storage.path=/var/lib/alloy"]
+    environment:
+      NOVA_METRICS_TOKEN: "${NOVA_METRICS_TOKEN:-}"
+      NOVA_PANEL_SCHOOL: "${NOVA_PANEL_SCHOOL:-}"
+      NOVA_PANEL_PROMETHEUS_URL: "${NOVA_PANEL_PROMETHEUS_URL:-}"
+      NOVA_PANEL_LOKI_URL: "${NOVA_PANEL_LOKI_URL:-}"
+    volumes:
+      - ./deploy/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on: [api]
+    restart: unless-stopped
+    profiles: ["panel"]
+
   whisper:
     image: fedirz/faster-whisper-server:latest-cuda
     environment:
