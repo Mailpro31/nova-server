@@ -29,6 +29,9 @@ x-nova-environment: &nova-environment
     NOVA_ORGANIZATION_TYPE: "${NOVA_ORGANIZATION_TYPE:-education}"
     # Sans origine declaree, la console web n'a aucune origine autorisee.
     NOVA_ADMIN_ORIGINS: "${NOVA_ADMIN_ORIGINS:-}"
+    # Jeton de lecture de /api/metrics (point 5.1). Vide : series techniques
+    # seules, comme avant ; renseigne : exige, et series metier ajoutees.
+    NOVA_METRICS_TOKEN: "${NOVA_METRICS_TOKEN:-}"
     # L'adresse annoncee aux postes, et le slug par lequel ils trouvent
     # l'organisation.
     NOVA_SERVICE_ENDPOINT: "${NOVA_SERVICE_ENDPOINT:-}"

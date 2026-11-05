@@ -16465,11 +16465,18 @@ def metrics_endpoint(authorization: str = Header(default="")):
     Avec lui, elle exige ce jeton et ajoute les series metier (point 5.1).
     """
     # Valeur ou reference (`file:///run/secrets/...`), comme les autres secrets.
-    expected = (secrets_provider.resolve_value(os.getenv("NOVA_METRICS_TOKEN", "")) or "").strip()
+    reference = os.getenv("NOVA_METRICS_TOKEN", "").strip()
+    try:
+        expected = (secrets_provider.resolve_value(reference) or "").strip()
+    except secrets_provider.SecretError as error:
+        # Un jeton configure mais illisible ferme la route : ouvrir les series
+        # metier sans jeton serait pire qu'un tableau de bord vide.
+        observability.log("metrics.token_unreadable", level="warning", code=error.code)
+        expected = None
     business = None
-    if expected:
+    if reference:
         given = authorization.removeprefix("Bearer ").strip()
-        if not hmac.compare_digest(given.encode(), expected.encode()):
+        if not expected or not hmac.compare_digest(given.encode(), expected.encode()):
             return PlainTextResponse("unauthorized\n", status_code=401,
                                      headers={"WWW-Authenticate": "Bearer"})
         business = business_metrics()
