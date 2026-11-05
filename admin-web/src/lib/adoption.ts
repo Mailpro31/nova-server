@@ -2,7 +2,7 @@
  * L'adoption de Nova, en comptes : ce que la direction et la CTI lisent.
  *
  * Le serveur (`adoption_report`) rend douze semaines et les mois qu'il garde,
- * sans aucun nom. Une période où une ou deux personnes seulement ont dicté
+ * sans aucun nom. Une période où moins de cinq personnes ont dicté
  * arrive masquée : ses comptes valent `null`, et la console l'écrit en clair
  * plutôt que de laisser croire à un zéro.
  */
@@ -38,6 +38,10 @@ export interface AdoptionReport {
   measured_from: string | null;
   weeks: AdoptionWeek[];
   months: AdoptionMonth[];
+  /** Commencé il y a plus de `days` jours, et dicté dans les `days` derniers (2.4). */
+  retention: { days: number; started: number | null; continuing: number | null; masked: boolean };
+  /** Le mini-sondage : une moyenne sur 5 par mois, `null` sous `min_people` réponses. */
+  survey: { month: string; answers: number | null; average: number | null }[];
 }
 
 const MONTHS = [
@@ -111,9 +115,31 @@ export function adoptionCsv(report: AdoptionReport): string {
     ]
       .map(cell)
       .join(";");
+  const hidden = `moins de ${report.min_people} personnes`;
+  const { retention } = report;
   return [
     header.join(";"),
     ...report.weeks.map((week) => row("semaine", week.week_start, week)),
     ...report.months.map((month) => row("mois", month.month, month)),
+    "",
+    "indicateur;periode;valeur;remarque",
+    [
+      "continuent_apres_un_mois",
+      `${retention.days} jours`,
+      retention.masked ? null : `${retention.continuing}/${retention.started}`,
+      retention.masked ? hidden : "",
+    ]
+      .map(cell)
+      .join(";"),
+    ...report.survey.map((month) =>
+      [
+        "sondage_moyenne_sur_5",
+        month.month,
+        month.average,
+        month.answers === null ? hidden : `${month.answers} réponses`,
+      ]
+        .map(cell)
+        .join(";"),
+    ),
   ].join("\n");
 }
