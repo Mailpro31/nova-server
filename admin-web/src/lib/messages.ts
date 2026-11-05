@@ -353,6 +353,8 @@ const en = {
   },
 
   groups: {
+    medicalName:
+      "This name may reveal a health condition (dyslexia, disability, exam arrangements…). Members of a visible group see its name, and being in it discloses health data. Prefer a neutral name, such as the name of the support service.",
     title: "Groups",
     lead: "Groups let you target lessons and change settings for part of the organization. Create your own here; groups from your directory appear too.",
     create: "Create group",
