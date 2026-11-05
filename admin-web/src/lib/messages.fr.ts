@@ -943,6 +943,16 @@ export const fr: Messages = {
     notMeasuredYet: "Rien n’a encore été mesuré sur ce serveur.",
     empty: "Aucune dictée enregistrée pour l’instant.",
     exportCsv: "Exporter le rapport (CSV)",
+    exportPdf: "Imprimer ou enregistrer en PDF",
+    retentionTitle: "Toujours sur Nova après un mois",
+    retention: (continuing: number, started: number, days: number) =>
+      `${continuing} des ${started} personnes qui ont commencé il y a plus de ${days} jours ont dicté ces ${days} derniers jours.`,
+    surveyTitle: "Mini-sondage dans l’application",
+    surveyLead: (min: number) =>
+      `Les membres notent de 1 à 5 l’aide que Nova leur apporte, une fois par mois au plus. Seule la moyenne est gardée, jamais qui a répondu quoi, et elle reste masquée sous ${min} réponses.`,
+    surveyAverage: "Moyenne",
+    surveyAnswers: "Réponses",
+    noSurvey: "Aucune réponse au sondage pour l’instant.",
     versions: "Versions installées",
     versionsLead: (days: number) =>
       `Les personnes vues ces ${days} derniers jours, selon la version de Nova de leur poste. Un poste en retard se met à jour seul ; cette liste montre ceux qui ne l'ont pas encore fait.`,

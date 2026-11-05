@@ -978,6 +978,16 @@ const en = {
     notMeasuredYet: "Nothing has been measured on this server yet.",
     empty: "No dictation recorded yet.",
     exportCsv: "Export the report (CSV)",
+    exportPdf: "Print or save as PDF",
+    retentionTitle: "Still using Nova after a month",
+    retention: (continuing: number, started: number, days: number) =>
+      `${continuing} of the ${started} people who started more than ${days} days ago dictated in the last ${days} days.`,
+    surveyTitle: "In-app survey",
+    surveyLead: (min: number) =>
+      `Members rate from 1 to 5 how much Nova helps them, at most once a month. Only the average is kept, never who answered what, and it stays hidden under ${min} answers.`,
+    surveyAverage: "Average",
+    surveyAnswers: "Answers",
+    noSurvey: "No survey answer yet.",
     versions: "Installed versions",
     versionsLead: (days: number) =>
       `People seen in the last ${days} days, by the Nova version on their computer. Computers on an older version update themselves; this list shows which ones have not yet.`,

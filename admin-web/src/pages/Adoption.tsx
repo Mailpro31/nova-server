@@ -151,6 +151,49 @@ export function Adoption() {
                 </table>
               )}
 
+              <h4>{t.adoption.retentionTitle}</h4>
+              <Notice>
+                {report.retention.masked
+                  ? t.adoption.masked(report.min_people)
+                  : t.adoption.retention(
+                      report.retention.continuing ?? 0,
+                      report.retention.started ?? 0,
+                      report.retention.days,
+                    )}
+              </Notice>
+
+              <h4>{t.adoption.surveyTitle}</h4>
+              <p className="panel-intro">{t.adoption.surveyLead(report.min_people)}</p>
+              {report.survey.length === 0 ? (
+                <Notice>{t.adoption.noSurvey}</Notice>
+              ) : (
+                <table className="usage-members">
+                  <thead>
+                    <tr>
+                      <th>{t.adoption.month}</th>
+                      <th>{t.adoption.surveyAverage}</th>
+                      <th>{t.adoption.surveyAnswers}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {report.survey.map((entry) =>
+                      entry.average === null ? (
+                        <tr key={entry.month}>
+                          <td>{monthLabel(entry.month)}</td>
+                          <td colSpan={2}>{t.adoption.masked(report.min_people)}</td>
+                        </tr>
+                      ) : (
+                        <tr key={entry.month}>
+                          <td>{monthLabel(entry.month)}</td>
+                          <td>{entry.average} / 5</td>
+                          <td>{count(entry.answers)}</td>
+                        </tr>
+                      ),
+                    )}
+                  </tbody>
+                </table>
+              )}
+
               <h4>{t.adoption.versions}</h4>
               <p className="panel-intro">{t.adoption.versionsLead(report.version_days)}</p>
               {report.versions.length === 0 ? (
@@ -180,6 +223,10 @@ export function Adoption() {
                   onClick={() => download("nova-adoption.csv", adoptionCsv(report))}
                 >
                   {t.adoption.exportCsv}
+                </button>
+                {/* Le PDF passe par l'impression du navigateur : rien à installer. */}
+                <button type="button" onClick={() => window.print()}>
+                  {t.adoption.exportPdf}
                 </button>
               </div>
             </>

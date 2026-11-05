@@ -16192,12 +16192,15 @@ def usage_summary(timeline: list[dict]) -> dict:
 # ce que le serveur garde déjà : le détail horaire (90 jours) pour les
 # semaines, la trace mensuelle (2 ans) pour les mois.
 #
-# Une semaine ou un mois où une ou deux personnes seulement ont dicté est
-# masqué. Quand on sait qui fait partie d'un pilote, « 1 personne, 40
+# Une semaine ou un mois où moins de cinq personnes ont dicté est masqué
+# (2.4). Quand on sait qui fait partie d'un pilote, « 1 personne, 40
 # dictées » est l'usage de cette personne.
 
 ADOPTION_WEEKS = 12
-ADOPTION_MIN_PEOPLE = 3
+ADOPTION_MIN_PEOPLE = 5
+# Continuer après un mois : avoir commencé il y a plus de 30 jours et avoir
+# dicté dans les 30 derniers.
+ADOPTION_RETENTION_DAYS = 30
 # Trois jours de dictée dans la semaine : une personne qui revient, et non un
 # essai isolé.
 ADOPTION_REGULAR_DAYS = 3
@@ -16274,6 +16277,14 @@ def adoption_report(now: float | None = None) -> dict:
         ).fetchall()
         first_hour = conn.execute("SELECT MIN(hour) FROM usage_hourly").fetchone()[0]
         first_month = conn.execute("SELECT MIN(month) FROM usage_monthly").fetchone()[0]
+        first_seen = conn.execute(
+            """SELECT email, MIN(day) AS day FROM (
+                   SELECT email, substr(hour, 1, 10) AS day FROM usage_hourly
+                   UNION ALL SELECT email, month || '-01' FROM usage_monthly)
+               GROUP BY email"""
+        ).fetchall()
+        survey = conn.execute(
+            "SELECT month, total, answers FROM survey_scores ORDER BY month").fetchall()
 
     # Le premier jour mesuré. Un mois replié l'a été en entier : il compte dès
     # son premier jour. Sans aucune ligne, rien n'est mesuré.
@@ -16320,9 +16331,28 @@ def adoption_report(now: float | None = None) -> dict:
             sum(1 for days in week["days"].values() if len(days) >= ADOPTION_REGULAR_DAYS),
             week["t"], week["r"], week["a"], partial=start < measured_from)}
 
+    window = time.strftime("%Y-%m-%d", time.gmtime(stamp - ADOPTION_RETENTION_DAYS * 86400))
+    started = {row["email"] for row in first_seen if row["day"] < window}
+    continuing = started & {row["email"] for row in hours if row["hour"][:10] >= window}
+    retention_masked = len(started) < ADOPTION_MIN_PEOPLE
+
     return {
         "min_people": ADOPTION_MIN_PEOPLE,
         "regular_days": ADOPTION_REGULAR_DAYS,
+        "retention": {
+            "days": ADOPTION_RETENTION_DAYS,
+            "started": None if retention_masked else len(started),
+            "continuing": None if retention_masked else len(continuing),
+            "masked": retention_masked,
+        },
+        # Une moyenne seulement, et pas en dessous de cinq réponses.
+        "survey": [
+            {"month": row["month"],
+             "answers": row["answers"] if row["answers"] >= ADOPTION_MIN_PEOPLE else None,
+             "average": round(row["total"] / row["answers"], 1)
+             if row["answers"] >= ADOPTION_MIN_PEOPLE else None}
+            for row in survey
+        ],
         "measured_from": measured_from,
         # Un compte par version, sans masquage : une version ne dit rien de
         # la personne, et la DSI doit voir le dernier poste en retard.
@@ -16355,6 +16385,37 @@ def control_read_licence(
 def newest_versions_first(versions: list[dict]) -> list[dict]:
     return sorted(versions, reverse=True,
                   key=lambda entry: tuple(int(part) for part in entry["version"].split(".")))
+
+
+SURVEY_SCORES = range(1, 6)
+
+
+def record_survey_answer(email: str, score: int, now: float | None = None) -> None:
+    """Compte une réponse au mini-sondage, une fois par personne et par mois."""
+    if score not in SURVEY_SCORES:
+        raise ValueError("score")
+    month = time.strftime("%Y-%m", time.gmtime(time.time() if now is None else now))
+    with db() as conn:
+        first = conn.execute(
+            "INSERT INTO survey_answered(email, month) VALUES (?,?) ON CONFLICT DO NOTHING",
+            (email, month)).rowcount
+        if first:
+            conn.execute(
+                """INSERT INTO survey_scores(month, total, answers) VALUES (?,?,1)
+                   ON CONFLICT(month) DO UPDATE SET total = survey_scores.total + excluded.total,
+                       answers = survey_scores.answers + 1""",
+                (month, score))
+
+
+class SurveyAnswer(BaseModel):
+    score: int = Field(ge=1, le=5)
+
+
+@app.post("/api/survey")
+def answer_survey(body: SurveyAnswer, user: str = Depends(current_user)):
+    """Le mini-sondage du pilote (2.4) : une note de 1 à 5, sans nom."""
+    record_survey_answer(user, body.score)
+    return {"ok": True}
 
 
 @app.get("/api/control/organization/adoption")
