@@ -1,0 +1,61 @@
+# Le panel de l'éditeur (5.4) : Grafana, Prometheus et Loki, sur la machine de
+# Sash. Chaque école y envoie ses chiffres et ses journaux d'erreurs par son
+# agent Alloy (deploy/alloy/config.alloy).
+#
+# Rien n'écoute sur Internet : les ports ne s'ouvrent que sur 127.0.0.1, et
+# l'accès passe par Tailscale (`tailscale serve`), avec une ACL qui ne laisse
+# les serveurs d'école joindre que les ports 9090 et 3100.
+#
+#   cd panel && GRAFANA_ADMIN_PASSWORD=… docker compose up -d
+#
+# Les tableaux de bord et les alertes se recréent seuls au démarrage
+# (provisioning) : rien à cliquer.
+
+services:
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      # Treize mois : comparer une rentrée à la précédente.
+      - "--storage.tsdb.retention.time=400d"
+      # Les écoles poussent : leurs serveurs sont derrière un NAT.
+      - "--web.enable-remote-write-receiver"
+    volumes:
+      - ./prometheus:/etc/prometheus:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    restart: unless-stopped
+
+  loki:
+    image: grafana/loki:3.2.1
+    command: ["-config.file=/etc/loki/loki.yml"]
+    volumes:
+      - ./loki:/etc/loki:ro
+      - loki-data:/loki
+    ports:
+      - "127.0.0.1:3100:3100"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    environment:
+      # Choisi par Sash au lancement, jamais écrit dans un fichier du dépôt.
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:?mot de passe de Grafana à fournir}"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on: [prometheus, loki]
+    restart: unless-stopped
+
+volumes:
+  prometheus-data:
+  loki-data:
+  grafana-data:
