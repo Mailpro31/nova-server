@@ -875,6 +875,9 @@ export const fr: Messages = {
       "La fermer masque la catégorie. Son contenu reste sur le poste de chaque membre et n’est jamais envoyé à l’organisation.",
     aiSkillsTitle: "AI Skills",
     aiSkillsBody: "Permet aux membres d’utiliser les AI Skills dans Nova.",
+    crashReportsTitle: "Rapports de plantage",
+    crashReportsBody:
+      "Quand Nova plante sur un poste, l’éditeur reçoit l’endroit du code où c’est arrivé. Jamais une dictée, un nom ni le nom de l’ordinateur.",
     vocabularyTitle: "Vocabulaire de l’organisation",
     vocabularyBody:
       "Permet aux membres d’utiliser le vocabulaire et le dictionnaire fournis par cette organisation.",

@@ -899,6 +899,9 @@ const en = {
       "Closing it hides the category. Its content stays on each member's device and is never sent to the organization.",
     aiSkillsTitle: "AI Skills",
     aiSkillsBody: "Allow members to use AI Skills in Nova.",
+    crashReportsTitle: "Crash reports",
+    crashReportsBody:
+      "When Nova crashes on a computer, the publisher receives where it happened in the code. Never a dictation, a name or the computer name.",
     vocabularyTitle: "Organization vocabulary",
     vocabularyBody:
       "Allow members to use the vocabulary and dictionary provided by this organization.",

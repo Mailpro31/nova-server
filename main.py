@@ -2410,6 +2410,9 @@ POLICY_SETTINGS: dict[str, PolicySetting] = {
         # dictée est rendue telle quelle (n° 21 ter) : rien n'est perdu.
         PolicySetting("daily_rewrites_per_member", int, 0, None,
                       minimum=0, maximum=10000),
+        # Les rapports de plantage du poste (5.2) : la pile d'appels, jamais le
+        # texte d'un élève. Ouverts par défaut, l'école peut les couper.
+        PolicySetting("crash_reports_enabled", bool, True, None),
         # Des Styles retires un par un, sans fermer la categorie Styles. Des
         # identifiants — Styles integres du poste ou Styles d'organisation —,
         # aucun par defaut : rien n'est retire tant que personne ne l'a decide.
@@ -4527,6 +4530,7 @@ def public_campus_config(organization_id: str | None = None,
     config["style_policy"] = {
         "disabled_style_ids": list(policy["settings"]["disabled_style_ids"]),
     }
+    config["crash_reports"] = {"enabled": policy["settings"]["crash_reports_enabled"]}
     return config
 
 # ---------------------------------------------------------------- app
@@ -11037,6 +11041,7 @@ def me(user: str = Depends(current_user), u=Depends(current_account),
         # route, pas `/api/config`.
         "limits": member_config["limits"],
         "style_policy": member_config["style_policy"],
+        "crash_reports": member_config["crash_reports"],
         "closed_capabilities": closed_capabilities,
     }
 
