@@ -984,6 +984,32 @@ const en = {
     version: "Version",
     noVersions: "No computer has reported its version yet.",
   },
+  subscription: {
+    title: "Subscription",
+    description:
+      "What your school has subscribed to, and how many people use Nova against your tier. Counts only, never names. Nothing is ever blocked: these notices are for planning.",
+    none: "No licence is installed on this server yet. Nova works normally; your provider sends the licence line to add to the server configuration (NOVA_LICENCE).",
+    kind: "Type",
+    kinds: { pilot: "Pilot", subscription: "Subscription" },
+    tier: "Tier",
+    period: "Period",
+    periodValue: (starts: string, ends: string) => `${starts} to ${ends}`,
+    daysLeft: "Days left",
+    activeMonth: "Active people this month",
+    activeYear: (since: string) => `Active people since ${since}`,
+    gauge: (active: number, seats: number) => `${active} of ${seats} people in your tier this month`,
+    alerts: {
+      warning: (days: number) => `The licence ends in ${days} days. Contact your provider to renew it.`,
+      grace: (days: number) =>
+        `The licence has ended. Everything keeps working for ${days} more days; after that, the selection bubble, Nova Commands and AI Skills pause. Dictation never stops.`,
+      expired:
+        "The licence has ended and its grace period is over: the selection bubble, Nova Commands and AI Skills are paused. Dictation and Styles keep working.",
+      invalid:
+        "The installed licence could not be verified. Nothing is blocked; ask your provider for a new licence line.",
+      nearLimit: "You are close to the number of people in your tier. Nothing is blocked; talk to your provider before the next tier.",
+      overLimit: "More people use Nova this month than your tier covers. Nothing is blocked; talk to your provider about the next tier.",
+    },
+  },
   limits: {
     title: "Limits",
     lead: "Limits that apply to every member of this organization.",

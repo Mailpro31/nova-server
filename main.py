@@ -16342,14 +16342,59 @@ def adoption_report(now: float | None = None) -> dict:
     }
 
 
-@app.get("/api/control/organization/licence")
-def control_read_licence(
+# ──────────────── L'abonnement, pour la direction (2.1, 2.2) ────────────────
+#
+# Le palier vient de la licence signée ; les personnes actives, de l'usage
+# déjà compté. Des comptes, jamais de noms. Approcher ou dépasser le palier
+# ne bloque personne : la console prévient, l'école et l'éditeur en parlent.
+
+SUBSCRIPTION_NEAR_LIMIT = 0.9
+
+
+def tier_seats(tier: str) -> int | None:
+    """« 151-250 » → 250 : le palier se lit par sa borne haute."""
+    numbers = re.findall(r"\d+", tier or "")
+    return int(numbers[-1]) if numbers else None
+
+
+def subscription_report(now: float | None = None) -> dict:
+    stamp = time.time() if now is None else now
+    state = licence.licence_state(NOVA_LICENCE, stamp)
+    month = time.strftime("%Y-%m", time.gmtime(stamp))
+    # L'année de l'abonnement quand la licence la donne, l'année civile sinon.
+    year_from = state.get("starts") or time.strftime("%Y-01-01", time.gmtime(stamp))
+    with db() as conn:
+        def people(since_day: str) -> int:
+            return conn.execute(
+                """SELECT COUNT(*) FROM (
+                       SELECT email FROM usage_hourly WHERE hour >= ?
+                       UNION SELECT email FROM usage_monthly WHERE month >= ?) AS active""",
+                (f"{since_day}T00", since_day[:7]),
+            ).fetchone()[0]
+
+        active_month = people(f"{month}-01")
+        active_year = people(year_from)
+    seats = tier_seats(state.get("tier", "")) if state["status"] != "invalid" else None
+    return {
+        "licence": state,
+        "active_month": active_month,
+        "active_year": active_year,
+        "year_from": year_from,
+        "seats": seats,
+        "near_limit": bool(seats) and active_month >= SUBSCRIPTION_NEAR_LIMIT * seats,
+        "over_limit": bool(seats) and active_month > seats,
+        "renewal_reminder": state["status"] in ("warning", "grace", "expired"),
+    }
+
+
+@app.get("/api/control/organization/subscription")
+def control_read_subscription(
     principal: AdminPrincipal = Depends(
         require_admin_capability(CAPABILITY_DIAGNOSTICS_READ)
     ),
 ):
-    """L'état de la licence de l'école : palier, dates, échéance (2.1)."""
-    return licence.licence_state(NOVA_LICENCE)
+    """Palier, dates, personnes actives face au palier, échéance."""
+    return subscription_report()
 
 
 def newest_versions_first(versions: list[dict]) -> list[dict]:

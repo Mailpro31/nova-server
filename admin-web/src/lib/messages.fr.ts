@@ -949,6 +949,32 @@ export const fr: Messages = {
     version: "Version",
     noVersions: "Aucun poste n'a encore envoyé sa version.",
   },
+  subscription: {
+    title: "Abonnement",
+    description:
+      "Ce que votre établissement a souscrit, et combien de personnes utilisent Nova face à votre palier. Des nombres seulement, jamais de noms. Rien n'est jamais bloqué : ces avertissements servent à anticiper.",
+    none: "Aucune licence n'est installée sur ce serveur. Nova fonctionne normalement ; l'éditeur vous envoie la ligne de licence à ajouter à la configuration du serveur (NOVA_LICENCE).",
+    kind: "Type",
+    kinds: { pilot: "Pilote", subscription: "Abonnement" },
+    tier: "Palier",
+    period: "Période",
+    periodValue: (starts: string, ends: string) => `du ${starts} au ${ends}`,
+    daysLeft: "Jours restants",
+    activeMonth: "Personnes actives ce mois-ci",
+    activeYear: (since: string) => `Personnes actives depuis le ${since}`,
+    gauge: (active: number, seats: number) => `${active} personnes sur ${seats} dans votre palier ce mois-ci`,
+    alerts: {
+      warning: (days: number) => `La licence se termine dans ${days} jours. Contactez l'éditeur pour la renouveler.`,
+      grace: (days: number) =>
+        `La licence est terminée. Tout fonctionne encore ${days} jours ; ensuite, la bulle de sélection, Nova Commands et les AI Skills se mettent en pause. La dictée ne s'arrête jamais.`,
+      expired:
+        "La licence est terminée et son délai de grâce est passé : la bulle de sélection, Nova Commands et les AI Skills sont en pause. La dictée et les Styles fonctionnent.",
+      invalid:
+        "La licence installée n'a pas pu être vérifiée. Rien n'est bloqué ; demandez une nouvelle ligne de licence à l'éditeur.",
+      nearLimit: "Vous approchez du nombre de personnes de votre palier. Rien n'est bloqué ; parlez-en à l'éditeur avant le palier suivant.",
+      overLimit: "Plus de personnes utilisent Nova ce mois-ci que votre palier n'en couvre. Rien n'est bloqué ; parlez à l'éditeur du palier suivant.",
+    },
+  },
   limits: {
     title: "Limites",
     lead: "Les limites qui s’appliquent à chaque membre de cette organisation.",
