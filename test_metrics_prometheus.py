@@ -155,6 +155,15 @@ class MetricsPrometheusTests(unittest.TestCase):
         self.assertIn('nova_ai_tokens_total{kind="completion",task="style_transform"} 30', rendered)
         self.assertIn('nova_stage_seconds_count{stage="mise_en_forme"} 1', rendered)
 
+    def test_each_text_call_logs_its_tokens_without_text(self):
+        router = OrganizationAIRouter(CountingTextBackend(), FakeSpeechInferenceBackend())
+        with self.assertLogs("nova", "INFO") as captured:
+            asyncio.run(router.generate(TaskType.VOICE_COMMAND, "texte secret", "consigne"))
+        usage = [r for r in captured.records if r.getMessage() == "ai.usage"]
+        self.assertEqual(len(usage), 1)
+        self.assertEqual(usage[0].fields, {"task": "voice_command", "prompt_tokens": 120,
+                                           "completion_tokens": 30})
+
     def test_the_transcription_stage_is_measured(self):
         router = OrganizationAIRouter(CountingTextBackend(), FakeSpeechInferenceBackend())
         asyncio.run(router.transcribe(TaskType.TRANSCRIPTION_REALTIME, b"RIFF", "a.wav"))

@@ -1073,6 +1073,11 @@ class OrganizationAIRouter:
         observability.METRICS.observe_stage(
             TEXT_STAGES.get(request.task_type, "autre"), time.monotonic() - started)
         observability.METRICS.add_tokens(request.task_type.value, result.usage or {})
+        # 0.4 : une ligne par appel donne la médiane et le p95, que le compteur cumulé ne donne pas.
+        usage = result.usage or {}
+        observability.log("ai.usage", task=request.task_type.value,
+                          prompt_tokens=usage.get("prompt_tokens"),
+                          completion_tokens=usage.get("completion_tokens"))
         return result
 
     async def transcribe(
