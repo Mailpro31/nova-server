@@ -29,6 +29,9 @@ x-nova-environment: &nova-environment
     NOVA_ORGANIZATION_TYPE: "${NOVA_ORGANIZATION_TYPE:-education}"
     # Sans origine declaree, la console web n'a aucune origine autorisee.
     NOVA_ADMIN_ORIGINS: "${NOVA_ADMIN_ORIGINS:-}"
+    # Jeton de lecture de /api/metrics (point 5.1). Vide : series techniques
+    # seules, comme avant ; renseigne : exige, et series metier ajoutees.
+    NOVA_METRICS_TOKEN: "${NOVA_METRICS_TOKEN:-}"
     # L'adresse annoncee aux postes, et le slug par lequel ils trouvent
     # l'organisation.
     NOVA_SERVICE_ENDPOINT: "${NOVA_SERVICE_ENDPOINT:-}"
@@ -82,6 +85,16 @@ x-nova-environment: &nova-environment
     NOVA_AI_CUSTOM_MAX_OUTPUT_TOKENS: "${NOVA_AI_CUSTOM_MAX_OUTPUT_TOKENS:-}"
     NOVA_AI_CUSTOM_TEMPERATURE: "${NOVA_AI_CUSTOM_TEMPERATURE:-}"
     NOVA_AI_CUSTOM_REASONING: "${NOVA_AI_CUSTOM_REASONING:-auto}"
+    # Prix de l'IA externe en euros (enveloppe 2.3) ; vides, rien n'est compté.
+    NOVA_AI_EUR_PER_MTOK_INPUT: "${NOVA_AI_EUR_PER_MTOK_INPUT:-}"
+    NOVA_AI_EUR_PER_MTOK_OUTPUT: "${NOVA_AI_EUR_PER_MTOK_OUTPUT:-}"
+    NOVA_AI_REFINE_EUR_PER_CALL: "${NOVA_AI_REFINE_EUR_PER_CALL:-}"
+    # La licence signée de l'école (4.1), une ligne posée dans .env. Absente
+    # de cette ancre, elle n'atteignait jamais le conteneur.
+    NOVA_LICENCE: "${NOVA_LICENCE:-}"
+    # Gemini via Vertex AI (3.1) : chemin du fichier du compte de service,
+    # monté en lecture seule (en production : /run/secrets/vertex.json).
+    NOVA_VERTEX_CREDENTIALS_FILE: "${NOVA_VERTEX_CREDENTIALS_FILE:-}"
 
 services:
   # La preparation de la base, explicite : le schema puis les premieres lignes
@@ -200,6 +213,25 @@ services:
     depends_on: [api]
     restart: unless-stopped
     profiles: ["connector"]
+
+  # Les chiffres et les journaux d'erreurs vers le panel de l'éditeur (5.3).
+  # Coupé par défaut : seul le contrat l'ouvre (`--profile panel`). Le socket
+  # Docker, en lecture seule, sert à ne lire QUE les journaux du service `api`
+  # (voir deploy/alloy/config.alloy).
+  alloy:
+    image: grafana/alloy:v1.5.1
+    command: ["run", "/etc/alloy/config.alloy", "--storage.path=/var/lib/alloy"]
+    environment:
+      NOVA_METRICS_TOKEN: "${NOVA_METRICS_TOKEN:-}"
+      NOVA_PANEL_SCHOOL: "${NOVA_PANEL_SCHOOL:-}"
+      NOVA_PANEL_PROMETHEUS_URL: "${NOVA_PANEL_PROMETHEUS_URL:-}"
+      NOVA_PANEL_LOKI_URL: "${NOVA_PANEL_LOKI_URL:-}"
+    volumes:
+      - ./deploy/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on: [api]
+    restart: unless-stopped
+    profiles: ["panel"]
 
   whisper:
     image: fedirz/faster-whisper-server:latest-cuda

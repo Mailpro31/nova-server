@@ -260,6 +260,9 @@ const en = {
     roleReadOnlyHint: "Reads the console. Changes nothing.",
     roleContentEditorHint:
       "Manages content: Learn lessons, Styles, Prompts and vocabulary. No access to members, security or policies.",
+    roleAccessManager: "Access manager",
+    roleAccessManagerHint:
+      "Opens Nova to people by adding them to groups, for example the disability support office. No access to settings, security or administrators.",
     roleMemberHint: "Uses Nova, administers nothing.",
     changeRole: "Change role",
     removeAccess: "Remove admin access",
@@ -353,6 +356,8 @@ const en = {
   },
 
   groups: {
+    medicalName:
+      "This name may reveal a health condition (dyslexia, disability, exam arrangements…). Members of a visible group see its name, and being in it discloses health data. Prefer a neutral name, such as the name of the support service.",
     title: "Groups",
     lead: "Groups let you target lessons and change settings for part of the organization. Create your own here; groups from your directory appear too.",
     create: "Create group",
@@ -899,6 +904,9 @@ const en = {
       "Closing it hides the category. Its content stays on each member's device and is never sent to the organization.",
     aiSkillsTitle: "AI Skills",
     aiSkillsBody: "Allow members to use AI Skills in Nova.",
+    crashReportsTitle: "Crash reports",
+    crashReportsBody:
+      "When Nova crashes on a computer, the publisher receives where it happened in the code. Never a dictation, a name or the computer name.",
     vocabularyTitle: "Organization vocabulary",
     vocabularyBody:
       "Allow members to use the vocabulary and dictionary provided by this organization.",
@@ -978,11 +986,56 @@ const en = {
     notMeasuredYet: "Nothing has been measured on this server yet.",
     empty: "No dictation recorded yet.",
     exportCsv: "Export the report (CSV)",
+    exportPdf: "Print or save as PDF",
+    retentionTitle: "Still using Nova after a month",
+    retention: (continuing: number, started: number, days: number) =>
+      `${continuing} of the ${started} people who started more than ${days} days ago dictated in the last ${days} days.`,
+    surveyTitle: "In-app survey",
+    surveyLead: (min: number) =>
+      `Members rate from 1 to 5 how much Nova helps them, at most once a month. Only the average is kept, never who answered what, and it stays hidden under ${min} answers.`,
+    surveyAverage: "Average",
+    surveyAnswers: "Answers",
+    noSurvey: "No survey answer yet.",
     versions: "Installed versions",
     versionsLead: (days: number) =>
       `People seen in the last ${days} days, by the Nova version on their computer. Computers on an older version update themselves; this list shows which ones have not yet.`,
     version: "Version",
     noVersions: "No computer has reported its version yet.",
+  },
+  subscription: {
+    title: "Subscription",
+    description:
+      "What your school has subscribed to, and how many people use Nova against your tier. Counts only, never names. Nothing is ever blocked: these notices are for planning.",
+    none: "No licence is installed on this server yet. Nova works normally; your provider sends the licence line to add to the server configuration (NOVA_LICENCE).",
+    kind: "Type",
+    kinds: { pilot: "Pilot", subscription: "Subscription" },
+    tier: "Tier",
+    period: "Period",
+    periodValue: (starts: string, ends: string) => `${starts} to ${ends}`,
+    daysLeft: "Days left",
+    activeMonth: "Active people this month",
+    activeYear: (since: string) => `Active people since ${since}`,
+    gauge: (active: number, seats: number) => `${active} of ${seats} people in your tier this month`,
+    alerts: {
+      warning: (days: number) => `The licence ends in ${days} days. Contact your provider to renew it.`,
+      grace: (days: number) =>
+        `The licence has ended. Everything keeps working for ${days} more days; after that, the selection bubble, Nova Commands and AI Skills pause. Dictation never stops.`,
+      expired:
+        "The licence has ended and its grace period is over: the selection bubble, Nova Commands and AI Skills are paused. Dictation and Styles keep working.",
+      invalid:
+        "The installed licence could not be verified. Nothing is blocked; ask your provider for a new licence line.",
+      nearLimit: "You are close to the number of people in your tier. Nothing is blocked; talk to your provider before the next tier.",
+      overLimit: "More people use Nova this month than your tier covers. Nothing is blocked; talk to your provider about the next tier.",
+      envelopeNear:
+        "80% of the AI budget open so far is spent. Unspent months carry over; when it runs out, dictation switches to the school's local AI and the selection bubble pauses until next month.",
+      envelopeEmpty:
+        "The AI budget open so far is spent. Dictation keeps working on the school's local AI; the selection bubble and Nova Commands pause until next month. Your provider can top it up with a new licence line.",
+    },
+    envelopeAnnual: "AI budget in the contract",
+    envelopeOpen: "Open so far (unspent months carry over)",
+    envelopeSpent: "Spent so far",
+    envelopeMonth: "Spent this month",
+    envelopeGauge: (percent: number) => `${percent}% of the AI budget open so far`,
   },
   limits: {
     title: "Limits",
@@ -1015,6 +1068,17 @@ const en = {
       whole: "Use a whole number.",
       range: "The cap must be between 0 and 10000.",
     },
+    retentionTitle: "Past dictations kept on each computer",
+    retentionBehaviour:
+      "Dictations are stored on each member's computer, never on the server. Past this number of days, Nova deletes them from the computer, saved dictations included. 0 lets each member choose.",
+    retentionField: "Days kept (0 = members choose)",
+    retentionValue: (days: number) =>
+      days === 0 ? "Members choose" : days === 1 ? "1 day" : `${days} days`,
+    retentionProblems: {
+      empty: "Enter a number.",
+      whole: "Use a whole number.",
+      range: "The number of days must be between 0 and 3650.",
+    },
   },
 
   styles: {
@@ -1042,6 +1106,16 @@ const en = {
       count === 1 ? "1 setting changed for this group" : `${count} settings changed for this group`,
     edit: "Edit",
     view: "View",
+    examTitle: "Exam mode",
+    examBody:
+      "Members of this group keep dictation only: no AI, no bubble, no past dictations, no file import. Everything reopens at the planned time. Save to apply.",
+    examOff: "No exam in progress",
+    examRunning: (end: Date) =>
+      `Exam in progress until ${end.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`,
+    examStart: "Start an exam…",
+    examChange: "Change the end…",
+    examHours: (hours: number) => (hours === 1 ? "For 1 hour" : `For ${hours} hours`),
+    examStop: "Stop the exam now",
     close: "Close",
     inherit: "Follow the organization",
     on: "Enabled for this group",

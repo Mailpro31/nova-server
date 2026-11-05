@@ -17,7 +17,7 @@ import socket
 import subprocess
 import time
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from enum import Enum
 from pathlib import Path
 from typing import Any, Protocol
@@ -26,6 +26,7 @@ from urllib.parse import urlparse
 import httpx
 
 import observability
+import vertex_auth
 
 
 class TaskType(str, Enum):
@@ -52,6 +53,14 @@ TEXT_TASKS = frozenset(
 SPEECH_TASKS = frozenset(
     {TaskType.TRANSCRIPTION_REALTIME, TaskType.TRANSCRIPTION_FILE}
 )
+# L'étape d'une dictée qu'une tâche de texte représente, pour la latence par
+# étape exposée à Prometheus (point 5.1). La résolution des reprises passe par
+# REFORMULATION : elle compte dans la mise en forme.
+TEXT_STAGES = {
+    TaskType.STYLE_TRANSFORM: "mise_en_forme",
+    TaskType.REFORMULATION: "mise_en_forme",
+    TaskType.VOICE_COMMAND: "commande",
+}
 # Les taches qui restituent un texte que l'utilisateur a lui-meme dicte. Elles
 # n'ont rien a inventer : leur sortie est jugee sur sa fidelite, jamais sur sa
 # variete. Le raisonnement leur est deja retire pour cette raison.
@@ -327,7 +336,10 @@ def validate_private_runtime_url(value: str) -> str:
     return value.rstrip("/")
 
 
-def _auth_headers(token: str) -> dict[str, str]:
+async def _auth_headers(token: "str | vertex_auth.ServiceAccountToken") -> dict[str, str]:
+    """La clé fixe d'un moteur, ou le jeton Vertex AI du moment (3.1)."""
+    if isinstance(token, vertex_auth.ServiceAccountToken):
+        token = await token.bearer()
     return {"Authorization": f"Bearer {token}"} if token else {}
 
 
@@ -404,7 +416,7 @@ class OpenAICompatibleTextBackend:
         try:
             response = await client.post(
                 f"{self._engine_root}/tokenize",
-                headers=_auth_headers(self.token),
+                headers=await _auth_headers(self.token),
                 json={
                     "model": self.model,
                     "messages": messages,
@@ -432,7 +444,7 @@ class OpenAICompatibleTextBackend:
             return None
         try:
             response = await client.get(
-                f"{self.base_url}/models", headers=_auth_headers(self.token)
+                f"{self.base_url}/models", headers=await _auth_headers(self.token)
             )
             if response.status_code != 200:
                 return None
@@ -521,7 +533,7 @@ class OpenAICompatibleTextBackend:
                 )
                 response = await client.post(
                     f"{self.base_url}/chat/completions",
-                    headers=_auth_headers(self.token),
+                    headers=await _auth_headers(self.token),
                     json=payload,
                 )
         except (httpx.ConnectTimeout, httpx.ConnectError) as error:
@@ -580,7 +592,7 @@ class OpenAICompatibleTextBackend:
                 timeout=self.health_timeout, transport=self.transport
             ) as client:
                 response = await client.get(
-                    f"{self.base_url}/models", headers=_auth_headers(self.token)
+                    f"{self.base_url}/models", headers=await _auth_headers(self.token)
                 )
             latency = round((time.monotonic() - started) * 1000)
             if response.status_code in {425, 503}:
@@ -649,7 +661,7 @@ class WhisperCompatibleSpeechBackend:
             ) as client:
                 response = await client.post(
                     f"{self.base_url}/v1/audio/transcriptions",
-                    headers=_auth_headers(self.token),
+                    headers=await _auth_headers(self.token),
                     files={"file": (request.filename, request.audio)},
                     data=data,
                 )
@@ -707,7 +719,7 @@ class WhisperCompatibleSpeechBackend:
                 timeout=self.health_timeout, transport=self.transport
             ) as client:
                 response = await client.get(
-                    f"{self.base_url}/health", headers=_auth_headers(self.token)
+                    f"{self.base_url}/health", headers=await _auth_headers(self.token)
                 )
             latency = round((time.monotonic() - started) * 1000)
             if response.status_code in {425, 503}:
@@ -993,7 +1005,9 @@ class OrganizationAIRouter:
         request_id: str | None = None,
         options: TextInferenceOptions | None = None,
         examples: tuple[tuple[str, str], ...] = (),
+        local_only: bool = False,
     ) -> TextInferenceResult:
+        """`local_only` : l'enveloppe d'IA est vide, seul le moteur local sert."""
         if task_type not in TEXT_TASKS:
             raise AIRuntimeError(AI_RUNTIME_CONFIG_INVALID)
         timeout = TEXT_TIMEOUTS[task_type]
@@ -1006,7 +1020,11 @@ class OrganizationAIRouter:
             timeout,
             examples,
         )
-        primary_down = time.monotonic() < self._text_down_until
+        primary_down = time.monotonic() < self._text_down_until or (
+            local_only and self.fallback_text_backend is not None)
+        if local_only and self.fallback_text_backend is None:
+            # Sans moteur local, rien ne part : l'enveloppe n'est jamais dépassée.
+            raise AIRuntimeError(AI_RUNTIME_UNAVAILABLE)
         if primary_down and self.fallback_text_backend is None:
             raise AIRuntimeError(AI_RUNTIME_UNAVAILABLE)
         await self.text_capacity.acquire()
@@ -1033,8 +1051,11 @@ class OrganizationAIRouter:
                     observability.log("ai.text_fallback", level="warning", reason=error.code)
             else:
                 # Chaque requête servie par le secours se compte (RTX, 17/10).
-                observability.log("ai.text_fallback", level="warning", reason="primary_set_aside")
-            return await self._generate_with(self.fallback_text_backend, request, timeout)
+                observability.log("ai.text_fallback", level="warning",
+                                  reason="envelope" if local_only else "primary_set_aside")
+            result = await self._generate_with(self.fallback_text_backend, request, timeout)
+            # Le moteur local ne coûte rien à l'enveloppe d'IA.
+            return replace(result, backend={**result.backend, "fallback": True})
         finally:
             await self.text_capacity.release()
 
@@ -1042,10 +1063,17 @@ class OrganizationAIRouter:
     async def _generate_with(
         backend: TextInferenceBackend, request: TextInferenceRequest, timeout: float
     ) -> TextInferenceResult:
+        started = time.monotonic()
         try:
-            return await asyncio.wait_for(backend.generate(request), timeout=timeout + 0.1)
+            result = await asyncio.wait_for(backend.generate(request), timeout=timeout + 0.1)
         except asyncio.TimeoutError as error:
             raise AIRuntimeError(AI_RUNTIME_TIMEOUT) from error
+        # Point 5.1 : ici passent le moteur principal et le secours, une fois par
+        # appel réussi. Des comptes et des durées, jamais le texte.
+        observability.METRICS.observe_stage(
+            TEXT_STAGES.get(request.task_type, "autre"), time.monotonic() - started)
+        observability.METRICS.add_tokens(request.task_type.value, result.usage or {})
+        return result
 
     async def transcribe(
         self,
@@ -1075,12 +1103,15 @@ class OrganizationAIRouter:
         )
         await self.speech_capacity.acquire()
         try:
+            started = time.monotonic()
             try:
-                return await asyncio.wait_for(
+                result = await asyncio.wait_for(
                     self.speech_backend.transcribe(request), timeout=timeout + 0.1
                 )
             except asyncio.TimeoutError as error:
                 raise AIRuntimeError(AI_RUNTIME_TIMEOUT) from error
+            observability.METRICS.observe_stage("transcription", time.monotonic() - started)
+            return result
         finally:
             await self.speech_capacity.release()
 
@@ -1280,6 +1311,9 @@ def router_from_environment() -> OrganizationAIRouter:
     # Une clé par moteur : la mise au propre peut passer par une API externe
     # pendant que la transcription reste locale, sans recevoir cette clé.
     text_token = secrets_provider.resolve_value(os.getenv("NOVA_AI_TEXT_TOKEN", "")) or token
+    # Gemini via Vertex AI : le compte de service de l'école remplace la clé
+    # du moteur texte externe ; le moteur local garde la sienne.
+    text_token = vertex_auth.token_from_environment() or text_token
     speech_token = secrets_provider.resolve_value(os.getenv("NOVA_AI_SPEECH_TOKEN", "")) or token
     if public_endpoint_allowed():
         observability.log("ai.public_endpoint_allowed", level="warning",
@@ -1381,6 +1415,7 @@ class AudioRefineBackend:
                 ]},
             ],
         }
+        started = time.monotonic()
         try:
             # Connexion courte : une API injoignable ne retient pas la dictée
             # 12 s (panne simulée du RTX, 17/10 : 12,8 s).
@@ -1388,7 +1423,7 @@ class AudioRefineBackend:
             async with httpx.AsyncClient(timeout=timeout, transport=self.transport) as client:
                 response = await client.post(
                     f"{self.base_url}/chat/completions",
-                    headers=_auth_headers(self.token), json=payload)
+                    headers=await _auth_headers(self.token), json=payload)
         except httpx.TimeoutException as error:
             raise AIRuntimeError(AI_RUNTIME_TIMEOUT) from error
         except httpx.HTTPError as error:
@@ -1400,6 +1435,7 @@ class AudioRefineBackend:
             text = response.json()["choices"][0]["message"]["content"]
         except (ValueError, KeyError, IndexError, TypeError) as error:
             raise AIRuntimeError(AI_RUNTIME_FAILED) from error
+        observability.METRICS.observe_stage("relecture", time.monotonic() - started)
         return (text or "").strip()
 
 
@@ -1411,6 +1447,7 @@ def audio_refiner_from_environment() -> AudioRefineBackend | None:
         return None
     import secrets_provider
 
-    token = secrets_provider.resolve_value(os.getenv("NOVA_AI_SPEECH_REFINE_TOKEN", "")) or ""
+    token = (vertex_auth.token_from_environment()
+             or secrets_provider.resolve_value(os.getenv("NOVA_AI_SPEECH_REFINE_TOKEN", "")) or "")
     observability.log("ai.speech_refine_enabled", level="warning", url=url, model=model)
     return AudioRefineBackend(url, model, token=token)

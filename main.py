@@ -17,6 +17,7 @@ import difflib
 import re
 import base64
 import hashlib
+import hmac
 import html
 import ipaddress
 import json
@@ -49,6 +50,8 @@ import deployment
 import google_directory
 import group_rules
 import migrations
+import ai_envelope
+import contextvars
 import licence
 import observability
 import production_config
@@ -2180,6 +2183,9 @@ SECURITY_ROLE_READ_ONLY = "read_only"
 # Prepare le contenu — lecons d'Apprendre, Styles, Prompts, vocabulaire — sans
 # toucher aux membres, a la securite ni a ce que l'organisation autorise.
 SECURITY_ROLE_CONTENT_EDITOR = "content_editor"
+# Ouvre Nova à une personne en la mettant dans un groupe : la mission handicap
+# (2.5), sans les réglages, la sécurité ni les administrateurs.
+SECURITY_ROLE_ACCESS_MANAGER = "access_manager"
 
 # Capacités : ce que l'on vérifie réellement dans les routes. Les rôles sont
 # des noms commodes, les capacités sont la règle — sans quoi `if role ==` se
@@ -2202,6 +2208,9 @@ CAPABILITY_POLICY_MANAGE = "policy_manage"
 # capacite pour les trois types : une par type ferait grossir la matrice
 # sans repondre a une question differente — qui peut publier du contenu ?
 CAPABILITY_CONTENT_MANAGE = "content_manage"
+# Ajouter une personne à un groupe de la console, ou l'en retirer. Distincte
+# de `identity_manage`, qui crée aussi les groupes et gère les comptes.
+CAPABILITY_GROUP_MEMBERS_MANAGE = "group_members_manage"
 
 # La matrice. Aucun rôle n'est un sur-ensemble des autres : `organization_admin`
 # gère les personnes, `it_admin` gère la machine. Les faire coïncider
@@ -2221,6 +2230,7 @@ CAPABILITIES_BY_ROLE: dict[str, frozenset[str]] = {
         # frontiere posee en Phase 22 tient sans exception ajoutee.
         CAPABILITY_POLICY_MANAGE,
         CAPABILITY_CONTENT_MANAGE,
+        CAPABILITY_GROUP_MEMBERS_MANAGE,
     }),
     SECURITY_ROLE_IT_ADMIN: frozenset({
         CAPABILITY_ORGANIZATION_READ,
@@ -2241,6 +2251,10 @@ CAPABILITIES_BY_ROLE: dict[str, frozenset[str]] = {
     SECURITY_ROLE_CONTENT_EDITOR: frozenset({
         CAPABILITY_ORGANIZATION_READ,
         CAPABILITY_CONTENT_MANAGE,
+    }),
+    SECURITY_ROLE_ACCESS_MANAGER: frozenset({
+        CAPABILITY_ORGANIZATION_READ,
+        CAPABILITY_GROUP_MEMBERS_MANAGE,
     }),
     # Un membre n'a aucune capacité d'administration. La ligne est écrite
     # explicitement : l'absence de clé se lirait comme un oubli.
@@ -2410,6 +2424,17 @@ POLICY_SETTINGS: dict[str, PolicySetting] = {
         # dictée est rendue telle quelle (n° 21 ter) : rien n'est perdu.
         PolicySetting("daily_rewrites_per_member", int, 0, None,
                       minimum=0, maximum=10000),
+        # Jours de conservation des dictées passées sur le poste (2.7) ; 0,
+        # aucune limite de l'école. Le poste efface ce qui est plus ancien,
+        # dictées gardées comprises : c'est une règle de l'établissement.
+        PolicySetting("past_dictations_days", int, 0, None,
+                      minimum=0, maximum=3650),
+        # Les rapports de plantage du poste (5.2) : la pile d'appels, jamais le
+        # texte d'un élève. Ouverts par défaut, l'école peut les couper.
+        PolicySetting("crash_reports_enabled", bool, True, None),
+        # Le mode examen (1.8) : jusqu'a cette heure (secondes depuis 1970), il
+        # ne reste aux membres que la dictee. 0 : pas d'examen.
+        PolicySetting("exam_until", int, 0, None, minimum=0, maximum=4102444800),
         # Des Styles retires un par un, sans fermer la categorie Styles. Des
         # identifiants — Styles integres du poste ou Styles d'organisation —,
         # aucun par defaut : rien n'est retire tant que personne ne l'a decide.
@@ -2576,6 +2601,19 @@ def validate_group_policy_settings(candidate: dict) -> dict:
     return {key: POLICY_SETTINGS[key].normalize(candidate[key]) for key in sorted(candidate)}
 
 
+def exam_active(settings: dict) -> bool:
+    return settings.get("exam_until", 0) > time.time()
+
+
+# Ce qu'un examen ferme : chaque fonction de l'application, sauf la dictee et
+# le vocabulaire, qui corrige l'orthographe des mots du cours sans rien ecrire
+# a la place de l'eleve.
+EXAM_CLOSED_SETTINGS = tuple(
+    key for key, setting in POLICY_SETTINGS.items()
+    if setting.kind is bool and setting.capability not in (None, "dictionary")
+)
+
+
 def resolve_group_policy_settings(settings: dict, group_overrides: list[dict]) -> dict:
     """Reglages de l'organisation, puis surcharges des groupes du membre.
 
@@ -2590,7 +2628,11 @@ def resolve_group_policy_settings(settings: dict, group_overrides: list[dict]) -
         values = [overrides[key] for overrides in group_overrides if key in overrides]
         if not values:
             continue
-        if setting.kind is int:
+        if key == "exam_until":
+            # L'examen le plus long l'emporte, et un groupe n'annule jamais
+            # celui que l'ecole a pose pour tout le monde.
+            resolved[key] = max(values + [resolved[key]])
+        elif setting.kind is int:
             resolved[key] = min(values)
         elif setting.kind is list:
             # Deux groupes additionnent les Styles qu'ils retirent.
@@ -2624,10 +2666,17 @@ def member_policy(account) -> dict:
             (organization_id, account["user_id"]),
         ).fetchall()
     group_overrides = [read_policy_settings(row["settings"]) for row in rows]
+    settings = resolve_group_policy_settings(policy["settings"], group_overrides)
+    exam = exam_active(settings)
+    if exam:
+        settings = {**settings, **dict.fromkeys(EXAM_CLOSED_SETTINGS, False)}
     return {
         **policy,
-        "revision": policy["revision"] + sum(row["revision"] for row in rows),
-        "settings": resolve_group_policy_settings(policy["settings"], group_overrides),
+        # Pendant un examen, son heure de fin s'ajoute au repere : il bouge au
+        # debut, a l'arret anticipe, et a la fin prevue sans aucune ecriture.
+        "revision": policy["revision"] + sum(row["revision"] for row in rows)
+        + (settings["exam_until"] if exam else 0),
+        "settings": settings,
     }
 
 
@@ -3128,6 +3177,80 @@ def refuse_when_licence_degraded(capability: str | tuple[str, ...], feature: str
         raise HTTPException(403, {"code": "LICENCE_EXPIRED", "feature": feature})
 
 
+# Qui paie l'appel d'IA en cours : posé par la route (`enforce_inference_quota`),
+# lu par les circuits partagés avec le banc, qui ne connaissent pas l'élève.
+AI_PAYER: contextvars.ContextVar[str | None] = contextvars.ContextVar("AI_PAYER", default=None)
+
+# La bulle et les Commandes se mettent en pause quand l'enveloppe d'IA est vide ;
+# la dictée continue, sur le moteur local (2.3).
+AI_ENVELOPE_PAUSED_CAPABILITIES = frozenset({"commands", "selectionBubble"})
+
+
+def ai_envelope_state(now: float | None = None, email: str | None = None) -> dict | None:
+    """L'enveloppe d'IA du contrat, ou `None` si la licence n'en porte pas ou
+    si l'exploitant n'a pas renseigné de prix. Des totaux, jamais de noms."""
+    state = licence.licence_state(NOVA_LICENCE, now)
+    annual = state.get("ai_envelope_eur")
+    if annual is None or not ai_envelope.priced():
+        return None
+    now = time.time() if now is None else now
+    month = ai_envelope.month_of(now)
+    with db() as conn:
+        spent = conn.execute("SELECT COALESCE(SUM(eur), 0) FROM ai_spend WHERE month >= ?",
+                             (state["starts"][:7],)).fetchone()[0]
+        month_eur = conn.execute("SELECT COALESCE(SUM(eur), 0) FROM ai_spend WHERE month = ?",
+                                 (month,)).fetchone()[0]
+        mine = conn.execute(
+            "SELECT COALESCE(SUM(eur), 0) FROM ai_spend WHERE month = ? AND email = ?",
+            (month, email or "")).fetchone()[0]
+    allowance = ai_envelope.allowance(annual, state["starts"], state["ends"], now)
+    share = ai_envelope.month_share(annual, state["starts"], state["ends"])
+    return {
+        "annual_eur": annual,
+        "allowance_eur": round(allowance, 2),
+        "spent_eur": round(spent, 2),
+        "month_eur": round(month_eur, 3),
+        "percent": round(100 * spent / allowance) if allowance > 0 else 100,
+        "empty": allowance - spent < ai_envelope.MARGIN_EUR,
+        "mine_over": bool(email) and mine >= share * ai_envelope.STUDENT_MONTH_SHARE,
+    }
+
+
+def ai_local_only(email: str | None) -> bool:
+    """Vrai quand l'IA externe ne doit plus servir : enveloppe vide, ou part du
+    mois de cette personne atteinte."""
+    state = ai_envelope_state(email=email)
+    return bool(state and (state["empty"] or state["mine_over"]))
+
+
+def record_ai_spend(email: str | None, usage: dict, backend: dict, eur: float | None = None):
+    """Ajoute le coût d'un appel servi par le moteur externe, et alerte à 80 %
+    puis 100 % de ce qui est ouvert (l'école dans la console, Sash par le journal)."""
+    if backend.get("fallback") or not ai_envelope.priced():
+        return
+    cost = ai_envelope.call_cost(usage) if eur is None else eur
+    if cost <= 0:
+        return
+    before = ai_envelope_state()
+    with db() as conn:
+        conn.execute(
+            """INSERT INTO ai_spend(month, email, eur) VALUES (?,?,?)
+               ON CONFLICT(month, email) DO UPDATE SET eur = ai_spend.eur + excluded.eur""",
+            (ai_envelope.month_of(time.time()), email or "", cost))
+    if before:
+        for percent in ai_envelope.crossed(before["spent_eur"], before["spent_eur"] + cost,
+                                           before["allowance_eur"]):
+            observability.log("ai.envelope_alert", level="warning", percent=percent)
+
+
+def refuse_when_ai_envelope_empty(capability: str | tuple[str, ...], feature: str):
+    wanted = (capability,) if isinstance(capability, str) else capability
+    if AI_ENVELOPE_PAUSED_CAPABILITIES.intersection(wanted):
+        state = ai_envelope_state()
+        if state and state["empty"]:
+            raise HTTPException(403, {"code": "AI_ENVELOPE_EMPTY", "feature": feature})
+
+
 def require_product_capability(account, capability: str | tuple[str, ...], feature: str):
     """Refuse l'operation si l'organisation a ferme la fonction.
 
@@ -3139,6 +3262,7 @@ def require_product_capability(account, capability: str | tuple[str, ...], featu
     un message juste — et rien d'autre : ni etat interne, ni configuration.
     """
     refuse_when_licence_degraded(capability, feature)
+    refuse_when_ai_envelope_empty(capability, feature)
     organization_id, _ = organization_policy_for_account(account)
     # La policy du membre, groupes compris : fermer une fonction a un groupe
     # doit la refuser ici aussi, pas seulement la masquer sur le poste.
@@ -4523,10 +4647,15 @@ def public_campus_config(organization_id: str | None = None,
     config["limits"] = {
         "max_dictation_seconds": policy["settings"]["max_dictation_seconds"],
     }
+    config["past_dictations"] = {"days": policy["settings"]["past_dictations_days"]}
     # Les Styles que le poste affiche comme desactives et n'applique plus.
     config["style_policy"] = {
         "disabled_style_ids": list(policy["settings"]["disabled_style_ids"]),
     }
+    config["crash_reports"] = {"enabled": policy["settings"]["crash_reports_enabled"]}
+    # L'heure de fin d'un examen en cours, pour que le poste l'annonce.
+    config["exam"] = {"until": policy["settings"]["exam_until"]
+                      if exam_active(policy["settings"]) else 0}
     return config
 
 # ---------------------------------------------------------------- app
@@ -6902,7 +7031,7 @@ def control_add_group_member(
     organization_id: str,
     group_id: str,
     user_id: str,
-    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_IDENTITY_MANAGE)),
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_GROUP_MEMBERS_MANAGE)),
 ):
     require_organization_access(principal, organization_id)
     with db() as conn:
@@ -6942,7 +7071,7 @@ def control_remove_group_member(
     organization_id: str,
     group_id: str,
     user_id: str,
-    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_IDENTITY_MANAGE)),
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_GROUP_MEMBERS_MANAGE)),
 ):
     require_organization_access(principal, organization_id)
     with db() as conn:
@@ -11037,6 +11166,9 @@ def me(user: str = Depends(current_user), u=Depends(current_account),
         # route, pas `/api/config`.
         "limits": member_config["limits"],
         "style_policy": member_config["style_policy"],
+        "past_dictations": member_config["past_dictations"],
+        "crash_reports": member_config["crash_reports"],
+        "exam": member_config["exam"],
         "closed_capabilities": closed_capabilities,
     }
 
@@ -12263,6 +12395,7 @@ def enforce_inference_quota(kind: str, user: str, organization_id: str) -> None:
     dit « vous en avez trop demandé », le second « le moteur est plein ». Un
     poste qui confond les deux réessaie au mauvais moment.
     """
+    AI_PAYER.set(user)
     principal_burst, principal_sustained, tenant_burst, tenant_sustained = (
         INFERENCE_QUOTAS[kind]
     )
@@ -12553,10 +12686,13 @@ def requested_language(value: str | None) -> str | None:
 # Un tic n'est retiré que détaché par la ponctuation : « le genre du nom » et
 # « voilà la formule » restent.
 _FILLER = (r"(?:euh+|heu+|hum+|hm+|bah|ben|du coup|en fait|genre|comment dire|voil[àa]|tu vois|"
-           r"bon|enfin bref|en gros|ok,?\s+alors|ok|hein)")
+           r"bon|enfin bref|en gros|ok,?\s+alors|ok|hein|"
+           # Les mêmes, à l'anglaise (banc anglais du RTX, 05/11 : 87,5 % gardés).
+           r"uh+|um+|erm|you know|basically|like|kind of|sort of|okay,?\s+so|okay)")
 # « bah » n'a jamais de sens ; il restait au milieu d'une phrase (« Bernoulli
 # bah, s'applique ») : 252 dictées sur 3 000 du banc v2 (sondage du 17/10).
-_HESITATION_ANYWHERE = re.compile(r"\s*,?\s*\b(?:euh+|heu+|hum+|hm+|bah)\b\s*,?", re.IGNORECASE)
+_HESITATION_ANYWHERE = re.compile(r"\s*,?\s*\b(?:euh+|heu+|hum+|hm+|bah|uh+|um+|erm)\b\s*,?",
+                                  re.IGNORECASE)
 # Plusieurs tics à la suite, sans virgule devant le premier (« volets genre,
 # comment dire, hypersustentateurs »).
 _FILLER_CHAIN = re.compile(rf"(?<=\w)\s+(?:{_FILLER}\s*,\s*){{2,}}(?=\w)", re.IGNORECASE)
@@ -12927,6 +13063,10 @@ async def refined_transcription(audio: bytes, filename: str, transcript: str,
     audio_format = AUDIO_REFINE_FORMATS.get(Path(filename).suffix.lower().lstrip("."))
     if AUDIO_REFINER is None or audio_format is None or not transcript.strip():
         return transcript
+    payer = AI_PAYER.get()
+    if ai_local_only(payer):
+        # L'enveloppe d'IA est vide : la transcription locale reste (2.3).
+        return transcript
     terms = sorted({(replacement or term).strip() for term, replacement in vocabulary
                     if (replacement or term).strip()})[:AUDIO_REFINE_MAX_TERMS]
     global _audio_refine_down_until, _audio_refine_failures
@@ -12944,6 +13084,7 @@ async def refined_transcription(audio: bytes, filename: str, transcript: str,
                 _audio_refine_failures = 0
         return transcript
     _audio_refine_failures = 0
+    record_ai_spend(payer, {}, {}, eur=ai_envelope.refine_cost())
     if not refine_plausible(transcript, refined, terms):
         observability.log("transcription.refine_rejected", level="warning")
         return transcript
@@ -12953,6 +13094,7 @@ async def refined_transcription(audio: bytes, filename: str, transcript: str,
 async def transcribe_audio(
     file: UploadFile, user: str, task_type: TaskType, max_bytes: int,
     language: str | None = None, organization_id: str | None = None,
+    refine: bool = True,
 ) -> dict:
     """Shared speech service; authorization remains route-specific.
 
@@ -13012,7 +13154,7 @@ async def transcribe_audio(
         observability.log("transcription_vocabulary_unavailable", level="warning")
         vocabulary = []
     text = result.text
-    if dictated:
+    if dictated and refine:
         text = await refined_transcription(audio, file.filename or "audio.wav", text, vocabulary)
     return {"text": enforce_vocabulary(text, vocabulary)}
 
@@ -13052,6 +13194,8 @@ async def transcribe(
         file, user, TaskType.TRANSCRIPTION_REALTIME, MAX_TRANSCRIBE_AUDIO_BYTES,
         language=requested_language(language),
         organization_id=account_organization(account),
+        # En examen, pas de relecture de l'audio par une IA.
+        refine=not exam_active(member_policy(account)["settings"]),
     )
 
 
@@ -13091,10 +13235,13 @@ REWRITE_TASKS = frozenset({TaskType.REFORMULATION, TaskType.STYLE_TRANSFORM})
 
 
 async def execute_text(task_type: TaskType, instruction: str, text: str) -> str:
+    payer = AI_PAYER.get()
     try:
-        result = await ORGANIZATION_AI_ROUTER.generate(task_type, text, instruction)
+        result = await ORGANIZATION_AI_ROUTER.generate(
+            task_type, text, instruction, local_only=ai_local_only(payer))
     except AIRuntimeError as error:
         raise runtime_http_error(error, task_type) from error
+    record_ai_spend(payer, result.usage, result.backend)
     if task_type in REWRITE_TASKS and result.finish_reason == "length":
         raise RewriteTruncated()
     return result.text
@@ -13300,6 +13447,18 @@ SELF_CORRECTION_EXAMPLES: tuple[tuple[str, str], ...] = (
     ("je ne viendrai pas non vraiment pas", "je ne viendrai pas non vraiment pas"),
     ("la prof a dit non au voyage", "la prof a dit non au voyage"),
 )
+# Les mêmes tournures pour une dictée anglaise (1.7) : des exemples français
+# ne montraient pas au modèle ce que « wait » ou « I mean » retirent.
+SELF_CORRECTION_EXAMPLES_EN: tuple[tuple[str, str], ...] = (
+    ("meeting on monday no wait thursday at 10", "meeting on thursday at 10"),
+    ("call Paul I mean Sarah about the project", "call Sarah about the project"),
+    ("order two pizzas actually three pizzas", "order three pizzas"),
+    ("the lift coefficient is 0.3 sorry 0.5 at this angle",
+     "the lift coefficient is 0.5 at this angle"),
+    ("write the title in bold wait in italics", "write the title in italics"),
+    ("I am not coming no really not", "I am not coming no really not"),
+    ("the teacher said no to the trip", "the teacher said no to the trip"),
+)
 # Le passage s'ajoute au temps d'attente de l'élève : au-delà, on le laisse
 # tomber et le Style reçoit la dictée telle quelle. Un moteur bloqué ajoutait
 # sinon le délai complet d'une reformulation, 30 s, avant même le Style.
@@ -13420,11 +13579,13 @@ async def execute_text_with_examples(
     task_type: TaskType, instruction: str, text: str,
     examples: tuple[tuple[str, str], ...],
 ) -> str:
+    payer = AI_PAYER.get()
     try:
         result = await ORGANIZATION_AI_ROUTER.generate(
-            task_type, text, instruction, examples=examples)
+            task_type, text, instruction, examples=examples, local_only=ai_local_only(payer))
     except AIRuntimeError as error:
         raise runtime_http_error(error, task_type) from error
+    record_ai_spend(payer, result.usage, result.backend)
     if result.finish_reason == "length":
         raise RewriteTruncated()
     return result.text
@@ -13491,8 +13652,9 @@ async def resolve_self_corrections(text: str) -> str:
     text = resolve_simple_repairs(text)
     if not has_self_correction_hint(text):
         return text
-    examples = tuple(
-        (transcript_message(example), answer) for example, answer in SELF_CORRECTION_EXAMPLES)
+    pairs = (SELF_CORRECTION_EXAMPLES_EN if dictation_language(text) == "en"
+             else SELF_CORRECTION_EXAMPLES)
+    examples = tuple((transcript_message(example), answer) for example, answer in pairs)
     try:
         answer = await asyncio.wait_for(
             execute_text_with_examples(
@@ -14556,7 +14718,11 @@ async def reformulate(body: ReformulateRequest, user: str = Depends(current_user
     # ses snippets et son vocabulaire -- jamais un declencheur a la place.
     fallback = {"text": restore_snippets(
         enforce_vocabulary(source_text, vocabulary), snippet_restores) or body.text}
-    cap = member_policy(account)["settings"]["daily_rewrites_per_member"]
+    settings = member_policy(account)["settings"]
+    # En examen, la dictee revient telle quelle : aucune IA n'ecrit pour l'eleve.
+    if exam_active(settings):
+        return {**fallback, "exam": True}
+    cap = settings["daily_rewrites_per_member"]
     if cap and rewrites_today(user) >= cap:
         observability.log("reformulation.daily_cap", level="info")
         return {**fallback, "capped": True}
@@ -15855,6 +16021,7 @@ async def learning_exercise_feedback(exercise_id: str,
     text = clean_required(body.text, "text", learning.MAX_EXERCISE_INPUT)
     enforce_rate_limit("principal", hash_token(user), ratelimit.LEARNING_EXERCISE,
                        "LEARNING_RATE_LIMITED")
+    AI_PAYER.set(user)
     try:
         feedback = await execute_text(TaskType.LEARNING_FEEDBACK,
                                       item["instruction"], text)
@@ -16192,12 +16359,15 @@ def usage_summary(timeline: list[dict]) -> dict:
 # ce que le serveur garde déjà : le détail horaire (90 jours) pour les
 # semaines, la trace mensuelle (2 ans) pour les mois.
 #
-# Une semaine ou un mois où une ou deux personnes seulement ont dicté est
-# masqué. Quand on sait qui fait partie d'un pilote, « 1 personne, 40
+# Une semaine ou un mois où moins de cinq personnes ont dicté est masqué
+# (2.4). Quand on sait qui fait partie d'un pilote, « 1 personne, 40
 # dictées » est l'usage de cette personne.
 
 ADOPTION_WEEKS = 12
-ADOPTION_MIN_PEOPLE = 3
+ADOPTION_MIN_PEOPLE = 5
+# Continuer après un mois : avoir commencé il y a plus de 30 jours et avoir
+# dicté dans les 30 derniers.
+ADOPTION_RETENTION_DAYS = 30
 # Trois jours de dictée dans la semaine : une personne qui revient, et non un
 # essai isolé.
 ADOPTION_REGULAR_DAYS = 3
@@ -16274,6 +16444,14 @@ def adoption_report(now: float | None = None) -> dict:
         ).fetchall()
         first_hour = conn.execute("SELECT MIN(hour) FROM usage_hourly").fetchone()[0]
         first_month = conn.execute("SELECT MIN(month) FROM usage_monthly").fetchone()[0]
+        first_seen = conn.execute(
+            """SELECT email, MIN(day) AS day FROM (
+                   SELECT email, substr(hour, 1, 10) AS day FROM usage_hourly
+                   UNION ALL SELECT email, month || '-01' FROM usage_monthly)
+               GROUP BY email"""
+        ).fetchall()
+        survey = conn.execute(
+            "SELECT month, total, answers FROM survey_scores ORDER BY month").fetchall()
 
     # Le premier jour mesuré. Un mois replié l'a été en entier : il compte dès
     # son premier jour. Sans aucune ligne, rien n'est mesuré.
@@ -16320,9 +16498,28 @@ def adoption_report(now: float | None = None) -> dict:
             sum(1 for days in week["days"].values() if len(days) >= ADOPTION_REGULAR_DAYS),
             week["t"], week["r"], week["a"], partial=start < measured_from)}
 
+    window = time.strftime("%Y-%m-%d", time.gmtime(stamp - ADOPTION_RETENTION_DAYS * 86400))
+    started = {row["email"] for row in first_seen if row["day"] < window}
+    continuing = started & {row["email"] for row in hours if row["hour"][:10] >= window}
+    retention_masked = len(started) < ADOPTION_MIN_PEOPLE
+
     return {
         "min_people": ADOPTION_MIN_PEOPLE,
         "regular_days": ADOPTION_REGULAR_DAYS,
+        "retention": {
+            "days": ADOPTION_RETENTION_DAYS,
+            "started": None if retention_masked else len(started),
+            "continuing": None if retention_masked else len(continuing),
+            "masked": retention_masked,
+        },
+        # Une moyenne seulement, et pas en dessous de cinq réponses.
+        "survey": [
+            {"month": row["month"],
+             "answers": row["answers"] if row["answers"] >= ADOPTION_MIN_PEOPLE else None,
+             "average": round(row["total"] / row["answers"], 1)
+             if row["answers"] >= ADOPTION_MIN_PEOPLE else None}
+            for row in survey
+        ],
         "measured_from": measured_from,
         # Un compte par version, sans masquage : une version ne dit rien de
         # la personne, et la DSI doit voir le dernier poste en retard.
@@ -16342,19 +16539,97 @@ def adoption_report(now: float | None = None) -> dict:
     }
 
 
-@app.get("/api/control/organization/licence")
-def control_read_licence(
+# ──────────────── L'abonnement, pour la direction (2.1, 2.2) ────────────────
+#
+# Le palier vient de la licence signée ; les personnes actives, de l'usage
+# déjà compté. Des comptes, jamais de noms. Approcher ou dépasser le palier
+# ne bloque personne : la console prévient, l'école et l'éditeur en parlent.
+
+SUBSCRIPTION_NEAR_LIMIT = 0.9
+
+
+def tier_seats(tier: str) -> int | None:
+    """« 151-250 » → 250 : le palier se lit par sa borne haute."""
+    numbers = re.findall(r"\d+", tier or "")
+    return int(numbers[-1]) if numbers else None
+
+
+def subscription_report(now: float | None = None) -> dict:
+    stamp = time.time() if now is None else now
+    state = licence.licence_state(NOVA_LICENCE, stamp)
+    month = time.strftime("%Y-%m", time.gmtime(stamp))
+    # L'année de l'abonnement quand la licence la donne, l'année civile sinon.
+    year_from = state.get("starts") or time.strftime("%Y-01-01", time.gmtime(stamp))
+    with db() as conn:
+        def people(since_day: str) -> int:
+            return conn.execute(
+                """SELECT COUNT(*) FROM (
+                       SELECT email FROM usage_hourly WHERE hour >= ?
+                       UNION SELECT email FROM usage_monthly WHERE month >= ?) AS active""",
+                (f"{since_day}T00", since_day[:7]),
+            ).fetchone()[0]
+
+        active_month = people(f"{month}-01")
+        active_year = people(year_from)
+    seats = tier_seats(state.get("tier", "")) if state["status"] != "invalid" else None
+    envelope = ai_envelope_state(now)
+    return {
+        "licence": state,
+        "active_month": active_month,
+        "active_year": active_year,
+        "year_from": year_from,
+        "seats": seats,
+        "near_limit": bool(seats) and active_month >= SUBSCRIPTION_NEAR_LIMIT * seats,
+        "over_limit": bool(seats) and active_month > seats,
+        "renewal_reminder": state["status"] in ("warning", "grace", "expired"),
+        "ai_envelope": envelope and {k: v for k, v in envelope.items() if k != "mine_over"},
+    }
+
+
+@app.get("/api/control/organization/subscription")
+def control_read_subscription(
     principal: AdminPrincipal = Depends(
         require_admin_capability(CAPABILITY_DIAGNOSTICS_READ)
     ),
 ):
-    """L'état de la licence de l'école : palier, dates, échéance (2.1)."""
-    return licence.licence_state(NOVA_LICENCE)
+    """Palier, dates, personnes actives face au palier, échéance."""
+    return subscription_report()
 
 
 def newest_versions_first(versions: list[dict]) -> list[dict]:
     return sorted(versions, reverse=True,
                   key=lambda entry: tuple(int(part) for part in entry["version"].split(".")))
+
+
+SURVEY_SCORES = range(1, 6)
+
+
+def record_survey_answer(email: str, score: int, now: float | None = None) -> None:
+    """Compte une réponse au mini-sondage, une fois par personne et par mois."""
+    if score not in SURVEY_SCORES:
+        raise ValueError("score")
+    month = time.strftime("%Y-%m", time.gmtime(time.time() if now is None else now))
+    with db() as conn:
+        first = conn.execute(
+            "INSERT INTO survey_answered(email, month) VALUES (?,?) ON CONFLICT DO NOTHING",
+            (email, month)).rowcount
+        if first:
+            conn.execute(
+                """INSERT INTO survey_scores(month, total, answers) VALUES (?,?,1)
+                   ON CONFLICT(month) DO UPDATE SET total = survey_scores.total + excluded.total,
+                       answers = survey_scores.answers + 1""",
+                (month, score))
+
+
+class SurveyAnswer(BaseModel):
+    score: int = Field(ge=1, le=5)
+
+
+@app.post("/api/survey")
+def answer_survey(body: SurveyAnswer, user: str = Depends(current_user)):
+    """Le mini-sondage du pilote (2.4) : une note de 1 à 5, sans nom."""
+    record_survey_answer(user, body.score)
+    return {"ok": True}
 
 
 @app.get("/api/control/organization/adoption")
@@ -16411,14 +16686,74 @@ def control_read_usage_metrics(
     return payload
 
 
+# Une version de poste devient une etiquette seulement si elle en a la forme.
+_APP_VERSION = re.compile(r"^\d{1,3}\.\d{1,3}\.\d{1,4}$")
+# Une version vue dans les trente derniers jours : un poste parti ne compte plus.
+METRICS_VERSION_WINDOW_SECONDS = 30 * 86400
+
+
+def business_metrics() -> list[tuple[str, str, dict[str, str], float]]:
+    """Les jauges metier de Prometheus (point 5.1) : des comptes, sans nom.
+
+    Actifs du mois (adresses distinctes de `usage_hourly`, jamais listees),
+    versions installees, palier et echeance de la licence.
+    """
+    month = time.strftime("%Y-%m")
+    since = time.time() - METRICS_VERSION_WINDOW_SECONDS
+    with db() as conn:
+        active = conn.execute(
+            "SELECT COUNT(DISTINCT email) AS n FROM usage_hourly WHERE hour >= ?",
+            (f"{month}-01T00",)).fetchone()["n"]
+        rows = conn.execute(
+            "SELECT app_version AS version, COUNT(*) AS n FROM users "
+            "WHERE app_version IS NOT NULL AND last_seen >= ? GROUP BY app_version",
+            (since,)).fetchall()
+    versions: dict[str, int] = {}
+    for row in rows:
+        version = row["version"] if _APP_VERSION.match(row["version"] or "") else "other"
+        versions[version] = versions.get(version, 0) + row["n"]
+    state = licence.licence_state(NOVA_LICENCE)
+    series = [("nova_active_users", "Personnes ayant dicte ou reformule ce mois-ci.",
+               {"period": "month"}, active)]
+    series += [("nova_app_versions", "Postes vus en 30 jours, par version installee.",
+                {"version": version}, count) for version, count in sorted(versions.items())]
+    series.append(("nova_licence_info", "Palier et statut de la licence (1).",
+                   {"tier": observability.label_value(state.get("tier") or "none"),
+                    "status": observability.label_value(state["status"])}, 1))
+    if "days_left" in state:
+        series.append(("nova_licence_days_left", "Jours avant l'echeance de la licence.",
+                       {}, state["days_left"]))
+    return series
+
+
 @app.get("/api/metrics")
-def metrics_endpoint():
+def metrics_endpoint(authorization: str = Header(default="")):
     """Exposition Prometheus.
 
     Aucune etiquette ne porte d'identifiant : ni utilisateur, ni organisation,
     ni parc, ni connecteur. Une metrique etiquetee par identifiant fabrique une
     serie par identifiant — et publie la liste au passage.
+
+    La route est joignable depuis Internet sur un serveur d'ecole. Sans
+    `NOVA_METRICS_TOKEN`, elle rend ses seules series techniques, comme avant.
+    Avec lui, elle exige ce jeton et ajoute les series metier (point 5.1).
     """
+    # Valeur ou reference (`file:///run/secrets/...`), comme les autres secrets.
+    reference = os.getenv("NOVA_METRICS_TOKEN", "").strip()
+    try:
+        expected = (secrets_provider.resolve_value(reference) or "").strip()
+    except secrets_provider.SecretError as error:
+        # Un jeton configure mais illisible ferme la route : ouvrir les series
+        # metier sans jeton serait pire qu'un tableau de bord vide.
+        observability.log("metrics.token_unreadable", level="warning", code=error.code)
+        expected = None
+    business = None
+    if reference:
+        given = authorization.removeprefix("Bearer ").strip()
+        if not expected or not hmac.compare_digest(given.encode(), expected.encode()):
+            return PlainTextResponse("unauthorized\n", status_code=401,
+                                     headers={"WWW-Authenticate": "Bearer"})
+        business = business_metrics()
     pool = database_handle().pool_stats
     gauges = {
         "db_pool_idle": pool["idle"],
@@ -16427,6 +16762,6 @@ def metrics_endpoint():
         "rate_limiter_shared": 1 if rate_limiter().shared else 0,
     }
     return PlainTextResponse(
-        observability.METRICS.render(gauges),
+        observability.METRICS.render(gauges, business),
         media_type="text/plain; version=0.0.4; charset=utf-8",
     )

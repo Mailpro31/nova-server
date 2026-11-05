@@ -1,0 +1,86 @@
+{
+  "uid": "nova-cost",
+  "title": "Nova — coût",
+  "description": "Jetons d'IA par tâche et par école. Le coût en euros arrive avec l'enveloppe d'IA (2.3).",
+  "tags": [
+    "nova"
+  ],
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "school",
+        "label": "École",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "nova-prometheus"
+        },
+        "query": "label_values(up, school)",
+        "includeAll": true,
+        "multi": true,
+        "current": {}
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Jetons par tâche, par jour",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nova-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (task, kind) (increase(nova_ai_tokens_total{school=~\"$school\"}[1d]))",
+          "legendFormat": "{{task}} {{kind}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nova-prometheus"
+          }
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Jetons sur 30 jours, par école",
+      "type": "bargauge",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nova-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (school) (increase(nova_ai_tokens_total{school=~\"$school\"}[30d]))",
+          "legendFormat": "{{school}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nova-prometheus"
+          }
+        }
+      ]
+    }
+  ]
+}

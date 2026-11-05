@@ -252,6 +252,9 @@ export const fr: Messages = {
     roleReadOnlyHint: "Consulte la console. Ne modifie rien.",
     roleContentEditorHint:
       "Gère le contenu : leçons Learn, Styles, Prompts et vocabulaire. Pas d’accès aux membres, à la sécurité ni aux règles.",
+    roleAccessManager: "Gestion des accès",
+    roleAccessManagerHint:
+      "Ouvre Nova à des personnes en les ajoutant à des groupes, par exemple la mission handicap. Pas d’accès aux réglages, à la sécurité ni aux administrateurs.",
     roleMemberHint: "Utilise Nova, n’administre rien.",
     changeRole: "Changer le rôle",
     removeAccess: "Retirer l’accès d’administration",
@@ -346,6 +349,8 @@ export const fr: Messages = {
   },
 
   groups: {
+    medicalName:
+      "Ce nom peut révéler une situation de santé (dys, handicap, aménagements…). Les membres d'un groupe visible voient son nom, et en faire partie dévoile une donnée de santé. Préférez un nom neutre, comme celui du service d'accompagnement.",
     title: "Groupes",
     lead: "Les groupes servent à cibler des leçons et à changer des réglages pour une partie de l’organisation. Créez les vôtres ici ; ceux de votre annuaire apparaissent aussi.",
     create: "Créer le groupe",
@@ -875,6 +880,9 @@ export const fr: Messages = {
       "La fermer masque la catégorie. Son contenu reste sur le poste de chaque membre et n’est jamais envoyé à l’organisation.",
     aiSkillsTitle: "AI Skills",
     aiSkillsBody: "Permet aux membres d’utiliser les AI Skills dans Nova.",
+    crashReportsTitle: "Rapports de plantage",
+    crashReportsBody:
+      "Quand Nova plante sur un poste, l’éditeur reçoit l’endroit du code où c’est arrivé. Jamais une dictée, un nom ni le nom de l’ordinateur.",
     vocabularyTitle: "Vocabulaire de l’organisation",
     vocabularyBody:
       "Permet aux membres d’utiliser le vocabulaire et le dictionnaire fournis par cette organisation.",
@@ -943,11 +951,56 @@ export const fr: Messages = {
     notMeasuredYet: "Rien n’a encore été mesuré sur ce serveur.",
     empty: "Aucune dictée enregistrée pour l’instant.",
     exportCsv: "Exporter le rapport (CSV)",
+    exportPdf: "Imprimer ou enregistrer en PDF",
+    retentionTitle: "Toujours sur Nova après un mois",
+    retention: (continuing: number, started: number, days: number) =>
+      `${continuing} des ${started} personnes qui ont commencé il y a plus de ${days} jours ont dicté ces ${days} derniers jours.`,
+    surveyTitle: "Mini-sondage dans l’application",
+    surveyLead: (min: number) =>
+      `Les membres notent de 1 à 5 l’aide que Nova leur apporte, une fois par mois au plus. Seule la moyenne est gardée, jamais qui a répondu quoi, et elle reste masquée sous ${min} réponses.`,
+    surveyAverage: "Moyenne",
+    surveyAnswers: "Réponses",
+    noSurvey: "Aucune réponse au sondage pour l’instant.",
     versions: "Versions installées",
     versionsLead: (days: number) =>
       `Les personnes vues ces ${days} derniers jours, selon la version de Nova de leur poste. Un poste en retard se met à jour seul ; cette liste montre ceux qui ne l'ont pas encore fait.`,
     version: "Version",
     noVersions: "Aucun poste n'a encore envoyé sa version.",
+  },
+  subscription: {
+    title: "Abonnement",
+    description:
+      "Ce que votre établissement a souscrit, et combien de personnes utilisent Nova face à votre palier. Des nombres seulement, jamais de noms. Rien n'est jamais bloqué : ces avertissements servent à anticiper.",
+    none: "Aucune licence n'est installée sur ce serveur. Nova fonctionne normalement ; l'éditeur vous envoie la ligne de licence à ajouter à la configuration du serveur (NOVA_LICENCE).",
+    kind: "Type",
+    kinds: { pilot: "Pilote", subscription: "Abonnement" },
+    tier: "Palier",
+    period: "Période",
+    periodValue: (starts: string, ends: string) => `du ${starts} au ${ends}`,
+    daysLeft: "Jours restants",
+    activeMonth: "Personnes actives ce mois-ci",
+    activeYear: (since: string) => `Personnes actives depuis le ${since}`,
+    gauge: (active: number, seats: number) => `${active} personnes sur ${seats} dans votre palier ce mois-ci`,
+    alerts: {
+      warning: (days: number) => `La licence se termine dans ${days} jours. Contactez l'éditeur pour la renouveler.`,
+      grace: (days: number) =>
+        `La licence est terminée. Tout fonctionne encore ${days} jours ; ensuite, la bulle de sélection, Nova Commands et les AI Skills se mettent en pause. La dictée ne s'arrête jamais.`,
+      expired:
+        "La licence est terminée et son délai de grâce est passé : la bulle de sélection, Nova Commands et les AI Skills sont en pause. La dictée et les Styles fonctionnent.",
+      invalid:
+        "La licence installée n'a pas pu être vérifiée. Rien n'est bloqué ; demandez une nouvelle ligne de licence à l'éditeur.",
+      nearLimit: "Vous approchez du nombre de personnes de votre palier. Rien n'est bloqué ; parlez-en à l'éditeur avant le palier suivant.",
+      overLimit: "Plus de personnes utilisent Nova ce mois-ci que votre palier n'en couvre. Rien n'est bloqué ; parlez à l'éditeur du palier suivant.",
+      envelopeNear:
+        "80 % de l'enveloppe d'IA ouverte à ce jour est dépensée. Ce qui n'est pas dépensé se reporte ; une fois l'enveloppe vide, la dictée passe sur l'IA locale de l'école et la bulle se met en pause jusqu'au mois suivant.",
+      envelopeEmpty:
+        "L'enveloppe d'IA ouverte à ce jour est dépensée. La dictée continue sur l'IA locale de l'école ; la bulle de sélection et Nova Commands sont en pause jusqu'au mois suivant. L'éditeur peut la recharger par une nouvelle ligne de licence.",
+    },
+    envelopeAnnual: "Enveloppe d'IA du contrat",
+    envelopeOpen: "Ouvert à ce jour (report compris)",
+    envelopeSpent: "Dépensé à ce jour",
+    envelopeMonth: "Dépensé ce mois-ci",
+    envelopeGauge: (percent: number) => `${percent} % de l'enveloppe d'IA ouverte à ce jour`,
   },
   limits: {
     title: "Limites",
@@ -979,6 +1032,17 @@ export const fr: Messages = {
       whole: "Utilisez un nombre entier.",
       range: "Le plafond doit être compris entre 0 et 10 000.",
     },
+    retentionTitle: "Dictées passées gardées sur chaque poste",
+    retentionBehaviour:
+      "Les dictées sont rangées sur le poste de chaque membre, jamais sur le serveur. Au-delà de ce nombre de jours, Nova les efface du poste, dictées gardées comprises. 0 laisse chacun choisir.",
+    retentionField: "Jours de conservation (0 = au choix de chacun)",
+    retentionValue: (days: number) =>
+      days === 0 ? "Au choix de chacun" : days === 1 ? "1 jour" : `${days} jours`,
+    retentionProblems: {
+      empty: "Saisissez un nombre.",
+      whole: "Utilisez un nombre entier.",
+      range: "Le nombre de jours doit être compris entre 0 et 3 650.",
+    },
   },
 
   styles: {
@@ -1004,6 +1068,16 @@ export const fr: Messages = {
       count === 1 ? "1 réglage changé pour ce groupe" : `${count} réglages changés pour ce groupe`,
     edit: "Modifier",
     view: "Voir",
+    examTitle: "Mode examen",
+    examBody:
+      "Les membres de ce groupe n’ont plus que la dictée : ni IA, ni bulle, ni dictées passées, ni import de fichiers. Tout rouvre à l’heure prévue. Enregistrez pour appliquer.",
+    examOff: "Aucun examen en cours",
+    examRunning: (end: Date) =>
+      `Examen en cours jusqu’à ${end.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}`,
+    examStart: "Lancer un examen…",
+    examChange: "Changer la fin…",
+    examHours: (hours: number) => (hours === 1 ? "Pendant 1 heure" : `Pendant ${hours} heures`),
+    examStop: "Arrêter l’examen maintenant",
     close: "Fermer",
     inherit: "Suivre l’organisation",
     on: "Activé pour ce groupe",

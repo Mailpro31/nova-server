@@ -1,0 +1,70 @@
+// L'agent du panel de l'éditeur (5.3), côté école. Coupé par défaut : il ne
+// démarre qu'avec `docker compose --profile panel`, quand le contrat le prévoit.
+//
+// Ce qui part : les chiffres de `/api/metrics` (comptes, durées, versions ; aucun
+// nom, aucun texte) et les journaux d'avertissement et d'erreur du seul service
+// `api`, déjà caviardés par `observability`. Jamais les journaux de `llm` ou de
+// `whisper` : vLLM y écrit les requêtes, consignes comprises.
+
+prometheus.scrape "nova" {
+  targets         = [{"__address__" = "api:8000"}]
+  metrics_path    = "/api/metrics"
+  scrape_interval = "60s"
+  authorization {
+    type        = "Bearer"
+    credentials = sys.env("NOVA_METRICS_TOKEN")
+  }
+  forward_to = [prometheus.remote_write.panel.receiver]
+}
+
+prometheus.remote_write "panel" {
+  external_labels = {"school" = sys.env("NOVA_PANEL_SCHOOL")}
+  endpoint {
+    url = sys.env("NOVA_PANEL_PROMETHEUS_URL")
+  }
+}
+
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+}
+
+discovery.relabel "api_only" {
+  targets = discovery.docker.containers.targets
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    regex         = "api"
+    action        = "keep"
+  }
+}
+
+loki.source.docker "api" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.api_only.output
+  forward_to = [loki.process.errors_only.receiver]
+}
+
+loki.process "errors_only" {
+  // Une ligne qui n'est pas un événement JSON de Nova (accès HTTP, sortie
+  // d'une bibliothèque) ne part pas.
+  stage.drop {
+    expression = "^[^{]"
+  }
+  stage.json {
+    expressions = {"level" = "level", "event" = "event"}
+  }
+  stage.drop {
+    source     = "level"
+    expression = "^(debug|info)$"
+  }
+  stage.labels {
+    values = {"level" = ""}
+  }
+  forward_to = [loki.write.panel.receiver]
+}
+
+loki.write "panel" {
+  external_labels = {"school" = sys.env("NOVA_PANEL_SCHOOL")}
+  endpoint {
+    url = sys.env("NOVA_PANEL_LOKI_URL")
+  }
+}
