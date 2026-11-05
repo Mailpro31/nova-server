@@ -22,6 +22,9 @@ function alertText(alert: ReturnType<typeof subscriptionAlerts>[number], report:
   }
 }
 
+const euros = (value: number) =>
+  value.toLocaleString(undefined, { style: "currency", currency: "EUR" });
+
 export function Subscription() {
   const { control } = useSession();
   const [state, retry] = useResource<SubscriptionReport>(
@@ -62,6 +65,27 @@ export function Subscription() {
                   [t.subscription.activeYear(report.year_from), String(report.active_year)],
                 ]}
               />
+              {report.ai_envelope && (
+                <>
+                  <Facts
+                    entries={[
+                      [t.subscription.envelopeAnnual, euros(report.ai_envelope.annual_eur)],
+                      [t.subscription.envelopeOpen, euros(report.ai_envelope.allowance_eur)],
+                      [t.subscription.envelopeSpent, euros(report.ai_envelope.spent_eur)],
+                      [t.subscription.envelopeMonth, euros(report.ai_envelope.month_eur)],
+                    ]}
+                  />
+                  <meter
+                    min={0}
+                    max={100}
+                    high={80}
+                    value={Math.min(report.ai_envelope.percent, 100)}
+                    aria-label={t.subscription.envelopeGauge(report.ai_envelope.percent)}
+                    style={{ width: "100%" }}
+                  />
+                  <p>{t.subscription.envelopeGauge(report.ai_envelope.percent)}</p>
+                </>
+              )}
               {report.seats !== null && (
                 <>
                   <meter

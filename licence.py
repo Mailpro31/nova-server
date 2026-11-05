@@ -59,13 +59,17 @@ def new_key_pair() -> tuple[str, str]:
 
 
 def issue(private_pem: str, *, organization: str, tier: str, kind: str,
-          starts: str, ends: str) -> str:
+          starts: str, ends: str, ai_envelope_eur: float | None = None) -> str:
     if kind not in KINDS:
         raise ValueError(f"kind must be one of {KINDS}")
     if day_stamp(ends) < day_stamp(starts):
         raise ValueError("ends before starts")
     claims = {"organization": organization, "tier": tier, "kind": kind,
               "starts": starts, "ends": ends}
+    if ai_envelope_eur is not None:
+        if ai_envelope_eur < 0:
+            raise ValueError("ai_envelope_eur must be positive")
+        claims["ai_envelope_eur"] = ai_envelope_eur
     return jwt.encode(claims, private_pem, algorithm="EdDSA")
 
 
@@ -84,6 +88,9 @@ def licence_state(token: str, now: float | None = None,
         claims = jwt.decode(token, public_pem or PUBLIC_KEY_PEM, algorithms=["EdDSA"])
         fields = {name: str(claims[name]) for name in FIELDS}
         end = day_stamp(fields["ends"]) + DAY  # la licence couvre son dernier jour
+        # L'enveloppe d'IA (2.3), en euros ; absente, aucune enveloppe ne s'applique.
+        envelope = claims.get("ai_envelope_eur")
+        fields["ai_envelope_eur"] = float(envelope) if envelope is not None else None
     except (jwt.PyJWTError, KeyError, ValueError, TypeError):
         return {"status": "invalid", "degraded": False}
     left = end - (time.time() if now is None else now)
@@ -109,6 +116,7 @@ def _cli(argv: list[str]) -> int:
     for name in ("organization", "tier", "starts", "ends"):
         make.add_argument(f"--{name}", required=True)
     make.add_argument("--kind", required=True, choices=KINDS)
+    make.add_argument("--ai-envelope-eur", type=float, help="enveloppe d'IA du contrat, en euros")
     args = parser.parse_args(argv)
 
     if args.command == "keygen":
@@ -123,7 +131,7 @@ def _cli(argv: list[str]) -> int:
         return 0
     print(issue(args.private_key_file.read_text(encoding="utf-8"),
                 organization=args.organization, tier=args.tier, kind=args.kind,
-                starts=args.starts, ends=args.ends))
+                starts=args.starts, ends=args.ends, ai_envelope_eur=args.ai_envelope_eur))
     return 0
 
 

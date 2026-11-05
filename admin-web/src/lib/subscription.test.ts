@@ -11,11 +11,28 @@ const REPORT: SubscriptionReport = {
   near_limit: false,
   over_limit: false,
   renewal_reminder: false,
+  ai_envelope: null,
+};
+
+const ENVELOPE = {
+  annual_eur: 100,
+  allowance_eur: 30,
+  spent_eur: 25,
+  month_eur: 4,
+  percent: 83,
+  empty: false,
 };
 
 describe("subscriptionAlerts", () => {
   test("rien à signaler", () => {
     expect(subscriptionAlerts(REPORT)).toEqual([]);
+  });
+
+  test("l'enveloppe d'IA alerte à 80 % puis vide", () => {
+    expect(subscriptionAlerts({ ...REPORT, ai_envelope: ENVELOPE })).toEqual(["envelopeNear"]);
+    expect(
+      subscriptionAlerts({ ...REPORT, ai_envelope: { ...ENVELOPE, percent: 100, empty: true } }),
+    ).toEqual(["envelopeEmpty"]);
   });
 
   test("l'échéance passe avant la jauge", () => {

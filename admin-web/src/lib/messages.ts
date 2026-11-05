@@ -1008,7 +1008,16 @@ const en = {
         "The installed licence could not be verified. Nothing is blocked; ask your provider for a new licence line.",
       nearLimit: "You are close to the number of people in your tier. Nothing is blocked; talk to your provider before the next tier.",
       overLimit: "More people use Nova this month than your tier covers. Nothing is blocked; talk to your provider about the next tier.",
+      envelopeNear:
+        "80% of the AI budget open so far is spent. Unspent months carry over; when it runs out, dictation switches to the school's local AI and the selection bubble pauses until next month.",
+      envelopeEmpty:
+        "The AI budget open so far is spent. Dictation keeps working on the school's local AI; the selection bubble and Nova Commands pause until next month. Your provider can top it up with a new licence line.",
     },
+    envelopeAnnual: "AI budget in the contract",
+    envelopeOpen: "Open so far (unspent months carry over)",
+    envelopeSpent: "Spent so far",
+    envelopeMonth: "Spent this month",
+    envelopeGauge: (percent: number) => `${percent}% of the AI budget open so far`,
   },
   limits: {
     title: "Limits",

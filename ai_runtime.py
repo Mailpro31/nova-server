@@ -17,7 +17,7 @@ import socket
 import subprocess
 import time
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from enum import Enum
 from pathlib import Path
 from typing import Any, Protocol
@@ -993,7 +993,9 @@ class OrganizationAIRouter:
         request_id: str | None = None,
         options: TextInferenceOptions | None = None,
         examples: tuple[tuple[str, str], ...] = (),
+        local_only: bool = False,
     ) -> TextInferenceResult:
+        """`local_only` : l'enveloppe d'IA est vide, seul le moteur local sert."""
         if task_type not in TEXT_TASKS:
             raise AIRuntimeError(AI_RUNTIME_CONFIG_INVALID)
         timeout = TEXT_TIMEOUTS[task_type]
@@ -1006,7 +1008,11 @@ class OrganizationAIRouter:
             timeout,
             examples,
         )
-        primary_down = time.monotonic() < self._text_down_until
+        primary_down = time.monotonic() < self._text_down_until or (
+            local_only and self.fallback_text_backend is not None)
+        if local_only and self.fallback_text_backend is None:
+            # Sans moteur local, rien ne part : l'enveloppe n'est jamais dépassée.
+            raise AIRuntimeError(AI_RUNTIME_UNAVAILABLE)
         if primary_down and self.fallback_text_backend is None:
             raise AIRuntimeError(AI_RUNTIME_UNAVAILABLE)
         await self.text_capacity.acquire()
@@ -1034,7 +1040,9 @@ class OrganizationAIRouter:
             else:
                 # Chaque requête servie par le secours se compte (RTX, 17/10).
                 observability.log("ai.text_fallback", level="warning", reason="primary_set_aside")
-            return await self._generate_with(self.fallback_text_backend, request, timeout)
+            result = await self._generate_with(self.fallback_text_backend, request, timeout)
+            # Le moteur local ne coûte rien à l'enveloppe d'IA.
+            return replace(result, backend={**result.backend, "fallback": True})
         finally:
             await self.text_capacity.release()
 

@@ -973,7 +973,16 @@ export const fr: Messages = {
         "La licence installée n'a pas pu être vérifiée. Rien n'est bloqué ; demandez une nouvelle ligne de licence à l'éditeur.",
       nearLimit: "Vous approchez du nombre de personnes de votre palier. Rien n'est bloqué ; parlez-en à l'éditeur avant le palier suivant.",
       overLimit: "Plus de personnes utilisent Nova ce mois-ci que votre palier n'en couvre. Rien n'est bloqué ; parlez à l'éditeur du palier suivant.",
+      envelopeNear:
+        "80 % de l'enveloppe d'IA ouverte à ce jour est dépensée. Ce qui n'est pas dépensé se reporte ; une fois l'enveloppe vide, la dictée passe sur l'IA locale de l'école et la bulle se met en pause jusqu'au mois suivant.",
+      envelopeEmpty:
+        "L'enveloppe d'IA ouverte à ce jour est dépensée. La dictée continue sur l'IA locale de l'école ; la bulle de sélection et Nova Commands sont en pause jusqu'au mois suivant. L'éditeur peut la recharger par une nouvelle ligne de licence.",
     },
+    envelopeAnnual: "Enveloppe d'IA du contrat",
+    envelopeOpen: "Ouvert à ce jour (report compris)",
+    envelopeSpent: "Dépensé à ce jour",
+    envelopeMonth: "Dépensé ce mois-ci",
+    envelopeGauge: (percent: number) => `${percent} % de l'enveloppe d'IA ouverte à ce jour`,
   },
   limits: {
     title: "Limites",

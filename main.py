@@ -49,6 +49,8 @@ import deployment
 import google_directory
 import group_rules
 import migrations
+import ai_envelope
+import contextvars
 import licence
 import observability
 import production_config
@@ -3128,6 +3130,80 @@ def refuse_when_licence_degraded(capability: str | tuple[str, ...], feature: str
         raise HTTPException(403, {"code": "LICENCE_EXPIRED", "feature": feature})
 
 
+# Qui paie l'appel d'IA en cours : posé par la route (`enforce_inference_quota`),
+# lu par les circuits partagés avec le banc, qui ne connaissent pas l'élève.
+AI_PAYER: contextvars.ContextVar[str | None] = contextvars.ContextVar("AI_PAYER", default=None)
+
+# La bulle et les Commandes se mettent en pause quand l'enveloppe d'IA est vide ;
+# la dictée continue, sur le moteur local (2.3).
+AI_ENVELOPE_PAUSED_CAPABILITIES = frozenset({"commands", "selectionBubble"})
+
+
+def ai_envelope_state(now: float | None = None, email: str | None = None) -> dict | None:
+    """L'enveloppe d'IA du contrat, ou `None` si la licence n'en porte pas ou
+    si l'exploitant n'a pas renseigné de prix. Des totaux, jamais de noms."""
+    state = licence.licence_state(NOVA_LICENCE, now)
+    annual = state.get("ai_envelope_eur")
+    if annual is None or not ai_envelope.priced():
+        return None
+    now = time.time() if now is None else now
+    month = ai_envelope.month_of(now)
+    with db() as conn:
+        spent = conn.execute("SELECT COALESCE(SUM(eur), 0) FROM ai_spend WHERE month >= ?",
+                             (state["starts"][:7],)).fetchone()[0]
+        month_eur = conn.execute("SELECT COALESCE(SUM(eur), 0) FROM ai_spend WHERE month = ?",
+                                 (month,)).fetchone()[0]
+        mine = conn.execute(
+            "SELECT COALESCE(SUM(eur), 0) FROM ai_spend WHERE month = ? AND email = ?",
+            (month, email or "")).fetchone()[0]
+    allowance = ai_envelope.allowance(annual, state["starts"], state["ends"], now)
+    share = ai_envelope.month_share(annual, state["starts"], state["ends"])
+    return {
+        "annual_eur": annual,
+        "allowance_eur": round(allowance, 2),
+        "spent_eur": round(spent, 2),
+        "month_eur": round(month_eur, 3),
+        "percent": round(100 * spent / allowance) if allowance > 0 else 100,
+        "empty": allowance - spent < ai_envelope.MARGIN_EUR,
+        "mine_over": bool(email) and mine >= share * ai_envelope.STUDENT_MONTH_SHARE,
+    }
+
+
+def ai_local_only(email: str | None) -> bool:
+    """Vrai quand l'IA externe ne doit plus servir : enveloppe vide, ou part du
+    mois de cette personne atteinte."""
+    state = ai_envelope_state(email=email)
+    return bool(state and (state["empty"] or state["mine_over"]))
+
+
+def record_ai_spend(email: str | None, usage: dict, backend: dict, eur: float | None = None):
+    """Ajoute le coût d'un appel servi par le moteur externe, et alerte à 80 %
+    puis 100 % de ce qui est ouvert (l'école dans la console, Sash par le journal)."""
+    if backend.get("fallback") or not ai_envelope.priced():
+        return
+    cost = ai_envelope.call_cost(usage) if eur is None else eur
+    if cost <= 0:
+        return
+    before = ai_envelope_state()
+    with db() as conn:
+        conn.execute(
+            """INSERT INTO ai_spend(month, email, eur) VALUES (?,?,?)
+               ON CONFLICT(month, email) DO UPDATE SET eur = ai_spend.eur + excluded.eur""",
+            (ai_envelope.month_of(time.time()), email or "", cost))
+    if before:
+        for percent in ai_envelope.crossed(before["spent_eur"], before["spent_eur"] + cost,
+                                           before["allowance_eur"]):
+            observability.log("ai.envelope_alert", level="warning", percent=percent)
+
+
+def refuse_when_ai_envelope_empty(capability: str | tuple[str, ...], feature: str):
+    wanted = (capability,) if isinstance(capability, str) else capability
+    if AI_ENVELOPE_PAUSED_CAPABILITIES.intersection(wanted):
+        state = ai_envelope_state()
+        if state and state["empty"]:
+            raise HTTPException(403, {"code": "AI_ENVELOPE_EMPTY", "feature": feature})
+
+
 def require_product_capability(account, capability: str | tuple[str, ...], feature: str):
     """Refuse l'operation si l'organisation a ferme la fonction.
 
@@ -3139,6 +3215,7 @@ def require_product_capability(account, capability: str | tuple[str, ...], featu
     un message juste — et rien d'autre : ni etat interne, ni configuration.
     """
     refuse_when_licence_degraded(capability, feature)
+    refuse_when_ai_envelope_empty(capability, feature)
     organization_id, _ = organization_policy_for_account(account)
     # La policy du membre, groupes compris : fermer une fonction a un groupe
     # doit la refuser ici aussi, pas seulement la masquer sur le poste.
@@ -12263,6 +12340,7 @@ def enforce_inference_quota(kind: str, user: str, organization_id: str) -> None:
     dit « vous en avez trop demandé », le second « le moteur est plein ». Un
     poste qui confond les deux réessaie au mauvais moment.
     """
+    AI_PAYER.set(user)
     principal_burst, principal_sustained, tenant_burst, tenant_sustained = (
         INFERENCE_QUOTAS[kind]
     )
@@ -12927,6 +13005,10 @@ async def refined_transcription(audio: bytes, filename: str, transcript: str,
     audio_format = AUDIO_REFINE_FORMATS.get(Path(filename).suffix.lower().lstrip("."))
     if AUDIO_REFINER is None or audio_format is None or not transcript.strip():
         return transcript
+    payer = AI_PAYER.get()
+    if ai_local_only(payer):
+        # L'enveloppe d'IA est vide : la transcription locale reste (2.3).
+        return transcript
     terms = sorted({(replacement or term).strip() for term, replacement in vocabulary
                     if (replacement or term).strip()})[:AUDIO_REFINE_MAX_TERMS]
     global _audio_refine_down_until, _audio_refine_failures
@@ -12944,6 +13026,7 @@ async def refined_transcription(audio: bytes, filename: str, transcript: str,
                 _audio_refine_failures = 0
         return transcript
     _audio_refine_failures = 0
+    record_ai_spend(payer, {}, {}, eur=ai_envelope.refine_cost())
     if not refine_plausible(transcript, refined, terms):
         observability.log("transcription.refine_rejected", level="warning")
         return transcript
@@ -13091,10 +13174,13 @@ REWRITE_TASKS = frozenset({TaskType.REFORMULATION, TaskType.STYLE_TRANSFORM})
 
 
 async def execute_text(task_type: TaskType, instruction: str, text: str) -> str:
+    payer = AI_PAYER.get()
     try:
-        result = await ORGANIZATION_AI_ROUTER.generate(task_type, text, instruction)
+        result = await ORGANIZATION_AI_ROUTER.generate(
+            task_type, text, instruction, local_only=ai_local_only(payer))
     except AIRuntimeError as error:
         raise runtime_http_error(error, task_type) from error
+    record_ai_spend(payer, result.usage, result.backend)
     if task_type in REWRITE_TASKS and result.finish_reason == "length":
         raise RewriteTruncated()
     return result.text
@@ -13420,11 +13506,13 @@ async def execute_text_with_examples(
     task_type: TaskType, instruction: str, text: str,
     examples: tuple[tuple[str, str], ...],
 ) -> str:
+    payer = AI_PAYER.get()
     try:
         result = await ORGANIZATION_AI_ROUTER.generate(
-            task_type, text, instruction, examples=examples)
+            task_type, text, instruction, examples=examples, local_only=ai_local_only(payer))
     except AIRuntimeError as error:
         raise runtime_http_error(error, task_type) from error
+    record_ai_spend(payer, result.usage, result.backend)
     if result.finish_reason == "length":
         raise RewriteTruncated()
     return result.text
@@ -15855,6 +15943,7 @@ async def learning_exercise_feedback(exercise_id: str,
     text = clean_required(body.text, "text", learning.MAX_EXERCISE_INPUT)
     enforce_rate_limit("principal", hash_token(user), ratelimit.LEARNING_EXERCISE,
                        "LEARNING_RATE_LIMITED")
+    AI_PAYER.set(user)
     try:
         feedback = await execute_text(TaskType.LEARNING_FEEDBACK,
                                       item["instruction"], text)
@@ -16375,6 +16464,7 @@ def subscription_report(now: float | None = None) -> dict:
         active_month = people(f"{month}-01")
         active_year = people(year_from)
     seats = tier_seats(state.get("tier", "")) if state["status"] != "invalid" else None
+    envelope = ai_envelope_state(now)
     return {
         "licence": state,
         "active_month": active_month,
@@ -16384,6 +16474,7 @@ def subscription_report(now: float | None = None) -> dict:
         "near_limit": bool(seats) and active_month >= SUBSCRIPTION_NEAR_LIMIT * seats,
         "over_limit": bool(seats) and active_month > seats,
         "renewal_reminder": state["status"] in ("warning", "grace", "expired"),
+        "ai_envelope": envelope and {k: v for k, v in envelope.items() if k != "mine_over"},
     }
 
 
