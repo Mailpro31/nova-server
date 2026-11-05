@@ -89,6 +89,10 @@ services:
       NOVA_DOMAINS: "${NOVA_DOMAINS:?domaines de messagerie autorises, separes par des virgules -- sans eux, chaque membre est refuse a la premiere connexion}"
       NOVA_ADMIN_ORIGINS: "${NOVA_ADMIN_ORIGINS:?origines HTTPS de la console d'administration}"
       NOVA_SERVICE_ENDPOINT: "${NOVA_SERVICE_ENDPOINT:?origine HTTPS annoncee aux postes}"
+      # Jeton de lecture de /api/metrics pour Prometheus (point 5.1), valeur ou
+      # file:///run/secrets/metrics_token. Vide : series techniques seules ;
+      # renseigne : exige, et series metier ajoutees, sans donnee d'eleve.
+      NOVA_METRICS_TOKEN: "${NOVA_METRICS_TOKEN:-}"
 
       # -- Identite de l'organisation, telle qu'elle s'affiche sur les postes --
       NOVA_ORGANIZATION_ID: "${NOVA_ORGANIZATION_ID:?identifiant court de l'organisation}"
