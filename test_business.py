@@ -615,6 +615,8 @@ class BusinessPolicyAndPackageTests(AdminTestCase):
                 # Cle Core : plafond de mises au propre par membre et par jour
                 # (n° 21 ter), quelle que soit la nature de l'organisation.
                 "daily_rewrites_per_member",
+                # Cle Core : conservation des dictees passees sur le poste (2.7).
+                "past_dictations_days",
                 # Categories de l'application, communes a toute organisation.
                 "styles_enabled",
                 "personal_styles_enabled",

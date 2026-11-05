@@ -13,12 +13,16 @@ import {
   DEFAULT_DICTATION_MINUTES,
   MAX_DICTATION_MINUTES,
   MAX_REWRITE_CAP,
+  MAX_RETENTION_DAYS,
   MIN_DICTATION_MINUTES,
   capProblem,
   dictationLimitMinutes,
   limitProblem,
+  retentionDays,
+  retentionProblem,
   rewriteCap,
   withDictationLimit,
+  withRetentionDays,
   withRewriteCap,
   type LimitProblem,
   type PolicySettings,
@@ -173,6 +177,7 @@ export function Limits() {
         {(view) => {
           const minutes = dictationLimitMinutes(view.settings);
           const cap = rewriteCap(view.settings);
+          const days = retentionDays(view.settings);
           return (
             <>
               <LimitPanel
@@ -216,6 +221,25 @@ export function Limits() {
                 problemOf={capProblem}
                 problems={t.limits.capProblems}
                 next={(value) => withRewriteCap(view.settings, value)}
+                revision={view.revision}
+                mayManage={mayManage}
+                onReload={retry}
+              />
+              <LimitPanel
+                title={t.limits.retentionTitle}
+                behaviour={t.limits.retentionBehaviour}
+                facts={[
+                  [t.limits.current, t.limits.retentionValue(days)],
+                  [t.limits.defaultValue, t.limits.retentionValue(0)],
+                ]}
+                field={t.limits.retentionField}
+                hint={t.limits.capRange(MAX_RETENTION_DAYS)}
+                min={0}
+                max={MAX_RETENTION_DAYS}
+                current={days}
+                problemOf={retentionProblem}
+                problems={t.limits.retentionProblems}
+                next={(value) => withRetentionDays(view.settings, value)}
                 revision={view.revision}
                 mayManage={mayManage}
                 onReload={retry}

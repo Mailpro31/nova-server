@@ -69,3 +69,28 @@ export function capProblem(input: string): LimitProblem | null {
   if (value < 0 || value > MAX_REWRITE_CAP) return "range";
   return null;
 }
+
+/** Jours de conservation des dictées passées sur le poste (2.7) ; 0 = sans limite. */
+export const RETENTION_KEY = "past_dictations_days";
+export const MAX_RETENTION_DAYS = 3650;
+
+export function retentionDays(settings: PolicySettings): number {
+  const value = settings[RETENTION_KEY];
+  return typeof value === "number" ? value : 0;
+}
+
+export function withRetentionDays(
+  settings: PolicySettings,
+  days: number,
+): PolicySettings {
+  return { ...settings, [RETENTION_KEY]: days };
+}
+
+export function retentionProblem(input: string): LimitProblem | null {
+  const trimmed = input.trim();
+  const value = Number(trimmed);
+  if (trimmed === "" || !Number.isFinite(value)) return "empty";
+  if (!Number.isInteger(value)) return "whole";
+  if (value < 0 || value > MAX_RETENTION_DAYS) return "range";
+  return null;
+}

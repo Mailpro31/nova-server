@@ -17,6 +17,9 @@ import {
   dictationLimitMinutes,
   limitProblem,
   withDictationLimit,
+  retentionDays,
+  retentionProblem,
+  withRetentionDays,
 } from "./limits";
 import { NAV_SECTIONS } from "./navigation";
 
@@ -144,5 +147,19 @@ describe("daily rewrite cap", () => {
     expect(capProblem("2.5")).toBe("whole");
     expect(capProblem("-1")).toBe("range");
     expect(capProblem("")).toBe("empty");
+  });
+});
+
+describe("conservation des dictées passées (2.7)", () => {
+  test("sans limite par défaut, bornée à dix ans", () => {
+    expect(retentionDays({})).toBe(0);
+    expect(retentionDays(withRetentionDays({ max_dictation_seconds: 600 }, 30))).toBe(30);
+    expect(retentionProblem("365")).toBeNull();
+    expect(retentionProblem("0")).toBeNull();
+    expect(retentionProblem("3651")).toBe("range");
+    expect(retentionProblem("5000")).toBe("range");
+    expect(retentionProblem("-1")).toBe("range");
+    expect(retentionProblem("1.5")).toBe("whole");
+    expect(retentionProblem("")).toBe("empty");
   });
 });
