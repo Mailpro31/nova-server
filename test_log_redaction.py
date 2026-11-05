@@ -18,6 +18,8 @@ import ai_runtime
 import main
 import observability
 
+main.init_db()
+
 EMAIL = "temoin.eleve@example.com"
 WITNESS = "zorglub quantique du mardi"
 
