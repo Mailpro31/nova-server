@@ -337,3 +337,23 @@ class EnglishExamplesTests(unittest.IsolatedAsyncioTestCase):
         kept = [dictated for dictated, answer in main.SELF_CORRECTION_EXAMPLES_EN
                 if dictated == answer]
         self.assertGreaterEqual(len(kept), 2)
+
+
+class EnglishFillersTests(unittest.TestCase):
+    """Banc anglais du RTX (05/11) : le Style gardait um, uh, you know, basically."""
+
+    def test_english_fillers_go(self):
+        for dictated, clean in (
+            ("Um, the derivative of a constant is zero.", "The derivative of a constant is zero."),
+            ("So, you know, the lift increases.", "So the lift increases."),
+            ("Basically, the pressure drops.", "The pressure drops."),
+            ("It is, like, really fast.", "It is really fast."),
+            ("Okay so, the first law.", "The first law."),
+        ):
+            with self.subTest(dictated):
+                self.assertEqual(main.without_fillers(dictated), clean)
+
+    def test_the_same_words_with_a_meaning_stay(self):
+        for dictated in ("I like this course.", "You know the answer.", "Le bon, la brute."):
+            with self.subTest(dictated):
+                self.assertEqual(main.without_fillers(dictated), dictated)

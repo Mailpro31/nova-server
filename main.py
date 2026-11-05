@@ -12553,10 +12553,13 @@ def requested_language(value: str | None) -> str | None:
 # Un tic n'est retiré que détaché par la ponctuation : « le genre du nom » et
 # « voilà la formule » restent.
 _FILLER = (r"(?:euh+|heu+|hum+|hm+|bah|ben|du coup|en fait|genre|comment dire|voil[àa]|tu vois|"
-           r"bon|enfin bref|en gros|ok,?\s+alors|ok|hein)")
+           r"bon|enfin bref|en gros|ok,?\s+alors|ok|hein|"
+           # Les mêmes, à l'anglaise (banc anglais du RTX, 05/11 : 87,5 % gardés).
+           r"uh+|um+|erm|you know|basically|like|kind of|sort of|okay,?\s+so|okay)")
 # « bah » n'a jamais de sens ; il restait au milieu d'une phrase (« Bernoulli
 # bah, s'applique ») : 252 dictées sur 3 000 du banc v2 (sondage du 17/10).
-_HESITATION_ANYWHERE = re.compile(r"\s*,?\s*\b(?:euh+|heu+|hum+|hm+|bah)\b\s*,?", re.IGNORECASE)
+_HESITATION_ANYWHERE = re.compile(r"\s*,?\s*\b(?:euh+|heu+|hum+|hm+|bah|uh+|um+|erm)\b\s*,?",
+                                  re.IGNORECASE)
 # Plusieurs tics à la suite, sans virgule devant le premier (« volets genre,
 # comment dire, hypersustentateurs »).
 _FILLER_CHAIN = re.compile(rf"(?<=\w)\s+(?:{_FILLER}\s*,\s*){{2,}}(?=\w)", re.IGNORECASE)
