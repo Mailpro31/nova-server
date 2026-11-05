@@ -82,6 +82,9 @@ x-nova-environment: &nova-environment
     NOVA_AI_CUSTOM_MAX_OUTPUT_TOKENS: "${NOVA_AI_CUSTOM_MAX_OUTPUT_TOKENS:-}"
     NOVA_AI_CUSTOM_TEMPERATURE: "${NOVA_AI_CUSTOM_TEMPERATURE:-}"
     NOVA_AI_CUSTOM_REASONING: "${NOVA_AI_CUSTOM_REASONING:-auto}"
+    # La licence signée de l'école (4.1), une ligne posée dans .env. Absente
+    # de cette ancre, elle n'atteignait jamais le conteneur.
+    NOVA_LICENCE: "${NOVA_LICENCE:-}"
 
 services:
   # La preparation de la base, explicite : le schema puis les premieres lignes
