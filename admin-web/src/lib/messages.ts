@@ -1015,6 +1015,17 @@ const en = {
       whole: "Use a whole number.",
       range: "The cap must be between 0 and 10000.",
     },
+    retentionTitle: "Past dictations kept on each computer",
+    retentionBehaviour:
+      "Dictations are stored on each member's computer, never on the server. Past this number of days, Nova deletes them from the computer, saved dictations included. 0 lets each member choose.",
+    retentionField: "Days kept (0 = members choose)",
+    retentionValue: (days: number) =>
+      days === 0 ? "Members choose" : days === 1 ? "1 day" : `${days} days`,
+    retentionProblems: {
+      empty: "Enter a number.",
+      whole: "Use a whole number.",
+      range: "The number of days must be between 0 and 3650.",
+    },
   },
 
   styles: {

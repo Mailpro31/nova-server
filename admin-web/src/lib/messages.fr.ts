@@ -979,6 +979,17 @@ export const fr: Messages = {
       whole: "Utilisez un nombre entier.",
       range: "Le plafond doit être compris entre 0 et 10 000.",
     },
+    retentionTitle: "Dictées passées gardées sur chaque poste",
+    retentionBehaviour:
+      "Les dictées sont rangées sur le poste de chaque membre, jamais sur le serveur. Au-delà de ce nombre de jours, Nova les efface du poste, dictées gardées comprises. 0 laisse chacun choisir.",
+    retentionField: "Jours de conservation (0 = au choix de chacun)",
+    retentionValue: (days: number) =>
+      days === 0 ? "Au choix de chacun" : days === 1 ? "1 jour" : `${days} jours`,
+    retentionProblems: {
+      empty: "Saisissez un nombre.",
+      whole: "Utilisez un nombre entier.",
+      range: "Le nombre de jours doit être compris entre 0 et 3 650.",
+    },
   },
 
   styles: {

@@ -2410,6 +2410,11 @@ POLICY_SETTINGS: dict[str, PolicySetting] = {
         # dictée est rendue telle quelle (n° 21 ter) : rien n'est perdu.
         PolicySetting("daily_rewrites_per_member", int, 0, None,
                       minimum=0, maximum=10000),
+        # Jours de conservation des dictées passées sur le poste (2.7) ; 0,
+        # aucune limite de l'école. Le poste efface ce qui est plus ancien,
+        # dictées gardées comprises : c'est une règle de l'établissement.
+        PolicySetting("past_dictations_days", int, 0, None,
+                      minimum=0, maximum=3650),
         # Des Styles retires un par un, sans fermer la categorie Styles. Des
         # identifiants — Styles integres du poste ou Styles d'organisation —,
         # aucun par defaut : rien n'est retire tant que personne ne l'a decide.
@@ -4523,6 +4528,7 @@ def public_campus_config(organization_id: str | None = None,
     config["limits"] = {
         "max_dictation_seconds": policy["settings"]["max_dictation_seconds"],
     }
+    config["past_dictations"] = {"days": policy["settings"]["past_dictations_days"]}
     # Les Styles que le poste affiche comme desactives et n'applique plus.
     config["style_policy"] = {
         "disabled_style_ids": list(policy["settings"]["disabled_style_ids"]),
@@ -11037,6 +11043,7 @@ def me(user: str = Depends(current_user), u=Depends(current_account),
         # route, pas `/api/config`.
         "limits": member_config["limits"],
         "style_policy": member_config["style_policy"],
+        "past_dictations": member_config["past_dictations"],
         "closed_capabilities": closed_capabilities,
     }
 
