@@ -11,6 +11,7 @@
 import { useState } from "react";
 import { ApiError } from "../lib/api";
 import type { GroupRuleBody, GroupRuleView, GroupView } from "../lib/controlPlane";
+import { looksMedical } from "../lib/medicalNames";
 import { errorMessage, t } from "../lib/messages";
 import { CAPABILITY, can } from "../lib/session";
 import { useResource } from "../lib/useResource";
@@ -255,6 +256,7 @@ function GroupCard({
       {group.source !== "console" && (
         <p className="policy-hint">{t.groups.managedByDirectory}</p>
       )}
+      {looksMedical(group.label) && <Notice>{t.groups.medicalName}</Notice>}
       {/* Un choix d'affichage de Nova : permis aussi pour un groupe de
           l'annuaire, qui reste l'auteur du groupe lui-même. */}
       {mayManage && (
@@ -310,6 +312,7 @@ function GroupCard({
             >
               {t.groups.cancel}
             </button>
+            {looksMedical(renaming) && <Notice>{t.groups.medicalName}</Notice>}
           </div>
         ) : (
           <div className="row">
@@ -715,6 +718,7 @@ export function Groups() {
               {busy ? t.groups.creating : t.groups.create}
             </button>
           </div>
+          {looksMedical(name) && <Notice>{t.groups.medicalName}</Notice>}
           {failure && <Notice tone="danger">{failure}</Notice>}
         </Panel>
       ) : (

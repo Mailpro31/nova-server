@@ -346,6 +346,8 @@ export const fr: Messages = {
   },
 
   groups: {
+    medicalName:
+      "Ce nom peut révéler une situation de santé (dys, handicap, aménagements…). Les membres d'un groupe visible voient son nom, et en faire partie dévoile une donnée de santé. Préférez un nom neutre, comme celui du service d'accompagnement.",
     title: "Groupes",
     lead: "Les groupes servent à cibler des leçons et à changer des réglages pour une partie de l’organisation. Créez les vôtres ici ; ceux de votre annuaire apparaissent aussi.",
     create: "Créer le groupe",
