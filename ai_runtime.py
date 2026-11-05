@@ -1039,7 +1039,8 @@ class OrganizationAIRouter:
                     observability.log("ai.text_fallback", level="warning", reason=error.code)
             else:
                 # Chaque requête servie par le secours se compte (RTX, 17/10).
-                observability.log("ai.text_fallback", level="warning", reason="primary_set_aside")
+                observability.log("ai.text_fallback", level="warning",
+                                  reason="envelope" if local_only else "primary_set_aside")
             result = await self._generate_with(self.fallback_text_backend, request, timeout)
             # Le moteur local ne coûte rien à l'enveloppe d'IA.
             return replace(result, backend={**result.backend, "fallback": True})

@@ -81,6 +81,16 @@ class EnvelopeTests(unittest.TestCase):
             asyncio.run(main.execute_text(ai_runtime.TaskType.REFORMULATION, "x", "y"))
         self.assertEqual((len(primary.requests), len(local.requests)), (0, 1))
 
+    def test_the_envelope_fallback_is_logged_with_its_reason(self):
+        primary = ai_runtime.FakeTextInferenceBackend()
+        router = ai_runtime.OrganizationAIRouter(
+            primary, ai_runtime.FakeSpeechInferenceBackend(),
+            fallback_text_backend=ai_runtime.FakeTextInferenceBackend())
+        with mock.patch.object(ai_runtime.observability, "log") as log:
+            asyncio.run(router.generate(ai_runtime.TaskType.REFORMULATION, "x", "y",
+                                        local_only=True))
+        log.assert_any_call("ai.text_fallback", level="warning", reason="envelope")
+
     def test_one_student_cannot_empty_the_month(self):
         spent("a@example.com", 0.2 * 10)
         with mock.patch.object(time, "time", return_value=NOW):
