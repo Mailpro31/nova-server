@@ -82,6 +82,9 @@ x-nova-environment: &nova-environment
     NOVA_AI_CUSTOM_MAX_OUTPUT_TOKENS: "${NOVA_AI_CUSTOM_MAX_OUTPUT_TOKENS:-}"
     NOVA_AI_CUSTOM_TEMPERATURE: "${NOVA_AI_CUSTOM_TEMPERATURE:-}"
     NOVA_AI_CUSTOM_REASONING: "${NOVA_AI_CUSTOM_REASONING:-auto}"
+    # Gemini via Vertex AI (3.1) : chemin du fichier du compte de service,
+    # monté en lecture seule (en production : /run/secrets/vertex.json).
+    NOVA_VERTEX_CREDENTIALS_FILE: "${NOVA_VERTEX_CREDENTIALS_FILE:-}"
 
 services:
   # La preparation de la base, explicite : le schema puis les premieres lignes
