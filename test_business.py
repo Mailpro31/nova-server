@@ -617,6 +617,8 @@ class BusinessPolicyAndPackageTests(AdminTestCase):
                 "daily_rewrites_per_member",
                 # Cle Core : conservation des dictees passees sur le poste (2.7).
                 "past_dictations_days",
+                # Cle Core : Rapports de plantage du poste (5.2).
+                "crash_reports_enabled",
                 # Categories de l'application, communes a toute organisation.
                 "styles_enabled",
                 "personal_styles_enabled",
