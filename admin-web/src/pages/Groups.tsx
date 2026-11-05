@@ -172,15 +172,19 @@ function GroupCard({
   organizationId,
   group,
   mayManage,
+  mayEditMembers,
   onChanged,
 }: {
   organizationId: string;
   group: GroupView;
   mayManage: boolean;
+  mayEditMembers: boolean;
   onChanged: () => void;
 }) {
   const { control } = useSession();
   const editable = mayManage && group.source === "console";
+  // Un groupe de l'annuaire garde ses membres là-bas.
+  const membersEditable = mayEditMembers && group.source === "console";
   const [open, setOpen] = useState(false);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -331,7 +335,7 @@ function GroupCard({
         <GroupMembers
           organizationId={organizationId}
           group={group}
-          editable={editable}
+          editable={membersEditable}
           onChanged={onChanged}
         />
       )}
@@ -746,6 +750,7 @@ export function Groups() {
                   organizationId={organizationId}
                   group={group}
                   mayManage={mayManage}
+                  mayEditMembers={can(session, CAPABILITY.groupMembersManage)}
                   onChanged={retry}
                 />
               ))}

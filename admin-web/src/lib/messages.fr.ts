@@ -252,6 +252,9 @@ export const fr: Messages = {
     roleReadOnlyHint: "Consulte la console. Ne modifie rien.",
     roleContentEditorHint:
       "Gère le contenu : leçons Learn, Styles, Prompts et vocabulaire. Pas d’accès aux membres, à la sécurité ni aux règles.",
+    roleAccessManager: "Gestion des accès",
+    roleAccessManagerHint:
+      "Ouvre Nova à des personnes en les ajoutant à des groupes, par exemple la mission handicap. Pas d’accès aux réglages, à la sécurité ni aux administrateurs.",
     roleMemberHint: "Utilise Nova, n’administre rien.",
     changeRole: "Changer le rôle",
     removeAccess: "Retirer l’accès d’administration",

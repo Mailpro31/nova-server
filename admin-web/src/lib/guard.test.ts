@@ -270,7 +270,7 @@ describe("gestion des membres", () => {
     const editor = page.slice(page.indexOf("MEMBER_ROLES"), page.indexOf("export function Members"));
     // Les privileges se gerent depuis leur propre ecran : deux endroits qui
     // modifient le meme privilege finissent par diverger.
-    for (const role of ["organization_admin", "it_admin", "read_only", "content_editor"]) {
+    for (const role of ["organization_admin", "it_admin", "read_only", "content_editor", "access_manager"]) {
       expect(editor).not.toContain(`"${role}"`);
     }
   });
@@ -283,6 +283,15 @@ describe("gestion des membres", () => {
     const { t } = await import("./messages");
     expect(t.administrators.roleContentEditor.length).toBeGreaterThan(0);
     expect(t.administrators.roleContentEditorHint.toLowerCase()).toContain("lessons");
+  });
+
+  test("l'ecran des administrateurs propose la gestion des acces", async () => {
+    // La mission handicap ouvre Nova a un eleve sans recevoir le reste de la
+    // console (2.5).
+    const page = readFileSync("src/pages/Administrators.tsx", "utf8");
+    expect(page).toContain('value: "access_manager"');
+    const { t } = await import("./messages");
+    expect(t.administrators.roleAccessManagerHint.toLowerCase()).toContain("groups");
   });
 
   test("les appareils sont nommes sans jeton", async () => {
