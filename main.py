@@ -13312,6 +13312,13 @@ SELF_CORRECTION_EXAMPLES_EN: tuple[tuple[str, str], ...] = (
     ("the lift coefficient is 0.3 sorry 0.5 at this angle",
      "the lift coefficient is 0.5 at this angle"),
     ("write the title in bold wait in italics", "write the title in italics"),
+    # Banc anglais du RTX (05/11) : un nom remplacé, une heure et une date
+    # restaient, ou la date gardée était la première.
+    ("open the red folder, sorry, the blue folder first", "open the blue folder first"),
+    ("take the bus, actually take the train to the lab", "take the train to the lab"),
+    ("the lab starts at 5pm, no wait, at 6pm", "the lab starts at 6pm"),
+    ("the exam is on the 3rd of May, I mean the 5th of May",
+     "the exam is on the 5th of May"),
     ("I am not coming no really not", "I am not coming no really not"),
     ("the teacher said no to the trip", "the teacher said no to the trip"),
 )
