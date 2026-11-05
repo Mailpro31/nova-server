@@ -39,6 +39,11 @@ const ROLES = [
     label: t.administrators.roleContentEditor,
     hint: t.administrators.roleContentEditorHint,
   },
+  {
+    value: "access_manager",
+    label: t.administrators.roleAccessManager,
+    hint: t.administrators.roleAccessManagerHint,
+  },
 ] as const;
 
 function roleLabel(role: string): string {

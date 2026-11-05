@@ -2183,6 +2183,9 @@ SECURITY_ROLE_READ_ONLY = "read_only"
 # Prepare le contenu — lecons d'Apprendre, Styles, Prompts, vocabulaire — sans
 # toucher aux membres, a la securite ni a ce que l'organisation autorise.
 SECURITY_ROLE_CONTENT_EDITOR = "content_editor"
+# Ouvre Nova à une personne en la mettant dans un groupe : la mission handicap
+# (2.5), sans les réglages, la sécurité ni les administrateurs.
+SECURITY_ROLE_ACCESS_MANAGER = "access_manager"
 
 # Capacités : ce que l'on vérifie réellement dans les routes. Les rôles sont
 # des noms commodes, les capacités sont la règle — sans quoi `if role ==` se
@@ -2205,6 +2208,9 @@ CAPABILITY_POLICY_MANAGE = "policy_manage"
 # capacite pour les trois types : une par type ferait grossir la matrice
 # sans repondre a une question differente — qui peut publier du contenu ?
 CAPABILITY_CONTENT_MANAGE = "content_manage"
+# Ajouter une personne à un groupe de la console, ou l'en retirer. Distincte
+# de `identity_manage`, qui crée aussi les groupes et gère les comptes.
+CAPABILITY_GROUP_MEMBERS_MANAGE = "group_members_manage"
 
 # La matrice. Aucun rôle n'est un sur-ensemble des autres : `organization_admin`
 # gère les personnes, `it_admin` gère la machine. Les faire coïncider
@@ -2224,6 +2230,7 @@ CAPABILITIES_BY_ROLE: dict[str, frozenset[str]] = {
         # frontiere posee en Phase 22 tient sans exception ajoutee.
         CAPABILITY_POLICY_MANAGE,
         CAPABILITY_CONTENT_MANAGE,
+        CAPABILITY_GROUP_MEMBERS_MANAGE,
     }),
     SECURITY_ROLE_IT_ADMIN: frozenset({
         CAPABILITY_ORGANIZATION_READ,
@@ -2244,6 +2251,10 @@ CAPABILITIES_BY_ROLE: dict[str, frozenset[str]] = {
     SECURITY_ROLE_CONTENT_EDITOR: frozenset({
         CAPABILITY_ORGANIZATION_READ,
         CAPABILITY_CONTENT_MANAGE,
+    }),
+    SECURITY_ROLE_ACCESS_MANAGER: frozenset({
+        CAPABILITY_ORGANIZATION_READ,
+        CAPABILITY_GROUP_MEMBERS_MANAGE,
     }),
     # Un membre n'a aucune capacité d'administration. La ligne est écrite
     # explicitement : l'absence de clé se lirait comme un oubli.
@@ -6986,7 +6997,7 @@ def control_add_group_member(
     organization_id: str,
     group_id: str,
     user_id: str,
-    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_IDENTITY_MANAGE)),
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_GROUP_MEMBERS_MANAGE)),
 ):
     require_organization_access(principal, organization_id)
     with db() as conn:
@@ -7026,7 +7037,7 @@ def control_remove_group_member(
     organization_id: str,
     group_id: str,
     user_id: str,
-    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_IDENTITY_MANAGE)),
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_GROUP_MEMBERS_MANAGE)),
 ):
     require_organization_access(principal, organization_id)
     with db() as conn:

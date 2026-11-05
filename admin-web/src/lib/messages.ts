@@ -260,6 +260,9 @@ const en = {
     roleReadOnlyHint: "Reads the console. Changes nothing.",
     roleContentEditorHint:
       "Manages content: Learn lessons, Styles, Prompts and vocabulary. No access to members, security or policies.",
+    roleAccessManager: "Access manager",
+    roleAccessManagerHint:
+      "Opens Nova to people by adding them to groups, for example the disability support office. No access to settings, security or administrators.",
     roleMemberHint: "Uses Nova, administers nothing.",
     changeRole: "Change role",
     removeAccess: "Remove admin access",
