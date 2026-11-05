@@ -92,6 +92,9 @@ def _scrub(key: str, value: Any) -> Any:
         # Le champ est nommé, sa valeur ne l'est pas : un opérateur voit
         # qu'il y avait quelque chose, sans que la chose sorte.
         return "<redacted>"
+    if key == "style":
+        # Un Style personnalisé peut porter le nom que l'élève lui a donné.
+        return style_label(value)
     if isinstance(value, dict):
         return {name: _scrub(str(name), item) for name, item in value.items()}
     if isinstance(value, (list, tuple, set)):
