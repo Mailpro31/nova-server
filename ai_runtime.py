@@ -52,6 +52,14 @@ TEXT_TASKS = frozenset(
 SPEECH_TASKS = frozenset(
     {TaskType.TRANSCRIPTION_REALTIME, TaskType.TRANSCRIPTION_FILE}
 )
+# L'étape d'une dictée qu'une tâche de texte représente, pour la latence par
+# étape exposée à Prometheus (point 5.1). La résolution des reprises passe par
+# REFORMULATION : elle compte dans la mise en forme.
+TEXT_STAGES = {
+    TaskType.STYLE_TRANSFORM: "mise_en_forme",
+    TaskType.REFORMULATION: "mise_en_forme",
+    TaskType.VOICE_COMMAND: "commande",
+}
 # Les taches qui restituent un texte que l'utilisateur a lui-meme dicte. Elles
 # n'ont rien a inventer : leur sortie est jugee sur sa fidelite, jamais sur sa
 # variete. Le raisonnement leur est deja retire pour cette raison.
@@ -1042,10 +1050,17 @@ class OrganizationAIRouter:
     async def _generate_with(
         backend: TextInferenceBackend, request: TextInferenceRequest, timeout: float
     ) -> TextInferenceResult:
+        started = time.monotonic()
         try:
-            return await asyncio.wait_for(backend.generate(request), timeout=timeout + 0.1)
+            result = await asyncio.wait_for(backend.generate(request), timeout=timeout + 0.1)
         except asyncio.TimeoutError as error:
             raise AIRuntimeError(AI_RUNTIME_TIMEOUT) from error
+        # Point 5.1 : ici passent le moteur principal et le secours, une fois par
+        # appel réussi. Des comptes et des durées, jamais le texte.
+        observability.METRICS.observe_stage(
+            TEXT_STAGES.get(request.task_type, "autre"), time.monotonic() - started)
+        observability.METRICS.add_tokens(request.task_type.value, result.usage or {})
+        return result
 
     async def transcribe(
         self,
@@ -1075,12 +1090,15 @@ class OrganizationAIRouter:
         )
         await self.speech_capacity.acquire()
         try:
+            started = time.monotonic()
             try:
-                return await asyncio.wait_for(
+                result = await asyncio.wait_for(
                     self.speech_backend.transcribe(request), timeout=timeout + 0.1
                 )
             except asyncio.TimeoutError as error:
                 raise AIRuntimeError(AI_RUNTIME_TIMEOUT) from error
+            observability.METRICS.observe_stage("transcription", time.monotonic() - started)
+            return result
         finally:
             await self.speech_capacity.release()
 
@@ -1381,6 +1399,7 @@ class AudioRefineBackend:
                 ]},
             ],
         }
+        started = time.monotonic()
         try:
             # Connexion courte : une API injoignable ne retient pas la dictée
             # 12 s (panne simulée du RTX, 17/10 : 12,8 s).
@@ -1400,6 +1419,7 @@ class AudioRefineBackend:
             text = response.json()["choices"][0]["message"]["content"]
         except (ValueError, KeyError, IndexError, TypeError) as error:
             raise AIRuntimeError(AI_RUNTIME_FAILED) from error
+        observability.METRICS.observe_stage("relecture", time.monotonic() - started)
         return (text or "").strip()
 
 

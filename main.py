@@ -17,6 +17,7 @@ import difflib
 import re
 import base64
 import hashlib
+import hmac
 import html
 import ipaddress
 import json
@@ -16411,14 +16412,67 @@ def control_read_usage_metrics(
     return payload
 
 
+# Une version de poste devient une etiquette seulement si elle en a la forme.
+_APP_VERSION = re.compile(r"^\d{1,3}\.\d{1,3}\.\d{1,4}$")
+# Une version vue dans les trente derniers jours : un poste parti ne compte plus.
+METRICS_VERSION_WINDOW_SECONDS = 30 * 86400
+
+
+def business_metrics() -> list[tuple[str, str, dict[str, str], float]]:
+    """Les jauges metier de Prometheus (point 5.1) : des comptes, sans nom.
+
+    Actifs du mois (adresses distinctes de `usage_hourly`, jamais listees),
+    versions installees, palier et echeance de la licence.
+    """
+    month = time.strftime("%Y-%m")
+    since = time.time() - METRICS_VERSION_WINDOW_SECONDS
+    with db() as conn:
+        active = conn.execute(
+            "SELECT COUNT(DISTINCT email) AS n FROM usage_hourly WHERE hour >= ?",
+            (f"{month}-01T00",)).fetchone()["n"]
+        rows = conn.execute(
+            "SELECT app_version AS version, COUNT(*) AS n FROM users "
+            "WHERE app_version IS NOT NULL AND last_seen >= ? GROUP BY app_version",
+            (since,)).fetchall()
+    versions: dict[str, int] = {}
+    for row in rows:
+        version = row["version"] if _APP_VERSION.match(row["version"] or "") else "other"
+        versions[version] = versions.get(version, 0) + row["n"]
+    state = licence.licence_state(NOVA_LICENCE)
+    series = [("nova_active_users", "Personnes ayant dicte ou reformule ce mois-ci.",
+               {"period": "month"}, active)]
+    series += [("nova_app_versions", "Postes vus en 30 jours, par version installee.",
+                {"version": version}, count) for version, count in sorted(versions.items())]
+    series.append(("nova_licence_info", "Palier et statut de la licence (1).",
+                   {"tier": observability.label_value(state.get("tier") or "none"),
+                    "status": observability.label_value(state["status"])}, 1))
+    if "days_left" in state:
+        series.append(("nova_licence_days_left", "Jours avant l'echeance de la licence.",
+                       {}, state["days_left"]))
+    return series
+
+
 @app.get("/api/metrics")
-def metrics_endpoint():
+def metrics_endpoint(authorization: str = Header(default="")):
     """Exposition Prometheus.
 
     Aucune etiquette ne porte d'identifiant : ni utilisateur, ni organisation,
     ni parc, ni connecteur. Une metrique etiquetee par identifiant fabrique une
     serie par identifiant — et publie la liste au passage.
+
+    La route est joignable depuis Internet sur un serveur d'ecole. Sans
+    `NOVA_METRICS_TOKEN`, elle rend ses seules series techniques, comme avant.
+    Avec lui, elle exige ce jeton et ajoute les series metier (point 5.1).
     """
+    # Valeur ou reference (`file:///run/secrets/...`), comme les autres secrets.
+    expected = (secrets_provider.resolve_value(os.getenv("NOVA_METRICS_TOKEN", "")) or "").strip()
+    business = None
+    if expected:
+        given = authorization.removeprefix("Bearer ").strip()
+        if not hmac.compare_digest(given.encode(), expected.encode()):
+            return PlainTextResponse("unauthorized\n", status_code=401,
+                                     headers={"WWW-Authenticate": "Bearer"})
+        business = business_metrics()
     pool = database_handle().pool_stats
     gauges = {
         "db_pool_idle": pool["idle"],
@@ -16427,6 +16481,6 @@ def metrics_endpoint():
         "rate_limiter_shared": 1 if rate_limiter().shared else 0,
     }
     return PlainTextResponse(
-        observability.METRICS.render(gauges),
+        observability.METRICS.render(gauges, business),
         media_type="text/plain; version=0.0.4; charset=utf-8",
     )

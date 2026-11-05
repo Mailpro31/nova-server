@@ -85,6 +85,17 @@ class MetricsPrometheusTests(unittest.TestCase):
     def test_a_missing_token_is_refused_once_one_is_configured(self):
         self.assertEqual(self.scrape(None).status_code, 401)
 
+    def test_the_token_can_come_from_a_secret_file(self):
+        secret = os.path.join(TEST_DIRECTORY.name, "metrics_token")
+        with open(secret, "w", encoding="utf-8") as handle:
+            handle.write(TOKEN + "\n")
+        with patch.dict(os.environ, {"NOVA_METRICS_TOKEN": f"file://{secret}"}):
+            ok = self.client.get("/api/metrics", headers={"Authorization": f"Bearer {TOKEN}"})
+            refused = self.client.get("/api/metrics", headers={"Authorization": "Bearer autre"})
+        self.assertEqual(ok.status_code, 200)
+        self.assertIn("nova_active_users", ok.text)
+        self.assertEqual(refused.status_code, 401)
+
     def test_the_right_token_opens_the_business_series(self):
         response = self.scrape()
         self.assertEqual(response.status_code, 200)
@@ -167,9 +178,11 @@ class MetricsPrometheusTests(unittest.TestCase):
 
     def test_installed_versions_are_counted_and_odd_ones_folded(self):
         now = time.time()
+        versions = ("1.0.70", "1.0.70", "<script>1.0</script>")
+        for n in range(len(versions)):
+            main.touch_user(f"poste{n}@example.com", main.nova_organization_id())
         with main.db() as conn:
-            for n, version in enumerate(("1.0.70", "1.0.70", "<script>1.0</script>")):
-                main.touch_user(f"poste{n}@example.com", main.nova_organization_id())
+            for n, version in enumerate(versions):
                 conn.execute("UPDATE users SET app_version=?, last_seen=? WHERE email=?",
                              (version, now, f"poste{n}@example.com"))
         rendered = self.scrape().text
