@@ -46,6 +46,26 @@ export function withDictationMinutes(
   return next;
 }
 
+export const EXAM_KEY = "exam_until";
+
+/** La fin d'un examen en cours, en secondes ; `null` sans examen en cours. */
+export function examUntil(overrides: GroupOverrides, now = Date.now()): number | null {
+  const value = overrides[EXAM_KEY];
+  return typeof value === "number" && value * 1000 > now ? value : null;
+}
+
+/** Un examen de `hours` heures à partir de maintenant ; `null` l'arrête. */
+export function withExamHours(
+  overrides: GroupOverrides,
+  hours: number | null,
+  now = Date.now(),
+): GroupOverrides {
+  const next = { ...overrides };
+  if (hours === null) delete next[EXAM_KEY];
+  else next[EXAM_KEY] = Math.floor(now / 1000) + Math.round(hours * 3600);
+  return next;
+}
+
 export function countOverrides(overrides: GroupOverrides): number {
   return Object.keys(overrides).length;
 }

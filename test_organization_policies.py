@@ -63,8 +63,8 @@ class PolicySchemaTests(unittest.TestCase):
                     # Une liste de retraits (les Styles desactives) n'est
                     # permissive que vide : rien n'est retire par defaut.
                     self.assertEqual(value, [], f"{key} devrait etre vide par defaut")
-                elif key in ("daily_rewrites_per_member", "past_dictations_days"):
-                    # 0 : aucun plafond, aucune durée imposée.
+                elif key in ("daily_rewrites_per_member", "past_dictations_days", "exam_until"):
+                    # 0 : aucun plafond, aucune durée imposée, aucun examen.
                     self.assertEqual(value, 0)
                 elif key in OPTIONAL_FEATURE_KEYS:
                     self.assertFalse(value, f"{key} est optionnelle, fermee par defaut")

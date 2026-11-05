@@ -619,6 +619,8 @@ class BusinessPolicyAndPackageTests(AdminTestCase):
                 "past_dictations_days",
                 # Cle Core : Rapports de plantage du poste (5.2).
                 "crash_reports_enabled",
+                # Cle Core : Mode examen d'un groupe (1.8).
+                "exam_until",
                 # Categories de l'application, communes a toute organisation.
                 "styles_enabled",
                 "personal_styles_enabled",

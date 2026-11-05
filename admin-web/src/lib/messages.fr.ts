@@ -1068,6 +1068,16 @@ export const fr: Messages = {
       count === 1 ? "1 réglage changé pour ce groupe" : `${count} réglages changés pour ce groupe`,
     edit: "Modifier",
     view: "Voir",
+    examTitle: "Mode examen",
+    examBody:
+      "Les membres de ce groupe n’ont plus que la dictée : ni IA, ni bulle, ni dictées passées, ni import de fichiers. Tout rouvre à l’heure prévue. Enregistrez pour appliquer.",
+    examOff: "Aucun examen en cours",
+    examRunning: (end: Date) =>
+      `Examen en cours jusqu’à ${end.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}`,
+    examStart: "Lancer un examen…",
+    examChange: "Changer la fin…",
+    examHours: (hours: number) => (hours === 1 ? "Pendant 1 heure" : `Pendant ${hours} heures`),
+    examStop: "Arrêter l’examen maintenant",
     close: "Fermer",
     inherit: "Suivre l’organisation",
     on: "Activé pour ce groupe",
