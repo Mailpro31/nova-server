@@ -210,6 +210,20 @@ class MetricsPrometheusTests(unittest.TestCase):
         self.assertIn('nova_licence_info{status="none",tier="none"} 1', rendered)
         self.assertNotIn("nova_licence_days_left", rendered)
 
+    # ------------------------------------------------- déploiement
+
+    def test_the_token_reaches_the_api_container(self):
+        # Le compose n'a pas d'env_file : une variable absente de l'ancre
+        # d'environnement n'arrive jamais au conteneur, même posée dans .env.
+        import yaml
+
+        here = os.path.dirname(os.path.abspath(__file__))
+        with open(os.path.join(here, "docker-compose.yml"), encoding="utf-8") as handle:
+            compose = yaml.safe_load(handle)
+        self.assertIn("NOVA_METRICS_TOKEN", compose["x-nova-environment"])
+        with open(os.path.join(here, ".env.production.example"), encoding="utf-8") as handle:
+            self.assertIn("NOVA_METRICS_TOKEN=", handle.read())
+
     # ------------------------------------------------- aucune donnée d'élève
 
     def test_every_label_name_is_on_the_closed_list(self):
