@@ -77,8 +77,28 @@ FORBIDDEN_FIELDS = frozenset(
         "secret", "client_secret", "password", "authorization", "code",
         "prompt", "transcript", "text", "content", "clipboard", "audio",
         "email", "message",
+        # Ce qu'une dictée devient en chemin (5.6) : aucun de ces noms ne sert
+        # aujourd'hui, ils ferment la porte avant l'envoi vers le panel.
+        "transcription", "instruction", "input", "output", "answer",
+        "vocabulary", "dictation", "snippet",
     }
 )
+# Une adresse glissée dans une valeur libre (un motif, une erreur) : masquée.
+_EMAIL = re.compile(r"[^\s@\"'<>]+@[^\s@\"'<>]+\.[A-Za-z]{2,}")
+
+
+def _scrub(key: str, value: Any) -> Any:
+    if key.lower() in FORBIDDEN_FIELDS:
+        # Le champ est nommé, sa valeur ne l'est pas : un opérateur voit
+        # qu'il y avait quelque chose, sans que la chose sorte.
+        return "<redacted>"
+    if isinstance(value, dict):
+        return {name: _scrub(str(name), item) for name, item in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_scrub(key, item) for item in value]
+    if isinstance(value, str):
+        return _EMAIL.sub("<email>", value)
+    return value
 
 
 class StructuredFormatter(logging.Formatter):
@@ -95,12 +115,7 @@ class StructuredFormatter(logging.Formatter):
         if request_id:
             payload["request_id"] = request_id
         for key, value in getattr(record, "fields", {}).items():
-            if key.lower() in FORBIDDEN_FIELDS:
-                # Le champ est nommé, sa valeur ne l'est pas : un opérateur
-                # voit qu'il y avait quelque chose, sans que la chose sorte.
-                payload[key] = "<redacted>"
-            else:
-                payload[key] = value
+            payload[key] = _scrub(key, value)
         return json.dumps(payload, default=str, sort_keys=True)
 
 
