@@ -89,6 +89,10 @@ services:
       NOVA_DOMAINS: "${NOVA_DOMAINS:?domaines de messagerie autorises, separes par des virgules -- sans eux, chaque membre est refuse a la premiere connexion}"
       NOVA_ADMIN_ORIGINS: "${NOVA_ADMIN_ORIGINS:?origines HTTPS de la console d'administration}"
       NOVA_SERVICE_ENDPOINT: "${NOVA_SERVICE_ENDPOINT:?origine HTTPS annoncee aux postes}"
+      # Jeton de lecture de /api/metrics pour Prometheus (point 5.1), valeur ou
+      # file:///run/secrets/metrics_token. Vide : series techniques seules ;
+      # renseigne : exige, et series metier ajoutees, sans donnee d'eleve.
+      NOVA_METRICS_TOKEN: "${NOVA_METRICS_TOKEN:-}"
 
       # -- Identite de l'organisation, telle qu'elle s'affiche sur les postes --
       NOVA_ORGANIZATION_ID: "${NOVA_ORGANIZATION_ID:?identifiant court de l'organisation}"
@@ -124,6 +128,11 @@ services:
       NOVA_AI_MAX_CONCURRENT_SPEECH: "${NOVA_AI_MAX_CONCURRENT_SPEECH:-1}"
       NOVA_AI_MAX_QUEUE: "${NOVA_AI_MAX_QUEUE:-16}"
       NOVA_AI_QUEUE_WAIT_SECONDS: "${NOVA_AI_QUEUE_WAIT_SECONDS:-8}"
+      NOVA_AI_EUR_PER_MTOK_INPUT: "${NOVA_AI_EUR_PER_MTOK_INPUT:-}"
+      NOVA_AI_EUR_PER_MTOK_OUTPUT: "${NOVA_AI_EUR_PER_MTOK_OUTPUT:-}"
+      NOVA_AI_REFINE_EUR_PER_CALL: "${NOVA_AI_REFINE_EUR_PER_CALL:-}"
+      NOVA_LICENCE: "${NOVA_LICENCE:-}"
+      NOVA_VERTEX_CREDENTIALS_FILE: "${NOVA_VERTEX_CREDENTIALS_FILE:-}"
 
       # -- Reseau et bornes ----------------------------------------------------
       # `X-Forwarded-For` n'est lu que si la connexion vient d'une adresse
@@ -200,6 +209,29 @@ services:
         condition: service_healthy
     restart: unless-stopped
     profiles: ["connector"]
+
+  # ---------------------------------------------------------------------------
+  # Agent du panel de l'editeur (5.3) : coupe tant que le contrat n'ouvre pas le
+  # profil `panel`. Il ne lit que les chiffres de /api/metrics et les journaux
+  # d'avertissement du service `api`, deja caviardes. Le jeton est ici sa
+  # valeur brute : l'agent ne lit pas les chemins file://.
+  # ---------------------------------------------------------------------------
+  alloy:
+    image: grafana/alloy:v1.5.1
+    command: ["run", "/etc/alloy/config.alloy", "--storage.path=/var/lib/alloy"]
+    environment:
+      NOVA_METRICS_TOKEN: "${NOVA_METRICS_TOKEN:-}"
+      NOVA_PANEL_SCHOOL: "${NOVA_PANEL_SCHOOL:-}"
+      NOVA_PANEL_PROMETHEUS_URL: "${NOVA_PANEL_PROMETHEUS_URL:-}"
+      NOVA_PANEL_LOKI_URL: "${NOVA_PANEL_LOKI_URL:-}"
+    volumes:
+      - ./deploy/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    profiles: ["panel"]
 
 volumes:
   nova-data:

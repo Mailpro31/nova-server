@@ -89,6 +89,9 @@ export const CAPABILITY = {
   // trois types : une par type ferait grossir la matrice sans repondre a
   // une question differente.
   contentManage: "content_manage",
+  // Mettre une personne dans un groupe ou l'en retirer : la mission handicap
+  // ouvre l'accès sans recevoir le reste de la console.
+  groupMembersManage: "group_members_manage",
 } as const;
 
 /** Secondes restantes avant expiration, jamais négatives. */

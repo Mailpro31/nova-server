@@ -1,0 +1,36 @@
+# Les alertes du panel (5.5), visibles dans Grafana (Alerting > Alert rules).
+groups:
+  - name: nova
+    rules:
+      - alert: EcoleMuette
+        # Une école qui envoyait il y a une heure et n'envoie plus rien.
+        expr: count by (school) (up offset 1h) unless count by (school) (up)
+        for: 15m
+        labels: {severity: critical}
+        annotations:
+          summary: "{{ $labels.school }} n'envoie plus de chiffres depuis 15 minutes"
+
+      - alert: ServeurInjoignable
+        expr: up == 0
+        for: 10m
+        labels: {severity: critical}
+        annotations:
+          summary: "Alloy de {{ $labels.school }} ne joint plus l'API Nova"
+
+      - alert: LicenceProcheDeLEcheance
+        expr: nova_licence_days_left < 30
+        labels: {severity: warning}
+        annotations:
+          summary: "Licence de {{ $labels.school }} : {{ $value }} jours restants"
+
+      - alert: ErreursServeur
+        expr: sum by (school) (increase(nova_http_errors_total[15m])) > 10
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.school }} : plus de 10 erreurs serveur en 15 minutes"
+
+      - alert: BasculesFrequentes
+        expr: sum by (school) (increase(nova_ai_fallback_total[1h])) > 50
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.school }} : plus de 50 bascules vers le moteur local en une heure"

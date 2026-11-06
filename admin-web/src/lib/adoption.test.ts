@@ -35,8 +35,10 @@ const UNMEASURED = {
 };
 
 const REPORT: AdoptionReport = {
-  min_people: 3,
+  min_people: 5,
   regular_days: 3,
+  version_days: 30,
+  versions: [{ version: "1.0.71", people: 4 }],
   measured_from: "2026-09-29",
   weeks: [
     { week_start: "2026-09-21", ...UNMEASURED },
@@ -52,6 +54,11 @@ const REPORT: AdoptionReport = {
       partial: true,
     },
     { week_start: "2026-10-05", ...MASKED },
+  ],
+  retention: { days: 30, started: 5, continuing: 4, masked: false },
+  survey: [
+    { month: "2026-09", answers: 6, average: 4.2 },
+    { month: "2026-10", answers: null, average: null },
   ],
   months: [
     {
@@ -87,7 +94,13 @@ describe("adoption", () => {
     );
     expect(lines[1]).toBe("semaine;2026-09-21;;;;;;non mesuré");
     expect(lines[2]).toBe("semaine;2026-09-28;4;2;120;30;45.5;partiel");
-    expect(lines[3]).toBe("semaine;2026-10-05;;;;;;moins de 3 personnes");
+    expect(lines[3]).toBe("semaine;2026-10-05;;;;;;moins de 5 personnes");
     expect(lines[4]).toBe("mois;2026-09;5;;300;60;110;");
+    expect(lines.slice(6)).toEqual([
+      "indicateur;periode;valeur;remarque",
+      "continuent_apres_un_mois;30 jours;4/5;",
+      "sondage_moyenne_sur_5;2026-09;4.2;6 réponses",
+      "sondage_moyenne_sur_5;2026-10;;moins de 5 personnes",
+    ]);
   });
 });

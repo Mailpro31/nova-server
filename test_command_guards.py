@@ -449,3 +449,64 @@ class CommandRouteTests(AdminTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# Banc du PC fixe (02/11) : corrections justes de Gemini, toutes refusées en
+# « text-not-kept » par le serveur en service (ab3dd3b).
+BANC_PHONETIQUE = (
+    ("la loi d'om relit la tention é l'intansité",
+     "La loi d'Ohm relie la tension et l'intensité."),
+    ("il a oublier ses note de cour", "Il a oublié ses notes de cours."),
+    ("on a pas u le tant de finir lexercice", "On n'a pas eu le temps de finir l'exercice."),
+    ("le nonbre de reinolds et inférieur a 2300", "Le nombre de Reynolds est inférieur à 2300."),
+    ("je sai pas ou et la sale B204", "Je ne sais pas où est la salle B204."),
+    ("il fau aplicé le téorème de pitagor", "Il faut appliquer le théorème de Pythagore."),
+    ("lé résultat son dan le tablo", "Les résultats sont dans le tableau."),
+    ("je conpren pa pourkoi la limite et infini",
+     "Je ne comprends pas pourquoi la limite est infinie."),
+    ("es ce que tu peu menvoyé le cour", "Est-ce que tu peux m'envoyer le cours ?"),
+    ("la soutenanse et décalé au 19 octobre", "La soutenance est décalée au 19 octobre."),
+    ("le flu turbulan crée des tourbillon", "Le flux turbulent crée des tourbillons."),
+    ("jaurai du marqué la réponse en kilojoule",
+     "J'aurais dû marquer la réponse en kilojoules."),
+)
+
+
+class PhoneticCorrectionTests(unittest.TestCase):
+    """1.3 : un élève dys écrit les mots comme ils se prononcent. Corrigés, ils
+    ne se retrouvent plus tels quels, mais ils sonnent pareil."""
+
+    def test_phonetic_spelling_corrected_is_accepted(self):
+        for text, corrected in (
+            ("jé pa konpri lé zexo de méca", "Je n'ai pas compris les exos de méca."),
+            ("il fo kalkulé la dérivé de la fonksion", "Il faut calculer la dérivée de la fonction."),
+            ("sa marche pa kan je lance le programe",
+             "Ça ne marche pas quand je lance le programme."),
+            ("le profeseur a di ke le partièl et repousé a jeudi",
+             "Le professeur a dit que le partiel est repoussé à jeudi."),
+        ) + BANC_PHONETIQUE:
+            with self.subTest(text=text):
+                self.assertIsNone(main.command_refusal(IMPROVE, text, corrected))
+
+    def test_a_rewrite_that_merely_sounds_close_stays_refused(self):
+        self.assertEqual(
+            main.command_refusal(IMPROVE, "sa marche pa kan je lance le programe",
+                                 "Le logiciel ne fonctionne pas au démarrage."),
+            "text-not-kept")
+
+    def test_a_phonetic_correction_that_adds_or_negates_stays_refused(self):
+        # Pièges du PC fixe (02/11) : chaque mot de l'élève s'entend encore,
+        # mais la sortie ajoute un mot ou perd la négation.
+        for text, invented in (
+            ("il fo kalkulé la dérivé de f", "Il faut calculer la dérivée seconde de f."),
+            ("il fau aplicé le téorème de pitagor", "Il faut appliquer le théorème de Thalès."),
+            ("je conpren pa pourkoi la limite et infini",
+             "Je comprends pourquoi la limite est infinie."),
+        ):
+            with self.subTest(invented=invented):
+                self.assertEqual(main.command_refusal(IMPROVE, text, invented), "text-not-kept")
+
+    def test_heard_word_ratio(self):
+        self.assertEqual(main.heard_word_ratio("il fo kalkulé", "Il faut calculer."), 1.0)
+        self.assertLess(main.heard_word_ratio("il fo kalkulé", "On doit dériver."), 0.75)
+        self.assertIsNone(main.heard_word_ratio("", "Ok."))

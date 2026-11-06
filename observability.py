@@ -77,8 +77,31 @@ FORBIDDEN_FIELDS = frozenset(
         "secret", "client_secret", "password", "authorization", "code",
         "prompt", "transcript", "text", "content", "clipboard", "audio",
         "email", "message",
+        # Ce qu'une dictée devient en chemin (5.6) : aucun de ces noms ne sert
+        # aujourd'hui, ils ferment la porte avant l'envoi vers le panel.
+        "transcription", "instruction", "input", "output", "answer",
+        "vocabulary", "dictation", "snippet",
     }
 )
+# Une adresse glissée dans une valeur libre (un motif, une erreur) : masquée.
+_EMAIL = re.compile(r"[^\s@\"'<>]+@[^\s@\"'<>]+\.[A-Za-z]{2,}")
+
+
+def _scrub(key: str, value: Any) -> Any:
+    if key.lower() in FORBIDDEN_FIELDS:
+        # Le champ est nommé, sa valeur ne l'est pas : un opérateur voit
+        # qu'il y avait quelque chose, sans que la chose sorte.
+        return "<redacted>"
+    if key == "style":
+        # Un Style personnalisé peut porter le nom que l'élève lui a donné.
+        return style_label(value)
+    if isinstance(value, dict):
+        return {name: _scrub(str(name), item) for name, item in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_scrub(key, item) for item in value]
+    if isinstance(value, str):
+        return _EMAIL.sub("<email>", value)
+    return value
 
 
 class StructuredFormatter(logging.Formatter):
@@ -95,12 +118,7 @@ class StructuredFormatter(logging.Formatter):
         if request_id:
             payload["request_id"] = request_id
         for key, value in getattr(record, "fields", {}).items():
-            if key.lower() in FORBIDDEN_FIELDS:
-                # Le champ est nommé, sa valeur ne l'est pas : un opérateur
-                # voit qu'il y avait quelque chose, sans que la chose sorte.
-                payload[key] = "<redacted>"
-            else:
-                payload[key] = value
+            payload[key] = _scrub(key, value)
         return json.dumps(payload, default=str, sort_keys=True)
 
 
@@ -118,13 +136,19 @@ def configure_logging(level: str = "INFO", stream: Any = None) -> logging.Logger
 
 
 def log(event: str, level: str = "info", **fields: Any) -> None:
-    """Journalise un événement. Les champs interdits sont caviardés."""
+    """Journalise un événement. Les champs interdits sont caviardés.
+
+    Les événements de `_BUSINESS_EVENTS` sont aussi comptés pour Prometheus
+    (point 5.1) : compter ici, là où ils sont déjà nommés, évite de semer des
+    compteurs à côté de chaque `log` du service.
+    """
     logger = logging.getLogger("nova")
     logger.log(
         getattr(logging, level.upper(), logging.INFO),
         event,
         extra={"fields": fields, "request_id": current_request_id()},
     )
+    METRICS.count_event(event, fields)
 
 
 # --------------------------------------------------------------- métriques
@@ -153,6 +177,40 @@ def route_class(path: str) -> str:
     return "other"
 
 
+# Séries métier (point 5.1). Liste FERMÉE : un événement absent d'ici n'est pas
+# compté, et chaque étiquette est lue dans un champ nommé de l'événement.
+_BUSINESS_EVENTS = {
+    "reformulation.refused": ("nova_rewrite_refused_total", ("style", "reason")),
+    "command.refused": ("nova_command_refused_total", ("kind", "reason")),
+    "ai.text_fallback": ("nova_ai_fallback_total", ("reason",)),
+    "transcription.refine_failed": ("nova_refine_total", ()),
+    "transcription.refine_skipped": ("nova_refine_total", ()),
+    "transcription.refine_rejected": ("nova_refine_total", ()),
+}
+# Une valeur d'étiquette est un code (« content-dropped », « AI_RUNTIME_TIMEOUT »).
+# Tout le reste devient « other » : un texte, une adresse, un nom n'en sortent pas.
+_LABEL_VALUE = re.compile(r"^[A-Za-z0-9_.-]{1,48}$")
+# Seuls les Styles intégrés du poste deviennent une étiquette. Un Style personnel
+# ou de l'école porte un identifiant, parfois un nom : il est compté « custom ».
+_BUILTIN_STYLE = re.compile(r"^(?:default_[a-z_]{1,40}|nova_style_[a-z_]{1,40})$")
+# Étapes d'une dictée, pour l'histogramme de latence.
+STAGES = ("transcription", "relecture", "mise_en_forme", "commande", "autre")
+
+
+def label_value(value: Any) -> str:
+    text = str(value or "")
+    return text if _LABEL_VALUE.match(text) else "other"
+
+
+def style_label(value: Any) -> str:
+    text = str(value or "")
+    return text if _BUILTIN_STYLE.match(text) else "custom"
+
+
+def _labels(pairs: dict[str, str]) -> str:
+    return ",".join(f'{key}="{pairs[key]}"' for key in sorted(pairs))
+
+
 class Metrics:
     """Compteurs et histogrammes, au format d'exposition Prometheus.
 
@@ -162,6 +220,8 @@ class Metrics:
     """
 
     _BUCKETS = (0.005, 0.025, 0.1, 0.5, 1.0, 2.5, 10.0)
+    # Une étape de dictée se compte en secondes : relecture ≈ 2 s, Style ≈ 0,5 s.
+    _STAGE_BUCKETS = (0.25, 0.5, 1.0, 2.0, 3.0, 5.0, 8.0, 15.0, 30.0)
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -171,6 +231,12 @@ class Metrics:
         self._latency_count: dict[str, int] = {}
         self._latency_buckets: dict[tuple[str, float], int] = {}
         self._events: Counter = Counter()
+        # Séries métier : rendues seulement derrière le jeton (`render(business=…)`).
+        self._business: Counter = Counter()
+        self._tokens: Counter = Counter()
+        self._stage_sum: dict[str, float] = {}
+        self._stage_count: dict[str, int] = {}
+        self._stage_buckets: dict[tuple[str, float], int] = {}
 
     def observe_request(self, route: str, status: int, seconds: float) -> None:
         family = f"{status // 100}xx"
@@ -190,7 +256,75 @@ class Metrics:
         with self._lock:
             self._events[(event, outcome)] += 1
 
-    def render(self, gauges: dict[str, float] | None = None) -> str:
+    def count_event(self, event: str, fields: dict[str, Any]) -> None:
+        """Compte un événement de `_BUSINESS_EVENTS` ; ignore tous les autres."""
+        spec = _BUSINESS_EVENTS.get(event)
+        if spec is None:
+            return
+        family, names = spec
+        pairs = {name: style_label(fields.get(name)) if name == "style"
+                 else label_value(fields.get(name)) for name in names}
+        if family == "nova_refine_total":
+            pairs["outcome"] = event.rsplit("_", 1)[-1]
+        with self._lock:
+            self._business[(family, tuple(sorted(pairs.items())))] += 1
+
+    def add_tokens(self, task: str, usage: dict[str, Any]) -> None:
+        """Jetons d'entrée et de sortie d'un appel de texte, par tâche."""
+        task = label_value(task)
+        with self._lock:
+            for key, kind in (("prompt_tokens", "prompt"), ("completion_tokens", "completion")):
+                value = usage.get(key)
+                if isinstance(value, int) and value > 0:
+                    self._tokens[(task, kind)] += value
+
+    def observe_stage(self, stage: str, seconds: float) -> None:
+        """Durée d'une étape de dictée (transcription, relecture, mise en forme…)."""
+        stage = stage if stage in STAGES else "autre"
+        with self._lock:
+            self._stage_sum[stage] = self._stage_sum.get(stage, 0.0) + seconds
+            self._stage_count[stage] = self._stage_count.get(stage, 0) + 1
+            for bucket in self._STAGE_BUCKETS:
+                if seconds <= bucket:
+                    key = (stage, bucket)
+                    self._stage_buckets[key] = self._stage_buckets.get(key, 0) + 1
+
+    def _render_business(self, lines: list[str]) -> None:
+        """Les séries métier. Appelée sous le verrou."""
+        families: dict[str, list[tuple[tuple, int]]] = {}
+        for (family, pairs), value in self._business.items():
+            families.setdefault(family, []).append((pairs, value))
+        helps = {
+            "nova_rewrite_refused_total": "Mises en forme refusées, par motif et par Style intégré.",
+            "nova_command_refused_total": "Commandes refusées, par type et par motif.",
+            "nova_ai_fallback_total": "Bascules vers le moteur de secours, par raison.",
+            "nova_refine_total": "Relectures audio qui n'ont pas servi, par issue.",
+        }
+        for family in sorted(families):
+            lines.append(f"# HELP {family} {helps[family]}")
+            lines.append(f"# TYPE {family} counter")
+            for pairs, value in sorted(families[family]):
+                lines.append(f"{family}{{{_labels(dict(pairs))}}} {value}")
+        lines.append("# HELP nova_ai_tokens_total Jetons des appels de texte, par tâche.")
+        lines.append("# TYPE nova_ai_tokens_total counter")
+        for (task, kind), value in sorted(self._tokens.items()):
+            lines.append(f'nova_ai_tokens_total{{kind="{kind}",task="{task}"}} {value}')
+        lines.append("# HELP nova_stage_seconds Durée des étapes d'une dictée.")
+        lines.append("# TYPE nova_stage_seconds histogram")
+        for stage in sorted(self._stage_count):
+            for bucket in self._STAGE_BUCKETS:
+                lines.append(f'nova_stage_seconds_bucket{{stage="{stage}",le="{bucket}"}} '
+                             f"{self._stage_buckets.get((stage, bucket), 0)}")
+            total = self._stage_count[stage]
+            lines.append(f'nova_stage_seconds_bucket{{stage="{stage}",le="+Inf"}} {total}')
+            lines.append(f'nova_stage_seconds_sum{{stage="{stage}"}} {self._stage_sum[stage]:.6f}')
+            lines.append(f'nova_stage_seconds_count{{stage="{stage}"}} {total}')
+
+    def render(self, gauges: dict[str, float] | None = None,
+               business: list[tuple[str, str, dict[str, str], float]] | None = None) -> str:
+        """Le texte d'exposition. `business` (une liste, même vide) ajoute les
+        séries métier ; `None`, le cas sans jeton, n'en rend aucune. Chaque
+        élément de `business` est (nom, aide, étiquettes, valeur), une jauge."""
         lines: list[str] = []
         with self._lock:
             lines.append("# HELP nova_http_requests_total HTTP requests by route class.")
@@ -233,10 +367,20 @@ class Metrics:
                 lines.append(
                     f'nova_events_total{{event="{event}",outcome="{outcome}"}} {value}'
                 )
+            if business is not None:
+                self._render_business(lines)
 
         for name, value in sorted((gauges or {}).items()):
             lines.append(f"# TYPE nova_{name} gauge")
             lines.append(f"nova_{name} {value}")
+        declared: set[str] = set()
+        for name, help_text, pairs, value in business or ():
+            if name not in declared:
+                declared.add(name)
+                lines.append(f"# HELP {name} {help_text}")
+                lines.append(f"# TYPE {name} gauge")
+            labels = f"{{{_labels(pairs)}}}" if pairs else ""
+            lines.append(f"{name}{labels} {value}")
         return "\n".join(lines) + "\n"
 
     def reset(self) -> None:
@@ -247,6 +391,11 @@ class Metrics:
             self._latency_count.clear()
             self._latency_buckets.clear()
             self._events.clear()
+            self._business.clear()
+            self._tokens.clear()
+            self._stage_sum.clear()
+            self._stage_count.clear()
+            self._stage_buckets.clear()
 
 
 METRICS = Metrics()

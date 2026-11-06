@@ -26,12 +26,18 @@ from pathlib import Path
 
 import uvicorn
 
-import local_channel
-import main
+import observability
+
+LOG_LEVEL = os.getenv("NOVA_LOG_LEVEL", "info")
+# Avant `import main` : ses avertissements de démarrage sortiraient sinon par le
+# lastResort de Python, nus et sans champs.
+observability.configure_logging(LOG_LEVEL)
+
+import local_channel  # noqa: E402
+import main  # noqa: E402
 
 PUBLIC_HOST = os.getenv("NOVA_HOST", "0.0.0.0")
 PUBLIC_PORT = int(os.getenv("NOVA_PORT", "8000"))
-LOG_LEVEL = os.getenv("NOVA_LOG_LEVEL", "info")
 
 
 async def restrict_socket(path: str, mode: int) -> None:

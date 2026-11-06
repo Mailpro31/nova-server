@@ -19,8 +19,10 @@ import {
   choiceOf,
   countOverrides,
   dictationMinutes,
+  examUntil,
   sameOverrides,
   withDictationMinutes,
+  withExamHours,
   type GroupOverrides,
   type OverrideChoice,
 } from "../lib/groupPolicies";
@@ -108,6 +110,7 @@ function GroupEditor({
   const [failure, setFailure] = useState<string | null>(null);
   const [conflict, setConflict] = useState(false);
   const dirty = !sameOverrides(draft, group.overrides);
+  const exam = examUntil(draft);
   const editable = mayManage && !busy;
 
   async function save() {
@@ -195,6 +198,42 @@ function GroupEditor({
             )
           }
         />
+      </div>
+
+      <h3 className="policy-group">{t.groupPolicies.examTitle}</h3>
+      <div className="policy-setting">
+        <div>
+          <strong>
+            {exam ? t.groupPolicies.examRunning(new Date(exam * 1000)) : t.groupPolicies.examOff}
+          </strong>
+          <p className="policy-hint" style={{ margin: 0 }}>
+            {t.groupPolicies.examBody}
+          </p>
+        </div>
+        <select
+          className="block-type"
+          aria-label={t.groupPolicies.examTitle}
+          value=""
+          disabled={!editable}
+          onChange={(event) =>
+            setDraft(
+              withExamHours(
+                draft,
+                event.target.value === "stop" ? null : Number(event.target.value),
+              ),
+            )
+          }
+        >
+          <option value="" disabled>
+            {exam ? t.groupPolicies.examChange : t.groupPolicies.examStart}
+          </option>
+          {[1, 2, 3, 4].map((hours) => (
+            <option key={hours} value={hours}>
+              {t.groupPolicies.examHours(hours)}
+            </option>
+          ))}
+          {exam && <option value="stop">{t.groupPolicies.examStop}</option>}
+        </select>
       </div>
 
       {editable && countOverrides(draft) > 0 && (

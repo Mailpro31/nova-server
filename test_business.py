@@ -329,7 +329,7 @@ class BusinessSecurityRoleTests(AdminTestCase):
             # `content_editor` est un role d'organisation, pas propre a
             # Business : il existe aussi pour une ecole.
             frozenset({"member", "organization_admin", "it_admin", "read_only",
-                       "content_editor"}),
+                       "content_editor", "access_manager"}),
         )
 
     def test_a_business_member_cannot_change_the_policy(self):
@@ -615,6 +615,12 @@ class BusinessPolicyAndPackageTests(AdminTestCase):
                 # Cle Core : plafond de mises au propre par membre et par jour
                 # (n° 21 ter), quelle que soit la nature de l'organisation.
                 "daily_rewrites_per_member",
+                # Cle Core : conservation des dictees passees sur le poste (2.7).
+                "past_dictations_days",
+                # Cle Core : Rapports de plantage du poste (5.2).
+                "crash_reports_enabled",
+                # Cle Core : Mode examen d'un groupe (1.8).
+                "exam_until",
                 # Categories de l'application, communes a toute organisation.
                 "styles_enabled",
                 "personal_styles_enabled",

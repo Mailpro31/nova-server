@@ -6,6 +6,7 @@
  */
 
 import type { AdoptionReport } from "./adoption";
+import type { SubscriptionReport } from "./subscription";
 import type { UsageMetrics } from "./usageMetrics";
 import { ApiClient } from "./api";
 import type {
@@ -740,6 +741,10 @@ export class ControlPlane {
   /** L'adoption par semaine et par mois : des comptes, aucun nom. */
   adoption() {
     return this.client.request<AdoptionReport>("/api/control/organization/adoption");
+  }
+
+  subscription() {
+    return this.client.request<SubscriptionReport>("/api/control/organization/subscription");
   }
 
   usageMetrics(hours: number, members = false) {
