@@ -13069,8 +13069,9 @@ _WORD_EDGES = ".,;:!?«»\"'()[]…"
 def changed_words(heard: str, read: str) -> list[str]:
     """Les mots de la relecture qui ne viennent pas de Whisper : les mots à vérifier (1.2).
 
-    Banc du 06/11 sur 600 dictées : 88,9 % sont vraiment faux, et ils couvrent
-    54,6 % des erreurs ; mieux que la confiance de faster-whisper (62,5 %).
+    Banc du 06/11 sur 600 dictées : 88,9 % des mots de Whisper que la relecture
+    change étaient vraiment faux, et ils couvrent 54,6 % des erreurs ; mieux que la
+    confiance de faster-whisper (62,5 %). Le mot renvoyé est celui de la relecture.
     """
     key = lambda word: word.strip(_WORD_EDGES).casefold()  # noqa: E731
     before, after = [key(w) for w in heard.split()], read.split()
