@@ -13063,6 +13063,27 @@ def joined_room_codes(transcript: str, refined: str) -> str:
 SINGLE_CALL_STYLE: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
     "single_call_style", default=None)
 
+_WORD_EDGES = ".,;:!?«»\"'()[]…"
+
+
+def changed_words(heard: str, read: str) -> list[str]:
+    """Les mots de la relecture qui ne viennent pas de Whisper : les mots à vérifier (1.2).
+
+    Banc du 06/11 sur 600 dictées : 88,9 % sont vraiment faux, et ils couvrent
+    54,6 % des erreurs ; mieux que la confiance de faster-whisper (62,5 %).
+    """
+    key = lambda word: word.strip(_WORD_EDGES).casefold()  # noqa: E731
+    before, after = [key(w) for w in heard.split()], read.split()
+    found: list[str] = []
+    matcher = difflib.SequenceMatcher(None, before, [key(w) for w in after], autojunk=False)
+    for tag, _, _, start, end in matcher.get_opcodes():
+        if tag in ("replace", "insert"):
+            for word in after[start:end]:
+                word = word.strip(_WORD_EDGES)
+                if word and word not in found:
+                    found.append(word)
+    return found
+
 
 async def refined_transcription(audio: bytes, filename: str, transcript: str,
                                 vocabulary: list[tuple[str, str]]) -> str:
@@ -13169,10 +13190,13 @@ async def transcribe_audio(
     except Exception:  # noqa: BLE001 — la dictée d'abord
         observability.log("transcription_vocabulary_unavailable", level="warning")
         vocabulary = []
-    text = result.text
-    if dictated and refine:
-        text = await refined_transcription(audio, file.filename or "audio.wav", text, vocabulary)
-    return {"text": enforce_vocabulary(text, vocabulary)}
+    heard = enforce_vocabulary(result.text, vocabulary)
+    if not (dictated and refine):
+        return {"text": heard}
+    text = enforce_vocabulary(await refined_transcription(
+        audio, file.filename or "audio.wav", result.text, vocabulary), vocabulary)
+    doubtful = changed_words(heard, text)
+    return {"text": text, **({"doubtful": doubtful} if doubtful else {})}
 
 
 @app.post("/api/transcribe")
@@ -14880,7 +14904,8 @@ async def dictate(
     try:
         heard = await transcribe(file, user, account, content_length, language)
         text = heard["text"]
-        result = {"relue": text, "final": text, "unclear": bool(heard.get("unclear"))}
+        result = {"relue": text, "final": text, "unclear": bool(heard.get("unclear")),
+                  "doubtful": heard.get("doubtful", [])}
         if not text.strip() or result["unclear"] or len(text) > MAX_INFERENCE_TEXT_CHARS:
             return result
         try:
