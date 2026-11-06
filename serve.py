@@ -28,6 +28,7 @@ import uvicorn
 
 import local_channel
 import main
+import observability
 
 PUBLIC_HOST = os.getenv("NOVA_HOST", "0.0.0.0")
 PUBLIC_PORT = int(os.getenv("NOVA_PORT", "8000"))
@@ -55,6 +56,8 @@ async def restrict_socket(path: str, mode: int) -> None:
 
 
 async def run() -> int:
+    # Sans ce handler, les événements sortent par le lastResort de Python : nus, et WARNING au moins.
+    observability.configure_logging(LOG_LEVEL)
     plan = local_channel.transport_plan()
     if not plan["available"]:
         # Fail-closed. Retomber en silence sur un transport plus faible ferait

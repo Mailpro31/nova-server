@@ -57,6 +57,10 @@ class StructuredRedactionTests(unittest.TestCase):
         self.assertNotIn(EMAIL, line)
         self.assertIn("refus pour", line)
 
+    def test_a_custom_style_id_never_reaches_the_journal(self):
+        self.assertIn('"style": "custom"', self.render(style="mon_style_maths_de_lea"))
+        self.assertIn('"style": "nova_style_messages"', self.render(style="nova_style_messages"))
+
 
 class EndToEndLogTests(AdminTestCase):
     def setUp(self):
