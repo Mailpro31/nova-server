@@ -132,3 +132,27 @@ class RefinedTranscriptionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DoubtfulWordsTests(AdminTestCase):
+    """1.2 : les mots que la relecture a changés sont les mots à vérifier.
+
+    Banc du 06/11 (600 dictées) : précision 88,9 %, rappel 54,6 %.
+    """
+
+    def test_only_the_words_the_reading_changed_are_doubtful(self):
+        self.assertEqual(main.changed_words("le nombre de à Maquin", "Le nombre de Mach."),
+                         ["Mach"])
+        self.assertEqual(main.changed_words("la portance augmente", "La portance augmente."), [])
+        self.assertEqual(main.changed_words("", "Bonjour."), ["Bonjour"])
+
+    def test_the_dictation_route_returns_them(self):
+        from test_dictation_language import engine_saying
+        token = self.sign_in("etudiant@example.com")
+        with patch.object(main.ORGANIZATION_AI_ROUTER, "transcribe",
+                          engine_saying("le nombre de à Maquin", [])), \
+                patch.object(main, "AUDIO_REFINER", FakeRefiner("Le nombre de Mach.")):
+            body = self.client.post(
+                "/api/transcribe?language=fr", headers=self.auth(token),
+                files={"file": ("recording.wav", b"RIFF0000WAVE", "audio/wav")}).json()
+        self.assertEqual((body["text"], body["doubtful"]), ("Le nombre de Mach.", ["Mach"]))
