@@ -161,6 +161,15 @@ transcriptions complètes. Une relecture en échec, vide, trop longue ou truffé
 termes du vocabulaire non entendus est écartée : Whisper reste (`transcription.refine_*`
 dans le journal). L'audio part alors aussi chez le fournisseur.
 
+Gemini via Vertex AI (3.1) : avec `NOVA_VERTEX_CREDENTIALS_FILE` (le fichier JSON du
+compte de service de l'école, monté en secret Docker, jamais dans la console), le moteur
+texte externe et la relecture audio s'authentifient par un jeton OAuth d'une heure,
+renouvelé seul. Les adresses restent celles du format OpenAI de Vertex, par exemple
+`NOVA_AI_TEXT_BASE_URL=https://europe-west1-aiplatform.googleapis.com/v1/projects/<projet>/locations/europe-west1/endpoints/openapi`
+et `NOVA_AI_TEXT_MODEL=google/gemini-2.5-flash-lite` (avec `NOVA_AI_ALLOW_PUBLIC_ENDPOINT=1`).
+Le moteur local garde sa propre clé et reste le secours. À vérifier au banc avant la
+bascule : que la relecture `input_audio` est acceptée par Vertex sous ce format.
+
 RGPD : les dictées partent alors chez ce fournisseur. Pour de vrais élèves, prendre
 un fournisseur direct avec un contrat de sous-traitance (DPA) et un hébergement
 dans l'UE (Mistral par défaut), et en informer l'établissement. OpenRouter, un

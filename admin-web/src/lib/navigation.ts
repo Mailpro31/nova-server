@@ -31,7 +31,7 @@ export const NAV_SECTIONS: readonly NavSection[] = [
   { id: "people", pages: ["members", "groups", "administrators", "provisioning"] },
   { id: "features", pages: ["configuration", "learn"] },
   { id: "content", pages: ["packages"] },
-  { id: "limits", pages: ["limits", "usage", "adoption"] },
+  { id: "limits", pages: ["limits", "usage", "adoption", "subscription"] },
   { id: "signIn", pages: ["identity", "security"] },
   { id: "audit", pages: ["audit"] },
   { id: "infrastructure", pages: ["deployment", "diagnostics"] },

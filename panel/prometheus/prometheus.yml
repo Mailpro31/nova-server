@@ -1,0 +1,6 @@
+# Les écoles poussent leurs chiffres (remote write) : rien à aller chercher.
+global:
+  evaluation_interval: 1m
+
+rule_files:
+  - /etc/prometheus/alerts.yml

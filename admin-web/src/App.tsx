@@ -38,6 +38,7 @@ import { Members } from "./pages/Members";
 import { Packages } from "./pages/Packages";
 import { Provisioning } from "./pages/Provisioning";
 import { Overview } from "./pages/Overview";
+import { Subscription } from "./pages/Subscription";
 import { AuditLog, Configuration, Deployment, Diagnostics, Security } from "./pages/Rest";
 
 const PAGES = [
@@ -56,6 +57,7 @@ const PAGES = [
   { path: "limits", label: t.nav.limits, element: <Limits /> },
   { path: "usage", label: t.usageMetrics.title, element: <UsageMetrics /> },
   { path: "adoption", label: t.adoption.title, element: <Adoption /> },
+  { path: "subscription", label: t.subscription.title, element: <Subscription /> },
   { path: "deployment", label: t.nav.deployment, element: <Deployment /> },
   { path: "configuration", label: t.nav.configuration, element: <Configuration /> },
   { path: "security", label: t.nav.security, element: <Security /> },

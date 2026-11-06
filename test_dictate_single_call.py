@@ -51,6 +51,13 @@ class DictateSingleCallTests(AdminTestCase):
         self.assertIn(heard, self.seen_texts[0])
         self.assertEqual(body["final"], self.reformulate(heard))
 
+    def test_an_exam_returns_the_dictation_untouched(self):
+        heard = "je révise la dérivée d'une constante"
+        with patch.object(main, "exam_active", lambda settings: True):
+            body = self.dictate(heard)
+        self.assertEqual((body["final"], body.get("exam")), (heard, True))
+        self.assertEqual(self.seen_texts, [])
+
     def test_an_empty_dictation_never_reaches_the_style(self):
         body = self.dictate("Euh...")
         self.assertEqual((body["relue"], body["final"]), ("", ""))

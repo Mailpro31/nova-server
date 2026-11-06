@@ -110,6 +110,25 @@ class RefinedTranscriptionTests(unittest.TestCase):
         long_answer = " ".join(["mot"] * 30)
         self.assertEqual(self.refined(FakeRefiner(long_answer)), "le nombre de à Maquin")
 
+    def test_a_reading_that_drops_most_of_the_dictation_is_rejected(self):
+        # Banc 0.1 du PC fixe (02/11) : une dictée relue « i ».
+        self.assertEqual(self.refined(FakeRefiner("I")), "le nombre de à Maquin")
+        self.assertEqual(self.refined(FakeRefiner("Le nombre de Mach.")), "Le nombre de Mach.")
+        # Une dictée très courte peut légitimement perdre un mot.
+        self.assertEqual(self.refined(FakeRefiner("Oui."), transcript="euh oui"), "Oui.")
+
+    def test_good_readings_that_shorten_a_lot_stay_accepted(self):
+        # Banc des 600 relues (PC fixe, 02/11) : refusées à tort avec un seuil à 50 %.
+        for heard, read in (
+            ("U or Mule U Aigle R I.", "U = RI."),
+            ("Et euh c'est la formule X égale moins B plus ou moins Ressin de Delta Sur de XA.",
+             "Et euh c'est la formule x = (-b ± √Δ)/2a."),
+            ("Lua, Trapich, S. Privolu, Makridi, 1 octobre, G.E. V. Daya, Makridi, "
+             "11 december, A.H.M. 9-8-30, Itibola.", "mercredi 11 décembre à 9h30"),
+        ):
+            with self.subTest(read=read):
+                self.assertEqual(self.refined(FakeRefiner(read), transcript=heard), read)
+
 
 if __name__ == "__main__":
     unittest.main()

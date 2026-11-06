@@ -283,6 +283,11 @@ const POLICY_GROUPS: {
         // cela coupe la dictée ? Non, et l'écran le dit.
         body: `${t.policies.fileImportBody} ${t.policies.dictationSafe}`,
       },
+      {
+        key: "crash_reports_enabled",
+        title: t.policies.crashReportsTitle,
+        body: t.policies.crashReportsBody,
+      },
     ],
   },
   {

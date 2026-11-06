@@ -1,0 +1,144 @@
+{
+  "uid": "nova-usage",
+  "title": "Nova — usage",
+  "description": "Étapes servies, requêtes, actifs du mois.",
+  "tags": [
+    "nova"
+  ],
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "school",
+        "label": "École",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "nova-prometheus"
+        },
+        "query": "label_values(up, school)",
+        "includeAll": true,
+        "multi": true,
+        "current": {}
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Étapes servies par jour",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nova-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (stage) (increase(nova_stage_seconds_count{school=~\"$school\"}[1d]))",
+          "legendFormat": "{{stage}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nova-prometheus"
+          }
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Requêtes par classe de route",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nova-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (route) (rate(nova_http_requests_total{school=~\"$school\"}[5m]))",
+          "legendFormat": "{{route}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nova-prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 3,
+      "title": "Actifs du mois",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nova-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (school) (nova_active_users{period=\"month\",school=~\"$school\"})",
+          "legendFormat": "{{school}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nova-prometheus"
+          }
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Événements d'exploitation",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nova-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (event) (increase(nova_events_total{school=~\"$school\"}[1h]))",
+          "legendFormat": "{{event}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nova-prometheus"
+          }
+        }
+      ]
+    }
+  ]
+}
