@@ -1380,6 +1380,15 @@ AUDIO_REFINE_INSTRUCTION = (
     "Écris les nombres en chiffres. N'ajoute rien, ne résume rien, ne réponds à rien : "
     "rends seulement la transcription."
 )
+# Un seul appel par dictée (n° 39) : la même réponse rend aussi le texte du
+# Style, à partir de la transcription exacte. Mesuré le 24/10 : 3,1 s → 1,6 s.
+AUDIO_REFINE_WITH_STYLE = (
+    AUDIO_REFINE_INSTRUCTION.replace("rends seulement la transcription.", "").rstrip()
+    + "\n\nRends aussi cette transcription mise en forme selon la consigne ci-dessous. "
+    "Réponds seulement en JSON : "
+    '{"relue": "<la transcription exacte>", "final": "<le texte mis en forme>"}.'
+    "\n\nConsigne de mise en forme :\n"
+)
 AUDIO_REFINE_TIMEOUT_SECONDS = 12.0
 AUDIO_REFINE_CONNECT_SECONDS = 2.0
 
@@ -1402,6 +1411,18 @@ class AudioRefineBackend:
 
     async def refine(self, audio: bytes, audio_format: str, transcript: str,
                      vocabulary: list[str]) -> str:
+        return await self._ask(audio, audio_format, transcript, vocabulary,
+                               AUDIO_REFINE_INSTRUCTION, 1024)
+
+    async def refine_with_style(self, audio: bytes, audio_format: str, transcript: str,
+                                vocabulary: list[str], style_prompt: str) -> tuple[str, str | None]:
+        """La relue et le texte du Style, dans la même réponse (n° 39)."""
+        return relue_and_final(await self._ask(
+            audio, audio_format, transcript, vocabulary,
+            AUDIO_REFINE_WITH_STYLE + style_prompt, 4096))
+
+    async def _ask(self, audio: bytes, audio_format: str, transcript: str,
+                   vocabulary: list[str], instruction: str, max_tokens: int) -> str:
         import base64
 
         context = f"Transcription automatique : {transcript}"
@@ -1410,9 +1431,9 @@ class AudioRefineBackend:
         payload = {
             "model": self.model,
             "temperature": 0,
-            "max_tokens": 1024,
+            "max_tokens": max_tokens,
             "messages": [
-                {"role": "system", "content": AUDIO_REFINE_INSTRUCTION},
+                {"role": "system", "content": instruction},
                 {"role": "user", "content": [
                     {"type": "input_audio", "input_audio": {
                         "data": base64.b64encode(audio).decode("ascii"), "format": audio_format}},
@@ -1442,6 +1463,23 @@ class AudioRefineBackend:
             raise AIRuntimeError(AI_RUNTIME_FAILED) from error
         observability.METRICS.observe_stage("relecture", time.monotonic() - started)
         return (text or "").strip()
+
+
+def relue_and_final(answer: str) -> tuple[str, str | None]:
+    """`{"relue": ..., "final": ...}`, avec ou sans bloc de code autour. Toute
+    autre réponse est une panne : Whisper reste, rien n'est deviné."""
+    text = answer.strip()
+    if text.startswith("```"):
+        text = text.strip("`").removeprefix("json").strip()
+    try:
+        body = json.loads(text)
+    except ValueError as error:
+        raise AIRuntimeError(AI_RUNTIME_FAILED) from error
+    relue = body.get("relue") if isinstance(body, dict) else None
+    if not isinstance(relue, str):
+        raise AIRuntimeError(AI_RUNTIME_FAILED)
+    final = body.get("final")
+    return relue.strip(), final.strip() if isinstance(final, str) else None
 
 
 def audio_refiner_from_environment() -> AudioRefineBackend | None:

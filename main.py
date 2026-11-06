@@ -16,6 +16,7 @@ import random
 import difflib
 import re
 import base64
+import contextvars
 import hashlib
 import hmac
 import html
@@ -13056,6 +13057,13 @@ def joined_room_codes(transcript: str, refined: str) -> str:
         refined)
 
 
+# Le Style de `/api/dictate` (n° 39) : la relecture audio le reçoit et dépose
+# ici le texte mis en forme ; la reformulation le reprend au lieu de rappeler
+# le modèle, sous les mêmes contrôles. Absent hors de `/api/dictate`.
+SINGLE_CALL_STYLE: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
+    "single_call_style", default=None)
+
+
 async def refined_transcription(audio: bytes, filename: str, transcript: str,
                                 vocabulary: list[tuple[str, str]]) -> str:
     """La transcription relue avec l'audio et le vocabulaire, ou celle de
@@ -13073,8 +13081,14 @@ async def refined_transcription(audio: bytes, filename: str, transcript: str,
     if time.monotonic() < _audio_refine_down_until:
         observability.log("transcription.refine_skipped", level="warning")
         return transcript
+    single_call = SINGLE_CALL_STYLE.get()
+    final = None
     try:
-        refined = await AUDIO_REFINER.refine(audio, audio_format, transcript, terms)
+        if single_call:
+            refined, final = await AUDIO_REFINER.refine_with_style(
+                audio, audio_format, transcript, terms, single_call["prompt"])
+        else:
+            refined = await AUDIO_REFINER.refine(audio, audio_format, transcript, terms)
     except AIRuntimeError as error:
         observability.log("transcription.refine_failed", level="warning", reason=error.code)
         if error.code in (AI_RUNTIME_UNAVAILABLE, AI_RUNTIME_TIMEOUT):
@@ -13088,6 +13102,8 @@ async def refined_transcription(audio: bytes, filename: str, transcript: str,
     if not refine_plausible(transcript, refined, terms):
         observability.log("transcription.refine_rejected", level="warning")
         return transcript
+    if single_call is not None:
+        single_call["final"] = final
     return joined_room_codes(transcript, refined)
 
 
@@ -14676,6 +14692,7 @@ class RewriteOutcome:
 
 async def rewrite_dictation(
     source_text: str, system_prompt: str, task_type: TaskType, style_id: str,
+    precomputed: str | None = None,
 ) -> RewriteOutcome:
     """Le circuit d'une reformulation, sans la route HTTP : reprises, Style,
     nettoyage, contrôles. La route et le banc de mesure l'appellent tous deux,
@@ -14684,11 +14701,26 @@ async def rewrite_dictation(
     Les contrôles comparent toujours à la dictée d'origine.
     """
     resolved = await resolve_self_corrections(source_text)
+    # Le texte du Style rendu avec la relecture (n° 39) : seulement pour une
+    # dictée sans reprise, qu'il a reçue telle quelle. Refusé, le Style est
+    # redemandé seul, comme avant.
+    if precomputed is not None and resolved == source_text:
+        outcome = checked_rewrite(source_text, precomputed, system_prompt, style_id, resolved)
+        observability.log("reformulation.single_call", level="info",
+                          accepted=outcome.text is not None, style=style_id or "")
+        if outcome.text is not None:
+            return outcome
     try:
         result = await execute_text(task_type, system_prompt, transcript_message(resolved))
     except RewriteTruncated:
         # Une reformulation coupée perd la fin de la dictée.
         return RewriteOutcome(None, "truncated", resolved)
+    return checked_rewrite(source_text, result, system_prompt, style_id, resolved)
+
+
+def checked_rewrite(source_text: str, result: str, system_prompt: str, style_id: str,
+                    resolved: str) -> RewriteOutcome:
+    """Nettoyage et contrôles d'une reformulation, comparée à la dictée d'origine."""
     result = without_unrequested_list(
         source_text, without_transcript_tags(without_reasoning(result)), style_id)
     if answer_repeats_instruction(system_prompt, result):
@@ -14708,31 +14740,10 @@ ENGINE_FAILURE_STATUSES = frozenset({429, 502, 503, 504})
 
 
 # --- reformulation (proxy vers LLM, API OpenAI-compatible)
-@app.post("/api/reformulate")
-async def reformulate(body: ReformulateRequest, user: str = Depends(current_user),
-                      account=Depends(current_account)):
-    # L'organisation vient du compte : en multi-tenant, l'organisation active de
-    # l'instance ne serait pas forcement la sienne.
-    organization_id = account_organization(account)
-    # Avant toute chose, et surtout avant la porte de capacite du routeur : une
-    # requete comptee apres coup a deja pris la place de quelqu'un d'autre.
-    enforce_inference_quota("text", user, organization_id)
-    context, snippets = writing_context(user, organization_id)
-    vocabulary = dictation_vocabulary(user, organization_id)
-    # Le modele recoit des reperes, jamais le contenu des snippets.
-    source_text, snippet_restores = protect_snippets(body.text, snippets)
-    # Ce qui est rendu quand la sortie du modele ne l'est pas : la dictee, avec
-    # ses snippets et son vocabulaire -- jamais un declencheur a la place.
-    fallback = {"text": restore_snippets(
-        enforce_vocabulary(source_text, vocabulary), snippet_restores) or body.text}
-    settings = member_policy(account)["settings"]
-    # En examen, la dictee revient telle quelle : aucune IA n'ecrit pour l'eleve.
-    if exam_active(settings):
-        return {**fallback, "exam": True}
-    cap = settings["daily_rewrites_per_member"]
-    if cap and rewrites_today(user) >= cap:
-        observability.log("reformulation.daily_cap", level="info")
-        return {**fallback, "capped": True}
+def style_system_prompt(body: ReformulateRequest, account,
+                        context: str) -> tuple[str, TaskType, str]:
+    """La consigne du Style : la même pour `/api/reformulate` et pour l'appel
+    unique de `/api/dictate` (n° 39). 404 si le Style d'organisation n'existe plus."""
     style_id = (body.style_id or "").strip()
     style_prompt = (body.style_prompt or "").strip()
     if style_id and style_id in member_policy(account)["settings"]["disabled_style_ids"]:
@@ -14759,11 +14770,43 @@ async def reformulate(body: ReformulateRequest, user: str = Depends(current_user
     if context:
         system_prompt = f"{system_prompt}\n\n{context}"
     system_prompt = f"{system_prompt}\n\n{REWRITE_CONTRACT}"
+    return system_prompt, task_type, style_id
+
+
+@app.post("/api/reformulate")
+async def reformulate(body: ReformulateRequest, user: str = Depends(current_user),
+                      account=Depends(current_account)):
+    # L'organisation vient du compte : en multi-tenant, l'organisation active de
+    # l'instance ne serait pas forcement la sienne.
+    organization_id = account_organization(account)
+    # Avant toute chose, et surtout avant la porte de capacite du routeur : une
+    # requete comptee apres coup a deja pris la place de quelqu'un d'autre.
+    enforce_inference_quota("text", user, organization_id)
+    context, snippets = writing_context(user, organization_id)
+    vocabulary = dictation_vocabulary(user, organization_id)
+    # Le modele recoit des reperes, jamais le contenu des snippets.
+    source_text, snippet_restores = protect_snippets(body.text, snippets)
+    # Ce qui est rendu quand la sortie du modele ne l'est pas : la dictee, avec
+    # ses snippets et son vocabulaire -- jamais un declencheur a la place.
+    fallback = {"text": restore_snippets(
+        enforce_vocabulary(source_text, vocabulary), snippet_restores) or body.text}
+    settings = member_policy(account)["settings"]
+    # En examen, la dictee revient telle quelle : aucune IA n'ecrit pour l'eleve.
+    if exam_active(settings):
+        return {**fallback, "exam": True}
+    cap = settings["daily_rewrites_per_member"]
+    if cap and rewrites_today(user) >= cap:
+        observability.log("reformulation.daily_cap", level="info")
+        return {**fallback, "capped": True}
+    system_prompt, task_type, style_id = style_system_prompt(body, account, context)
+    single_call = SINGLE_CALL_STYLE.get()
+    precomputed = single_call["final"] if single_call and not snippet_restores else None
     # Le temps que la personne attend reellement, y compris la file. C'est
     # celui-la qui doit tenir sous cinq secondes, pas celui du moteur seul.
     started = time.monotonic()
     try:
-        outcome = await rewrite_dictation(source_text, system_prompt, task_type, style_id)
+        outcome = await rewrite_dictation(source_text, system_prompt, task_type, style_id,
+                                          precomputed)
     except HTTPException as error:
         # Le modèle de texte arrêté, saturé ou en retard (`runtime_http_error`) :
         # la dictée est rendue avec ses snippets et son vocabulaire. L'erreur
@@ -14807,6 +14850,48 @@ async def reformulate(body: ReformulateRequest, user: str = Depends(current_user
         observability.log("reformulation.snippet_lost", level="warning", style=style_id or "")
         return resolved_fallback
     return {"text": without_fillers(restored)}
+
+
+@app.post("/api/dictate")
+async def dictate(
+    file: UploadFile,
+    user: str = Depends(current_user),
+    account=Depends(current_account),
+    content_length: int | None = Header(default=None),
+    language: str | None = None,
+    style_id: str | None = Form(default=None, max_length=MAX_INFERENCE_ID_CHARS),
+    style_prompt: str | None = Form(default=None, max_length=MAX_STYLE_PROMPT_CHARS),
+):
+    """Un seul appel par dictée (n° 39) : `/api/transcribe` puis `/api/reformulate`.
+
+    Les deux routes sont appelées telles quelles : mêmes quotas, mêmes
+    garde-fous. `relue` est la transcription, `final` le texte du Style. Une
+    erreur du Style rend la transcription, comme le poste le faisait quand
+    `/api/reformulate` échouait : la dictée n'est jamais perdue.
+    """
+    request = ReformulateRequest(text="", style_id=style_id, style_prompt=style_prompt)
+    try:
+        context, _ = writing_context(user, account_organization(account))
+        prompt, _, _ = style_system_prompt(request, account, context)
+    except HTTPException:
+        prompt = ""
+    # La relecture audio rend aussi le texte du Style : un seul appel Gemini.
+    token = SINGLE_CALL_STYLE.set({"prompt": prompt, "final": None} if prompt else None)
+    try:
+        heard = await transcribe(file, user, account, content_length, language)
+        text = heard["text"]
+        result = {"relue": text, "final": text, "unclear": bool(heard.get("unclear"))}
+        if not text.strip() or result["unclear"] or len(text) > MAX_INFERENCE_TEXT_CHARS:
+            return result
+        try:
+            styled = await reformulate(request.model_copy(update={"text": text}), user, account)
+        except HTTPException as error:
+            code = error.detail.get("code", "") if isinstance(error.detail, dict) else error.detail
+            return {**result, "style_error": str(code)}
+    finally:
+        SINGLE_CALL_STYLE.reset(token)
+    return {**result, "final": styled["text"],
+            **{flag: True for flag in ("capped", "exam") if styled.get(flag)}}
 
 # Les Commandes Nova et la bulle de sélection partagent cette route.
 @app.post("/api/command", dependencies=[Depends(product_capability(
