@@ -62,3 +62,9 @@ Inventions sur des silences et des bruits :
 - La confiance par passage (`avg_logprob`) est rendue avec Whisper, pas avec les modèles GGUF.
 
 Tests : `test_speech_service.py`, à la racine du dépôt.
+
+## Voix basse
+
+`SPEECH_LEVEL_TARGET_DBFS` (par exemple `-20`) remonte une voix basse vers ce niveau avant le
+modèle : au plus +30 dB, sans écrêter, et jamais un silence (sous −70 dBFS). Vide par défaut,
+le temps du banc : à −30 dB, Whisper rendait 10,2 % de dictées vides (06/11).
