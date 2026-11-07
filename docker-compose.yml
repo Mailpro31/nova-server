@@ -267,6 +267,8 @@ services:
       SPEECH_BACKEND: "${NOVA_SPEECH_BACKEND:-cuda}"
       SPEECH_MODEL_PATH: /models/speech.gguf
       SPEECH_MODEL_NAME: "${NOVA_SPEECH_GGUF_NAME:-whisper-large-v3-turbo-q8_0}"
+      # Voix basse remontée avant le modèle (tools/speech/README.md) ; vide : coupé.
+      SPEECH_LEVEL_TARGET_DBFS: "${NOVA_SPEECH_LEVEL_TARGET_DBFS:-}"
       SPEECH_DEFAULT_LANGUAGE: fr
     volumes:
       - "${NOVA_SPEECH_GGUF_PATH:-./models/speech.gguf}:/models/speech.gguf:ro"
