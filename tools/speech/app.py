@@ -32,6 +32,7 @@ from __future__ import annotations
 import array
 import asyncio
 import io
+import math
 import os
 import subprocess
 import sys
@@ -48,6 +49,37 @@ MAX_AUDIO_BYTES = int(os.getenv("SPEECH_MAX_AUDIO_BYTES", str(200 * 1024 * 1024)
 DEFAULT_LANGUAGE = os.getenv("SPEECH_DEFAULT_LANGUAGE", "fr") or None
 # En dessous, aucun mot ne peut avoir été dit.
 MIN_AUDIO_SECONDS = 0.05
+# Niveau visé au moment le plus fort, en dBFS ; vide : pas de réglage.
+# Whisper juge « pas de parole » une voix basse (banc du 06/11 : 10,2 % de
+# dictées vides à −30 dB) : on la remonte avant le modèle, à mesurer avant
+# de l'allumer par défaut.
+LEVEL_TARGET_DBFS = float(os.getenv("SPEECH_LEVEL_TARGET_DBFS") or "nan")
+# Au plus +30 dB : au-delà, on remonterait surtout le bruit de la salle.
+MAX_LEVEL_GAIN_DB = 30.0
+# Sous ce niveau, c'est un silence : il n'est pas remonté.
+SILENT_LEVEL_DBFS = -70.0
+LEVEL_WINDOW = SAMPLE_RATE * 3 // 100
+
+
+def loudest_dbfs(pcm: array.array) -> float:
+    """Le niveau efficace de la tranche de 30 ms la plus forte, en dBFS."""
+    loudest = max(
+        (sum(s * s for s in pcm[i:i + LEVEL_WINDOW]) / len(pcm[i:i + LEVEL_WINDOW])
+         for i in range(0, len(pcm), LEVEL_WINDOW)), default=0.0)
+    return 10 * math.log10(loudest) if loudest > 0 else -math.inf
+
+
+def raise_level(pcm: array.array, target_dbfs: float = LEVEL_TARGET_DBFS) -> array.array:
+    """Remonte une voix basse vers `target_dbfs`, sans jamais la baisser ni écrêter."""
+    if math.isnan(target_dbfs) or not pcm:
+        return pcm
+    level = loudest_dbfs(pcm)
+    if level < SILENT_LEVEL_DBFS or level >= target_dbfs:
+        return pcm
+    peak = max(abs(min(pcm)), abs(max(pcm)))
+    gain = min(10 ** (min(target_dbfs - level, MAX_LEVEL_GAIN_DB) / 20), 0.99 / peak)
+    return array.array("f", (sample * gain for sample in pcm)) if gain > 1 else pcm
+
 
 
 @dataclass
@@ -263,6 +295,7 @@ def create_app(engine=None) -> FastAPI:
             raise HTTPException(413, "audio too large")
         try:
             pcm = await asyncio.to_thread(decode_audio, data)
+            pcm = await asyncio.to_thread(raise_level, pcm)
         except AudioUnreadable as error:
             raise HTTPException(400, "invalid audio") from error
         started = time.monotonic()
