@@ -63,6 +63,8 @@ import secrets_provider
 from ai_runtime import (
     ADVANCED_MINIMUM_VRAM_GB,
     audio_refiner_from_environment,
+    voice_backend_from_environment,
+    VoiceBackend,
     AI_AUDIO_INVALID,
     AI_MODEL_NOT_READY,
     AI_PROMPT_TOO_LONG,
@@ -13006,6 +13008,10 @@ def looks_like_audio(audio: bytes) -> bool:
 
 
 AUDIO_REFINER = audio_refiner_from_environment()
+VOICE_BACKEND: "VoiceBackend | None" = voice_backend_from_environment()
+# Un paragraphe : le poste découpe un long texte et enchaîne les morceaux, la
+# lecture commence ainsi sans attendre la synthèse de tout le texte.
+MAX_SPEECH_CHARS = 1000
 # Les formats que l'API accepte en `input_audio`.
 AUDIO_REFINE_FORMATS = {"wav": "wav", "mp3": "mp3"}
 AUDIO_REFINE_MAX_TERMS = 300
@@ -14875,6 +14881,33 @@ async def reformulate(body: ReformulateRequest, user: str = Depends(current_user
         observability.log("reformulation.snippet_lost", level="warning", style=style_id or "")
         return resolved_fallback
     return {"text": without_fillers(restored)}
+
+class SpeechRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=MAX_SPEECH_CHARS)
+    speed: float = Field(default=1.0, ge=0.5, le=2.0)
+
+
+@app.post("/api/speech")
+async def speech(body: SpeechRequest, user: str = Depends(current_user),
+                 account=Depends(current_account)):
+    """La voix naturelle (1.1) : le moteur de synthèse de l'école lit le texte.
+
+    Sans moteur configuré, 503 : le poste garde la voix Windows. Le texte n'est
+    ni gardé ni journalisé.
+    """
+    if not body.text.strip():
+        raise HTTPException(422, "EMPTY_TEXT")
+    if VOICE_BACKEND is None:
+        raise HTTPException(503, {"code": AI_RUNTIME_UNAVAILABLE})
+    enforce_inference_quota("text", user, account_organization(account))
+    try:
+        audio = await VOICE_BACKEND.speak(body.text, body.speed)
+    except AIRuntimeError as error:
+        detail = {"code": error.code}
+        if error.retry_after is not None:
+            detail["retry_after"] = error.retry_after
+        raise HTTPException(429 if error.code == AI_RUNTIME_BUSY else 502, detail)
+    return Response(content=audio, media_type="audio/mpeg")
 
 
 @app.post("/api/dictate")
