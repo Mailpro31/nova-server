@@ -65,6 +65,17 @@ Tests : `test_speech_service.py`, à la racine du dépôt.
 
 ## Voix basse
 
-`SPEECH_LEVEL_TARGET_DBFS` (par exemple `-20`) remonte une voix basse vers ce niveau avant le
-modèle : au plus +30 dB, sans écrêter, et jamais un silence (sous −70 dBFS). Vide par défaut,
-le temps du banc : à −30 dB, Whisper rendait 10,2 % de dictées vides (06/11).
+`SPEECH_LEVEL_TARGET_DBFS` remonte une voix basse vers ce niveau avant le modèle : au plus +30 dB,
+sans écrêter, et jamais un silence (sous −70 dBFS). Vide dans l'image ; `-20` dans le
+docker-compose (`NOVA_SPEECH_LEVEL_TARGET_DBFS=` le coupe).
+
+Banc du 07/11 (600 dictées, speech-gguf turbo Q8_0, synthèse atténuée) :
+
+| niveau | WER | termes critiques | vides ou incomprises |
+|---|---|---|---|
+| −30 dB + bruit, sans | 41,6 % | 59,2 % | 10,2 % |
+| −30 dB + bruit, `-20` | 36,3 % | 63,3 % | 3,5 % |
+| origine, sans | 30,4 % | 71,7 % | 0,3 % |
+| origine, `-20` | 30,5 % | 71,4 % | 0,3 % |
+
+Inventions sur 6 silences et bruits avec `-20` : 0. Délai médian +20 à 30 ms.
