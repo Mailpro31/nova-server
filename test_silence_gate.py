@@ -80,6 +80,12 @@ class SilenceRouteTests(AdminTestCase):
         self.dictate(tone(-45))
         self.assertTrue(self.engine_called)
 
+    def test_a_very_quiet_voice_reaches_the_engine_now_raised(self):
+        # Banc du 09/11 : deux dictées justes à −59,1 et −58,3 dBFS étaient
+        # bloquées, alors que le service les remonte (-24) et les transcrit bien.
+        self.dictate(tone(-59))
+        self.assertTrue(self.engine_called)
+
 
 if __name__ == "__main__":
     unittest.main()

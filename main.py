@@ -12487,8 +12487,10 @@ _WAV_HEADER_PROBE_BYTES = 64 * 1024
 
 # Sous ce niveau, au moment le plus fort de l'enregistrement, personne n'a
 # parlé : un micro coupé ou une pièce silencieuse. Une voix basse en classe
-# reste bien au-dessus (vers −45 dBFS).
-SILENT_PEAK_DBFS = -58.0
+# reste bien au-dessus (vers −45 dBFS). −60 et non −58 : banc du 09/11, deux
+# dictées justes à −59 dBFS, que le service remonte (-24), étaient bloquées ;
+# souffle, brouhaha et bruit blanc à −59/−60/−61 ne donnent aucun texte.
+SILENT_PEAK_DBFS = -60.0
 # Le niveau se mesure par tranches de 30 ms, comme un détecteur de parole.
 LEVEL_WINDOW_SECONDS = 0.03
 
@@ -12940,7 +12942,9 @@ def dictation_unclear(text: str, avg_logprob: float | None) -> bool:
         return True
     if only_subtitle_credits(text):
         return True
-    if lone_thanks(text) and avg_logprob is not None and avg_logprob < LONE_THANKS_AVG_LOGPROB:
+    # Sans confiance (speech-gguf n'en rend pas) : un « Merci. » seul est le
+    # plus souvent un souffle ; une vraie dictée d'un seul « merci » est rare.
+    if lone_thanks(text) and (avg_logprob is None or avg_logprob < LONE_THANKS_AVG_LOGPROB):
         return True
     # Une phrase dite deux fois de suite avec une bonne confiance, c'est
     # l'élève qui se répète : la boucle demande alors une troisième copie

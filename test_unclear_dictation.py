@@ -228,9 +228,11 @@ class UnclearDecisionTests(unittest.TestCase):
         for heard in ("Merci.", "Merci beaucoup !", "merci à vous"):
             with self.subTest(heard=heard):
                 self.assertTrue(main.dictation_unclear(heard, -0.46))
-        # Dicté pour de vrai, avec assurance, ou sans confiance : gardé.
+        # Sans confiance (speech-gguf n'en rend pas, 09/11) : un souffle rendu
+        # « Merci. » passait jusqu'à l'élève. Bloqué.
+        self.assertTrue(main.dictation_unclear("Merci.", None))
+        # Dicté pour de vrai, avec assurance : gardé.
         self.assertFalse(main.dictation_unclear("Merci.", -0.15))
-        self.assertFalse(main.dictation_unclear("Merci.", None))
         # Une phrase qui contient un merci n'est pas visée.
         self.assertFalse(main.dictation_unclear("Merci pour le corrigé du TD.", -0.46))
 
