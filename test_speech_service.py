@@ -268,6 +268,26 @@ class TranscribeCppEngineTests(unittest.TestCase):
         engine.transcribe(speech.pcm16_to_float(bytes(3200), 1), "fr")
         self.assertEqual(calls, ["segment"])
 
+    def test_each_passage_gets_its_confidence_from_its_tokens(self):
+        token = lambda text, p: types.SimpleNamespace(text=text, p=p)  # noqa: E731
+        tokens = (token("[_BEG_]", 0.01), token(" La", 0.9), token(" portance", 0.5),
+                  token(" Merci", 0.1), token("<|endoftext|>", 0.01))
+        self.assertAlmostEqual(speech.average_logprob(tokens[:3]),
+                               (math.log(0.9) + math.log(0.5)) / 2)
+        self.assertIsNone(speech.average_logprob(tokens[:1]))
+        segments = [types.SimpleNamespace(text=" La portance", t0_ms=0, t1_ms=900,
+                                          first_token=0, n_tokens=3),
+                    types.SimpleNamespace(text=" Merci", t0_ms=900, t1_ms=1200,
+                                          first_token=3, n_tokens=2)]
+        engine = speech.TranscribeCppEngine("/models/speech.gguf")
+        session = FakeGgufSession([], refuse_segments=False)
+        session.run = lambda pcm, timestamps, language: types.SimpleNamespace(
+            text=" La portance Merci", language="fr", segments=segments, tokens=tokens)
+        engine._model = types.SimpleNamespace(session=lambda: session)
+        found = engine.transcribe(speech.pcm16_to_float(bytes(3200), 1), "fr").segments
+        self.assertAlmostEqual(found[0].avg_logprob, (math.log(0.9) + math.log(0.5)) / 2)
+        self.assertAlmostEqual(found[1].avg_logprob, math.log(0.1))
+
 
 class NovaServerCompatibilityTests(unittest.TestCase):
     """Le vrai adaptateur du serveur Nova, branché sur ce service."""

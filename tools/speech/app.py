@@ -22,9 +22,10 @@ Une seule transcription à la fois par modèle (transcribe.cpp 0.x partage le
 moteur de calcul entre les sessions) ; la file d'attente est celle du serveur
 Nova (`NOVA_AI_MAX_QUEUE`).
 
-Le modèle ne rend pas de confiance par passage (`avg_logprob`) : la détection
-« dictée incomprise » du serveur s'appuie alors sur les boucles et les crédits
-de sous-titres seulement.
+La confiance de chaque passage (`avg_logprob`) est la moyenne du logarithme des
+probabilités de ses jetons : la détection « dictée incomprise » du serveur s'en sert
+(jusqu'au 09/11, elle n'était pas rendue, et seules les boucles et les crédits de
+sous-titres étaient vus).
 """
 
 from __future__ import annotations
@@ -186,11 +187,25 @@ class TranscribeCppEngine:
                 # Le texte entier fait alors un seul passage.
                 self._timestamps = "none"
                 result = session.run(pcm, timestamps="none", language=language)
+        tokens = getattr(result, "tokens", None) or ()
         segments = [
-            Segment(segment.t0_ms / 1000, segment.t1_ms / 1000, segment.text)
+            Segment(segment.t0_ms / 1000, segment.t1_ms / 1000, segment.text,
+                    average_logprob(tokens[segment.first_token:
+                                           segment.first_token + segment.n_tokens]))
             for segment in (result.segments or [])
         ]
         return Transcript(result.text.strip(), result.language or language, segments)
+
+
+def average_logprob(tokens) -> float | None:
+    """La confiance d'un passage comme faster-whisper (`avg_logprob`), tirée de la
+    probabilité de chaque jeton. Sans elle, le serveur ne voyait jamais une dictée
+    devinée (banc du 09/11 : `avg_logprob` nul sur tout speech-gguf)."""
+    spoken = [token.p for token in tokens
+              if token.text and not token.text.startswith(("[_", "<|"))]
+    if not spoken:
+        return None
+    return sum(math.log(max(p, 1e-10)) for p in spoken) / len(spoken)
 
 
 class FasterWhisperEngine:
