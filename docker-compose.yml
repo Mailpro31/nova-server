@@ -267,10 +267,10 @@ services:
       SPEECH_BACKEND: "${NOVA_SPEECH_BACKEND:-cuda}"
       SPEECH_MODEL_PATH: /models/speech.gguf
       SPEECH_MODEL_NAME: "${NOVA_SPEECH_GGUF_NAME:-whisper-large-v3-turbo-q8_0}"
-      # Voix basse remontée avant le modèle (tools/speech/README.md). Banc du 07/11 :
-      # à −30 dB, dictées vides 10,2 → 3,5 %, WER 41,6 → 36,3 % ; voix normale
-      # inchangée (30,4 → 30,5 %) ; 0 invention sur 6 silences. Vide : coupé.
-      SPEECH_LEVEL_TARGET_DBFS: "${NOVA_SPEECH_LEVEL_TARGET_DBFS--20}"
+      # Voix basse remontée avant le modèle (tools/speech/README.md). Banc du 09/11 :
+      # à −30 dB, dictées vides 9,8 → 3,3 %, WER 41,2 → 36,8 % ; voix normale sans
+      # coût (30,4 → 30,3 %), contrairement à -20 ; 0 invention. Vide : coupé.
+      SPEECH_LEVEL_TARGET_DBFS: "${NOVA_SPEECH_LEVEL_TARGET_DBFS--24}"
       SPEECH_DEFAULT_LANGUAGE: fr
     volumes:
       - "${NOVA_SPEECH_GGUF_PATH:-./models/speech.gguf}:/models/speech.gguf:ro"
