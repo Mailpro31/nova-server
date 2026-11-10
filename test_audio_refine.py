@@ -47,6 +47,19 @@ class AudioRefineBackendTests(unittest.TestCase):
         # Les reprises restent dans la transcription : le Style les résout ensuite.
         self.assertIn("écris le mot de reprise ET les deux valeurs", system["content"])
 
+    def test_the_reasoning_effort_is_sent_only_when_configured(self):
+        bodies = []
+
+        def handler(request):
+            bodies.append(json.loads(request.content))
+            return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+        for effort in ("minimal", ""):
+            asyncio.run(AudioRefineBackend("http://refine:8000/v1", "m", reasoning_effort=effort,
+                                           transport=httpx.MockTransport(handler)).refine(b"x", "wav", "t", []))
+        self.assertEqual(bodies[0]["reasoning_effort"], "minimal")
+        self.assertNotIn("reasoning_effort", bodies[1])
+
     def test_an_engine_error_is_a_runtime_error(self):
         with self.assertRaises(AIRuntimeError) as raised:
             asyncio.run(backend(lambda request: httpx.Response(500)).refine(b"x", "wav", "t", []))

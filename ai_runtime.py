@@ -1408,11 +1408,12 @@ class AudioRefineBackend:
     adapter_name = "openai_compatible_audio"
 
     def __init__(self, base_url: str, model: str, *, token: str = "",
-                 timeout: float = AUDIO_REFINE_TIMEOUT_SECONDS,
+                 timeout: float = AUDIO_REFINE_TIMEOUT_SECONDS, reasoning_effort: str = "",
                  transport: httpx.AsyncBaseTransport | None = None):
         self.base_url = validate_private_runtime_url(base_url)
         self.model = model.strip()
         self.token = token
+        self.reasoning_effort = reasoning_effort.strip()  # Gemini 3.5 : sinon il réfléchit et frôle le délai
         self.timeout = timeout
         self.transport = transport
 
@@ -1448,6 +1449,8 @@ class AudioRefineBackend:
                 ]},
             ],
         }
+        if self.reasoning_effort:
+            payload["reasoning_effort"] = self.reasoning_effort
         started = time.monotonic()
         try:
             # Connexion courte : une API injoignable ne retient pas la dictée
@@ -1500,4 +1503,5 @@ def audio_refiner_from_environment() -> AudioRefineBackend | None:
     token = (vertex_auth.token_from_environment()
              or secrets_provider.resolve_value(os.getenv("NOVA_AI_SPEECH_REFINE_TOKEN", "")) or "")
     observability.log("ai.speech_refine_enabled", level="warning", url=url, model=model)
-    return AudioRefineBackend(url, model, token=token)
+    return AudioRefineBackend(url, model, token=token,
+                              reasoning_effort=os.getenv("NOVA_AI_REASONING_OFF_EFFORT", ""))
