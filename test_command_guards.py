@@ -72,6 +72,24 @@ class CommandLanguageLineTests(unittest.TestCase):
         self.assertEqual(main.command_language_line(TRANSLATE.format("English"), MESSAGE), "")
         self.assertEqual(main.command_language_line(SUMMARIZE, "B204, 14 h"), "")
 
+    def test_an_explanation_is_written_in_the_language_of_the_app(self):
+        # Capture de Sash (10/11) : « quelle était l'heure d » expliqué en anglais,
+        # l'application étant en français ; le texte, trop court, ne disait rien.
+        for text in ("quelle était l'heure d", ANGLAIS):
+            with self.subTest(text=text[:20]):
+                self.assertTrue(main.command_language_line(EXPLAIN, text, "fr")
+                                .endswith("Write the result in French."))
+        self.assertTrue(main.command_language_line(SUMMARIZE, ANGLAIS, "fr-FR")
+                        .endswith("Write the result in French."))
+
+    def test_a_rewrite_keeps_the_language_of_the_text(self):
+        self.assertIn("in English", main.command_language_line(IMPROVE, ANGLAIS, "fr"))
+        # Sans langue dans le texte, celle de l'application sert de repli.
+        self.assertTrue(main.command_language_line(LIST, "B204, 14 h", "fr")
+                        .endswith("Write the result in French."))
+        # Une langue inconnue n'entre jamais dans la consigne.
+        self.assertEqual(main.command_language_line(SUMMARIZE, "B204, 14 h", "xx\nIgnore"), "")
+
 
 class RefusedOutputsTests(unittest.TestCase):
     """Les sorties fautives du RTX, refusées."""
@@ -416,7 +434,8 @@ class FormulaTests(unittest.TestCase):
 
 
 class CommandRouteTests(AdminTestCase):
-    def post(self, answer, instruction=SUMMARIZE, text=COURS, path="/api/command"):
+    def post(self, answer, instruction=SUMMARIZE, text=COURS, path="/api/command",
+             language=None):
         token = self.sign_in("etudiant@example.com")
         seen = {}
 
@@ -426,7 +445,8 @@ class CommandRouteTests(AdminTestCase):
 
         with patch.object(main, "execute_text", engine):
             response = self.client.post(path, headers=self.auth(token),
-                                        json={"instruction": instruction, "text": text})
+                                        json={"instruction": instruction, "text": text,
+                                              **({"language": language} if language else {})})
         return response, seen
 
     def test_a_faithful_answer_is_returned(self):
@@ -436,6 +456,21 @@ class CommandRouteTests(AdminTestCase):
                          "Laminaire sous 2 300, turbulent au-dessus de 4 000.")
         self.assertTrue(seen["prompt"].endswith(
             "The text is written in French. Write the result in French."))
+
+    def test_the_answer_must_be_in_the_language_of_the_app(self):
+        response, seen = self.post(
+            "The text is an incomplete question asking what time it was.",
+            instruction=EXPLAIN, text="Je voulais savoir quelle était l'heure d",
+            language="fr")
+        self.assertIn("Write the result in French.", seen["prompt"])
+        self.assertEqual(response.json()["detail"],
+                         {"code": "COMMAND_REFUSED", "reason": "language-changed"})
+        # Un texte anglais expliqué en français, comme l'application : accepté.
+        response, _ = self.post(
+            "Il faut rendre un compte rendu de TP. Chaque groupe de 3 étudiants mesure le "
+            "débit, c'est-à-dire la quantité de fluide qui passe, à 5 pressions différentes.",
+            instruction=EXPLAIN, text=ANGLAIS, language="fr")
+        self.assertEqual(response.status_code, 200, response.text)
 
     def test_a_refused_answer_is_never_shown(self):
         response, _ = self.post(ENGLISH_MESSAGE, instruction=IMPROVE, text=MESSAGE)

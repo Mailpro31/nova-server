@@ -521,8 +521,10 @@ class CommandContextTests(unittest.TestCase):
     # -- API contract ------------------------------------------------------
     def test_request_contract_is_unchanged(self):
         self.assertEqual(
-            set(main.CommandRequest.model_fields), {"instruction", "text"}
+            set(main.CommandRequest.model_fields), {"instruction", "text", "language"}
         )
+        # Optionnel : un poste d'avant le 10/11 ne l'envoie pas.
+        self.assertFalse(main.CommandRequest.model_fields["language"].is_required())
 
     def test_dictation_still_receives_every_context(self):
         # Guard-rail the other way round: dictation rewriting must keep

@@ -4365,6 +4365,9 @@ class CommandRequest(BaseModel):
 
     instruction: str = Field(max_length=MAX_INFERENCE_TEXT_CHARS)
     text: str = Field(max_length=MAX_ENGINEERING_NOTES_CHARS)
+    # La langue de l'application (« fr », « fr-FR ») : celle d'une explication
+    # ou d'un résumé, et le repli quand le texte ne dit pas la sienne.
+    language: str | None = Field(default=None, max_length=16)
 
 # Notes structurees : un type de note, une structure. Le poste choisit le type,
 # jamais la consigne — elle est ecrite ici, comme celle des notes d'ingenierie,
@@ -11732,7 +11735,15 @@ COMMAND_SHARED_WORDS = frozenset(
     "aussi bien tres seulement rien autre autres your with this that from into "
     "make write give each about only".split()
 )
-LANGUAGE_NAMES_FOR_PROMPT = {"fr": "French", "en": "English"}
+# Les langues de l'application (`src/lib/commands/catalog.ts` du poste). Une
+# valeur hors de cette liste n'entre jamais dans la consigne.
+LANGUAGE_NAMES_FOR_PROMPT = {
+    "ar": "Arabic", "bg": "Bulgarian", "cs": "Czech", "de": "German", "en": "English",
+    "es": "Spanish", "fr": "French", "he": "Hebrew", "it": "Italian", "ja": "Japanese",
+    "ko": "Korean", "ne": "Nepali", "nl": "Dutch", "pl": "Polish", "pt": "Portuguese",
+    "ru": "Russian", "sv": "Swedish", "tr": "Turkish", "uk": "Ukrainian",
+    "vi": "Vietnamese", "zh": "Chinese",
+}
 
 
 def command_kind(instruction: str) -> str:
@@ -11750,18 +11761,37 @@ def command_kind(instruction: str) -> str:
     return "other"
 
 
-def command_language_line(instruction: str, text: str) -> str:
+def answer_language(instruction: str, text: str, app_language: str | None = None) -> str | None:
+    """La langue attendue de la réponse, ou `None` (traduction, ou rien de sûr).
+
+    Une explication ou un résumé s'écrit dans la langue de l'application : c'est
+    l'élève qui le lit (capture de Sash, 10/11 : « quelle était l'heure d »
+    expliqué en anglais). Une réécriture garde la langue du texte. Quand le texte
+    ne dit pas la sienne, celle de l'application sert de repli.
+    """
+    kind = command_kind(instruction)
+    if kind == "translate":
+        return None
+    app = (app_language or "").split("-")[0].lower()
+    app = app if app in LANGUAGE_NAMES_FOR_PROMPT else None
+    if kind == "condense" and app:
+        return app
+    return dictation_language(text) or app
+
+
+def command_language_line(instruction: str, text: str, app_language: str | None = None) -> str:
     """La langue de la réponse, dite au modèle quand la consigne ne la nomme pas.
 
     « Answer in the language of the text » ne suffisait pas : le modèle du
     RTX suivait la langue de la consigne système, l'anglais.
     """
-    if command_kind(instruction) == "translate":
-        return ""
-    language = LANGUAGE_NAMES_FOR_PROMPT.get(dictation_language(text) or "")
+    language = LANGUAGE_NAMES_FOR_PROMPT.get(
+        answer_language(instruction, text, app_language) or "")
     if not language:
         return ""
-    return f"\n\nThe text is written in {language}. Write the result in {language}."
+    if LANGUAGE_NAMES_FOR_PROMPT.get(dictation_language(text) or "") == language:
+        return f"\n\nThe text is written in {language}. Write the result in {language}."
+    return f"\n\nWrite the result in {language}."
 
 
 def _stem(word: str) -> str:
@@ -11913,7 +11943,8 @@ def formula_changed(text: str, answer: str) -> bool:
     return False
 
 
-def command_refusal(instruction: str, text: str, answer: str) -> str | None:
+def command_refusal(instruction: str, text: str, answer: str,
+                    app_language: str | None = None) -> str | None:
     """Pourquoi cette réponse ne doit pas être proposée à l'élève, ou `None`."""
     output = (answer or "").strip()
     if not output:
@@ -11925,7 +11956,8 @@ def command_refusal(instruction: str, text: str, answer: str) -> str | None:
         return None
     source_language = dictation_language(text)
     written_language = dictation_language(output)
-    if source_language and written_language and source_language != written_language:
+    expected = answer_language(instruction, text, app_language)
+    if expected and written_language and expected != written_language:
         return "language-changed"
     # Une réécriture garde les nombres ; une explication ou un résumé peut en
     # omettre, jamais en inventer.
@@ -12037,13 +12069,13 @@ ADDRESSEE_PRONOUNS = ("vous", "tu", "te", "toi", "quelquun", "you", "someone", "
 
 
 async def run_command(task_type: TaskType, instruction: str, text: str,
-                      vocabulary: str) -> str:
+                      vocabulary: str, app_language: str | None = None) -> str:
     """Le circuit d'une commande, sans la route HTTP : consigne, modèle,
     contrôles. Les routes et le banc de mesure l'appellent tous deux."""
     system_prompt = command_prompt(instruction, vocabulary) + command_language_line(
-        instruction, text)
+        instruction, text, app_language)
     answer = await execute_text(task_type, system_prompt, command_text(text))
-    reason = command_refusal(instruction, text, answer)
+    reason = command_refusal(instruction, text, answer, app_language)
     if reason:
         observability.log("command.refused", level="warning", reason=reason,
                           kind=command_kind(instruction))
@@ -14931,7 +14963,7 @@ async def command(body: CommandRequest, user: str = Depends(current_user),
     instruction = clean_required(body.instruction, "instruction", 2000)
     enforce_inference_quota("text", user, account_organization(account))
     return {"text": await run_command(TaskType.VOICE_COMMAND, instruction, body.text,
-                                      vocabulary_context(user))}
+                                      vocabulary_context(user), body.language)}
 
 class SkillRunRequest(BaseModel):
     skill_id: str = Field(max_length=MAX_INFERENCE_ID_CHARS)
