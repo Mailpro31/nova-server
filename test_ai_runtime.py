@@ -151,6 +151,25 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(seen["body"]["reasoning_effort"], "high")
         self.assertNotIn("internal-secret", repr(result))
 
+    async def test_reasoning_off_sends_the_configured_effort_only_when_set(self):
+        # Gemini 3.5 réfléchit par défaut (5,7 s) : « minimal » le ramène vers 1 s (10/11).
+        bodies = []
+
+        def handler(request: httpx.Request):
+            if request.url.path.endswith("/chat/completions"):
+                bodies.append(json.loads(request.content))
+            return httpx.Response(200, json={"choices": [
+                {"message": {"content": "ok"}, "finish_reason": "stop"}]})
+
+        for effort in ("minimal", ""):
+            backend = OpenAICompatibleTextBackend(
+                "http://127.0.0.1:8001/v1", "m", reasoning_off_effort=effort,
+                transport=httpx.MockTransport(handler))
+            await backend.generate(TextInferenceRequest(
+                "r", TaskType.AI_SKILL, "x", "i", TextInferenceOptions(64, 0.2, ReasoningMode.OFF), 10))
+        self.assertEqual(bodies[0]["reasoning_effort"], "minimal")
+        self.assertNotIn("reasoning_effort", bodies[1])
+
     async def test_text_health_checks_loaded_model_without_a_prompt(self):
         requests = []
 
