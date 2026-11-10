@@ -133,6 +133,7 @@ services:
       NOVA_AI_REFINE_EUR_PER_CALL: "${NOVA_AI_REFINE_EUR_PER_CALL:-}"
       NOVA_LICENCE: "${NOVA_LICENCE:-}"
       NOVA_VERTEX_CREDENTIALS_FILE: "${NOVA_VERTEX_CREDENTIALS_FILE:-}"
+      NOVA_AI_REASONING_OFF_EFFORT: "${NOVA_AI_REASONING_OFF_EFFORT:-}"
 
       # -- Reseau et bornes ----------------------------------------------------
       # `X-Forwarded-For` n'est lu que si la connexion vient d'une adresse

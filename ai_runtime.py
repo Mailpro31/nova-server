@@ -382,6 +382,7 @@ class OpenAICompatibleTextBackend:
         token: str = "",
         health_timeout: float = 3.0,
         reasoning_supported: bool = False,
+        reasoning_off_effort: str = "",
         transport: httpx.AsyncBaseTransport | None = None,
     ):
         self.base_url = validate_private_runtime_url(base_url) if base_url else ""
@@ -389,6 +390,9 @@ class OpenAICompatibleTextBackend:
         self.token = token
         self.health_timeout = health_timeout
         self.reasoning_supported = reasoning_supported
+        # Effort envoyé quand la réflexion est coupée : les modèles qui réfléchissent
+        # par défaut (Gemini 3.5 sur Vertex) le font sinon à chaque dictée.
+        self.reasoning_off_effort = reasoning_off_effort.strip()
         self.transport = transport
         self._context_window: int | None = None
         # Une API qui n'a pas `/tokenize` ou n'annonce pas sa fenêtre ne
@@ -521,6 +525,8 @@ class OpenAICompatibleTextBackend:
             payload["reasoning_effort"] = (
                 "high" if request.options.reasoning == ReasoningMode.ON else "medium"
             )
+        elif request.options.reasoning == ReasoningMode.OFF and self.reasoning_off_effort:
+            payload["reasoning_effort"] = self.reasoning_off_effort
         started = time.monotonic()
         try:
             async with httpx.AsyncClient(
@@ -1347,6 +1353,7 @@ def router_from_environment() -> OrganizationAIRouter:
             token=text_token,
             reasoning_supported=os.getenv("NOVA_AI_REASONING_ADAPTER", "false").lower()
             == "true",
+            reasoning_off_effort=os.getenv("NOVA_AI_REASONING_OFF_EFFORT", ""),
         ),
         WhisperCompatibleSpeechBackend(speech_url, speech_model, token=speech_token),
         profile=profile,
