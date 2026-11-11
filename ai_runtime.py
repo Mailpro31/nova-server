@@ -603,6 +603,10 @@ class OpenAICompatibleTextBackend:
             latency = round((time.monotonic() - started) * 1000)
             if response.status_code in {425, 503}:
                 return EngineHealth(EngineStatus.LOADING, self.adapter_name, latency)
+            # Vertex n'a pas de route /models : son 404 prouve l'hôte joint et le
+            # jeton obtenu, sans appel facturé.
+            if response.status_code == 404 and isinstance(self.token, vertex_auth.ServiceAccountToken):
+                return EngineHealth(EngineStatus.READY, self.adapter_name, latency, model=self.model)
             if response.status_code != 200:
                 return EngineHealth(EngineStatus.UNAVAILABLE, self.adapter_name, latency)
             body = response.json()
@@ -624,7 +628,7 @@ class OpenAICompatibleTextBackend:
                 runtime_version=response.headers.get("x-runtime-version"),
                 model=self.model,
             )
-        except (httpx.HTTPError, ValueError, json.JSONDecodeError):
+        except (httpx.HTTPError, ValueError, json.JSONDecodeError, AIRuntimeError):
             return EngineHealth(EngineStatus.UNAVAILABLE, self.adapter_name, None)
 
 

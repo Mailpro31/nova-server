@@ -94,6 +94,27 @@ class VertexTokenTests(unittest.TestCase):
         self.assertEqual(set(seen), {"Bearer ya29.1"})
         self.assertEqual(len(self.assertions), 1)
 
+    def vertex_backend(self, transport, token_transport=None):
+        token = vertex_auth.ServiceAccountToken(self.path, transport=token_transport or self.transport)
+        with mock.patch.dict("os.environ", {"NOVA_AI_ALLOW_PUBLIC_ENDPOINT": "1"}):
+            return ai_runtime.OpenAICompatibleTextBackend(
+                "https://aiplatform.eu.rep.googleapis.com/v1/projects/novaecole/"
+                "locations/eu/endpoints/openapi",
+                "google/gemini-3.5-flash", token=token, transport=transport)
+
+    def test_vertex_without_a_models_route_is_ready_once_the_token_is_obtained(self):
+        # PC fixe, 11/11 : GET /models rend 404 sur Vertex ; la console affichait
+        # « Indisponible » alors que les dictées passaient.
+        backend = self.vertex_backend(httpx.MockTransport(lambda request: httpx.Response(404)))
+        health = asyncio.run(backend.health())
+        self.assertEqual((health.status, health.model),
+                         (ai_runtime.EngineStatus.READY, "google/gemini-3.5-flash"))
+
+    def test_a_refused_vertex_key_makes_the_health_unavailable_not_a_crash(self):
+        refused = httpx.MockTransport(lambda request: httpx.Response(400, json={"error": "invalid_grant"}))
+        backend = self.vertex_backend(httpx.MockTransport(lambda request: httpx.Response(404)), refused)
+        self.assertEqual(asyncio.run(backend.health()).status, ai_runtime.EngineStatus.UNAVAILABLE)
+
     def test_the_environment_uses_the_key_file_for_the_external_engines(self):
         env = {"NOVA_VERTEX_CREDENTIALS_FILE": str(self.path)}
         with mock.patch.dict("os.environ", env):
