@@ -123,6 +123,25 @@ class EnvelopeTests(unittest.TestCase):
             main.refuse_when_ai_envelope_empty("engineeringNotes", "engineering_notes")
         self.assertEqual(refused.exception.detail["code"], "AI_ENVELOPE_EMPTY")
 
+    def test_every_figure_of_the_envelope_gauge_is_exact(self):
+        """Abonnement : 100 € au contrat sur dix mois, 30 € ouverts en novembre,
+        15 € dépensés dont 3 € ce mois-ci : la jauge doit dire 50 %."""
+        spent("a@example.com", 12, "2026-10")
+        spent("b@example.com", 3)
+        envelope = main.subscription_report(NOW)["ai_envelope"]
+        self.assertEqual(
+            envelope,
+            {"annual_eur": 100.0, "allowance_eur": 30.0, "spent_eur": 15.0,
+             "month_eur": 3.0, "percent": 50, "empty": False})
+
+    def test_the_gauge_reaches_80_then_100_percent_and_empties(self):
+        spent("a@example.com", 24)
+        near = main.ai_envelope_state(NOW)
+        self.assertEqual((near["percent"], near["empty"]), (80, False))
+        spent("b@example.com", 6)
+        full = main.ai_envelope_state(NOW)
+        self.assertEqual((full["spent_eur"], full["percent"], full["empty"]), (30.0, 100, True))
+
     def test_the_subscription_page_shows_the_envelope(self):
         spent("a@example.com", 3)
         envelope = main.subscription_report(NOW)["ai_envelope"]

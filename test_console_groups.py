@@ -151,6 +151,19 @@ class MembershipTests(ConsoleGroupsTestCase):
         self.assertEqual(removed.status_code, 200, removed.text)
         self.assertEqual(self.listed()[group["id"]]["member_count"], 0)
 
+    def test_each_group_counts_only_its_own_members(self):
+        """Groupes : la colonne « membres » vaut 3, 1 et 0 pour trois groupes."""
+        big, small, empty = self.created("Grand"), self.created("Petit"), self.created("Vide")
+        ids = [self.member_id(f"m{n}@example.com") for n in range(3)]
+        for user_id in ids:
+            self.client.put(f"{self.base()}/{big['id']}/members/{user_id}",
+                            headers=self.auth(self.admin))
+        self.client.put(f"{self.base()}/{small['id']}/members/{ids[0]}",
+                        headers=self.auth(self.admin))
+        listed = self.listed()
+        self.assertEqual(
+            [listed[g["id"]]["member_count"] for g in (big, small, empty)], [3, 1, 0])
+
     def test_a_group_membership_applies_the_group_settings(self):
         group = self.created("Examen")
         headers = self.auth(self.sign_in("dedans@example.com"))

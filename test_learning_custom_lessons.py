@@ -313,6 +313,21 @@ class SettingsTests(CustomLessonTestCase):
         lesson = member_lessons(self.catalog_for("etudiant@example.com"))[created["id"]]
         self.assertTrue(lesson["required"])
 
+    def test_the_console_lists_the_figures_it_displays_for_a_lesson(self):
+        """Learn : durée en minutes, échéance et révision de la leçon, tels qu'écrits."""
+        created = self.created(lesson_body(estimated_minutes=7))
+        self.client.put(
+            f"{BASE}/lessons/{created['id']}", headers=self.auth(self.admin),
+            json={"expected_revision": 0, "required": True, "due_at": 1_900_000_000.0})
+        lessons = {item["id"]: item for item in
+                   self.client.get(BASE, headers=self.auth(self.admin)).json()["lessons"]}
+        lesson = lessons[created["id"]]
+        self.assertEqual((lesson["due_at"], lesson["revision"], lesson["group_ids"]),
+                         (1_900_000_000.0, 1, []))
+        # La durée affichée à l'édition vient du détail de la leçon.
+        detail = self.client.get(f"{CUSTOM}/{created['id']}", headers=self.auth(self.admin))
+        self.assertEqual(detail.json()["estimated_minutes"], 7)
+
     def test_members_progress_through_it_and_complete_it(self):
         created = self.created()
         token = self.sign_in("etudiant@example.com")

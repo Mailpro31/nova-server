@@ -543,6 +543,37 @@ class TenantIsolationTests(ConnectorTestCase):
         self.assertEqual(response.status_code, 404)
 
 
+class ConnectorFiguresTests(ConnectorTestCase):
+    """Les chiffres de la liste des Connectors : révisions et âge du credential."""
+
+    def listed(self) -> dict:
+        headers = grant_admin_session("it@example.com", "it_admin")
+        return self.client.get("/api/control/connectors", headers=headers).json()["connectors"][0]
+
+    def test_the_credential_age_is_in_days_with_one_decimal(self):
+        self.enrolled()
+        with main.db() as conn:
+            conn.execute("UPDATE connectors SET credential_created_at=?",
+                         (time.time() - 3.5 * 86400,))
+        self.assertEqual(self.listed()["credential"]["age_days"], 3.5)
+        with main.db() as conn:
+            conn.execute("UPDATE connectors SET credential_created_at=?",
+                         (time.time() - 90 * 86400,))
+        self.assertEqual(self.listed()["credential"]["age_days"], 90.0)
+
+    def test_the_listing_shows_the_delivered_and_applied_revisions(self):
+        body = self.enrolled()
+        self.assertEqual((self.listed()["delivered_revision"], self.listed()["applied_revision"]),
+                         (0, 0))
+        self.desire()
+        self.sync(body["connector_credential"])
+        listed = self.listed()
+        self.assertEqual((listed["delivered_revision"], listed["applied_revision"]), (1, 0))
+        self.sync(body["connector_credential"], applied_revision=1, apply_status="applied")
+        listed = self.listed()
+        self.assertEqual((listed["delivered_revision"], listed["applied_revision"]), (1, 1))
+
+
 class ConnectorStatusTests(ConnectorTestCase):
     def status_after(self, seconds_ago: float) -> str:
         body = self.enrolled()
