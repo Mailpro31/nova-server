@@ -14,12 +14,12 @@ export const fr: Messages = {
   nav: {
     overview: "Vue d’ensemble",
     identity: "Identité",
-    provisioning: "Provisionnement",
+    provisioning: "Import des comptes",
     administrators: "Administrateurs",
     members: "Membres",
     groups: "Groupes",
-    learn: "Learn",
-    packages: "Paquets",
+    learn: "Apprendre",
+    packages: "Contenus",
     limits: "Limites",
     deployment: "Déploiement",
     configuration: "Configuration",
@@ -33,10 +33,9 @@ export const fr: Messages = {
     people: "Personnes",
     features: "Fonctions de l’application",
     content: "Contenu",
-    limits: "Limites",
-    signIn: "Connexion et sécurité",
+    tracking: "Suivi",
     audit: "Journal d’administration",
-    infrastructure: "Déploiement",
+    advanced: "Avancé",
   },
 
   bootstrap: {

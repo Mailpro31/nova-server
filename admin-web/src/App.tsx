@@ -14,6 +14,7 @@ import {
   Route,
   Routes,
   useNavigate,
+  useLocation,
   useParams,
 } from "react-router-dom";
 import {
@@ -70,6 +71,7 @@ const PAGE_BY_PATH = new Map(PAGES.map((page) => [page.path, page]));
 function Console() {
   const { session, signOutAdmin, signOutCompletely } = useSession();
   const remaining = session.admin ? secondsRemaining(session.admin) : 0;
+  const location = useLocation();
 
   return (
     <div className="shell">
@@ -91,6 +93,24 @@ function Console() {
             // Un domaine d'une seule page n'a pas de titre : son lien porte
             // le nom du domaine. Au-delà, le titre regroupe ses pages.
             const single = pages.length === 1;
+            const links = pages.map((page) => (
+              <NavLink key={page.path} to={page.path} end>
+                {single ? t.navGroups[section.id] : page.label}
+              </NavLink>
+            ));
+            if (section.collapsed) {
+              // Replié par défaut, mais ouvert d'office quand on est sur une
+              // de ses pages : sinon le lien actif disparaîtrait du menu.
+              const here = pages.some((page) => location.pathname.endsWith(`/${page.path}`));
+              return (
+                <details key={section.id} className="nav-section nav-advanced" open={here}>
+                  <summary className="nav-section-title">{t.navGroups[section.id]}</summary>
+                  <div role="group" aria-label={t.navGroups[section.id]} className="nav-section">
+                    {links}
+                  </div>
+                </details>
+              );
+            }
             return (
               <div
                 key={section.id}
@@ -101,11 +121,7 @@ function Console() {
                 {!single && (
                   <span className="nav-section-title">{t.navGroups[section.id]}</span>
                 )}
-                {pages.map((page) => (
-                  <NavLink key={page.path} to={page.path} end>
-                    {single ? t.navGroups[section.id] : page.label}
-                  </NavLink>
-                ))}
+                {links}
               </div>
             );
           })}

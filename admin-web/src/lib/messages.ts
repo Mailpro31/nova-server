@@ -39,10 +39,9 @@ const en = {
     people: "People",
     features: "App features",
     content: "Content",
-    limits: "Limits",
-    signIn: "Sign-in and security",
+    tracking: "Tracking",
     audit: "Audit log",
-    infrastructure: "Deployment",
+    advanced: "Advanced",
   },
 
   bootstrap: {

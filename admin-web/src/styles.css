@@ -116,6 +116,15 @@ p {
   outline: none;
 }
 
+/* « Avancé » : un domaine replié, ouvert d'un clic ou au clavier. */
+.nav-advanced > summary {
+  cursor: pointer;
+  list-style: revert;
+}
+.nav-advanced[open] > summary {
+  margin-bottom: 1px;
+}
+
 /* ── Structure ─────────────────────────────────────────────────────── */
 
 .shell {

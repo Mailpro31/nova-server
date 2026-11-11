@@ -35,10 +35,9 @@ describe("Domains", () => {
       "people",
       "features",
       "content",
-      "limits",
-      "signIn",
+      "tracking",
       "audit",
-      "infrastructure",
+      "advanced",
     ]);
   });
 

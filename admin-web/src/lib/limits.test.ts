@@ -71,18 +71,20 @@ describe("Dictation limit model", () => {
 });
 
 describe("Limits page", () => {
-  test("it has its own domain in the sidebar, right after Content", async () => {
+  // 11/11 (demande de Sash) : le domaine s'appelle « Suivi » ; l'usage,
+  // l'adoption et l'abonnement passent devant, les limites ferment le domaine.
+  test("it sits in the Tracking domain, right after Content", async () => {
     const { t } = await import("./messages");
     const ids = NAV_SECTIONS.map((section) => section.id);
-    expect(ids.indexOf("limits")).toBe(ids.indexOf("content") + 1);
+    expect(ids.indexOf("tracking")).toBe(ids.indexOf("content") + 1);
     // Le domaine porte aussi le tableau de bord d'usage : les limites qu'on
     // fixe et l'usage qu'on mesure se lisent l'un apres l'autre. L'adoption,
     // le bilan par semaine et par mois, vient apres le detail horaire ;
     // l'abonnement, palier face aux actifs, ferme le domaine.
     expect(
-      NAV_SECTIONS.find((section) => section.id === "limits")?.pages,
-    ).toEqual(["limits", "usage", "adoption", "subscription"]);
-    expect(t.navGroups.limits).toBe("Limits");
+      NAV_SECTIONS.find((section) => section.id === "tracking")?.pages,
+    ).toEqual(["usage", "adoption", "subscription", "limits"]);
+    expect(t.navGroups.tracking).toBe("Tracking");
     expect(code(APP)).toContain("<Limits />");
   });
 
