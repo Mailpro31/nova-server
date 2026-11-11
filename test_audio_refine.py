@@ -60,6 +60,17 @@ class AudioRefineBackendTests(unittest.TestCase):
         self.assertEqual(bodies[0]["reasoning_effort"], "minimal")
         self.assertNotIn("reasoning_effort", bodies[1])
 
+    def test_the_tokens_of_a_reading_are_logged_without_text(self):
+        def handler(request):
+            return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}], "usage": {
+                "prompt_tokens": 805, "completion_tokens": 216,
+                "completion_tokens_details": {"reasoning_tokens": 0}}})
+
+        with patch.object(ai_runtime.observability, "log") as log:
+            asyncio.run(backend(handler).refine(b"x", "wav", "t", []))
+        log.assert_any_call("ai.usage", task="audio_refine", prompt_tokens=805,
+                            completion_tokens=216, reasoning_tokens=0)
+
     def test_an_engine_error_is_a_runtime_error(self):
         with self.assertRaises(AIRuntimeError) as raised:
             asyncio.run(backend(lambda request: httpx.Response(500)).refine(b"x", "wav", "t", []))

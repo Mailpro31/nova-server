@@ -1468,10 +1468,17 @@ class AudioRefineBackend:
             _log_engine_refusal(self.adapter_name, response)
             raise AIRuntimeError(AI_RUNTIME_FAILED)
         try:
-            text = response.json()["choices"][0]["message"]["content"]
+            body = response.json()
+            text = body["choices"][0]["message"]["content"]
         except (ValueError, KeyError, IndexError, TypeError) as error:
             raise AIRuntimeError(AI_RUNTIME_FAILED) from error
         observability.METRICS.observe_stage("relecture", time.monotonic() - started)
+        # Le coût réel d'une dictée (11/11) : des comptes, jamais le texte.
+        usage = body.get("usage") if isinstance(body.get("usage"), dict) else {}
+        observability.log("ai.usage", task="audio_refine",
+                          prompt_tokens=usage.get("prompt_tokens"),
+                          completion_tokens=usage.get("completion_tokens"),
+                          reasoning_tokens=(usage.get("completion_tokens_details") or {}).get("reasoning_tokens"))
         return (text or "").strip()
 
 
