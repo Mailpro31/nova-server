@@ -125,6 +125,50 @@ p {
   margin-bottom: 1px;
 }
 
+/* Accueil : l'état en une ligne, les raccourcis en boutons larges. */
+.home-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.home-status[data-tone="down"] {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+}
+.home-status a {
+  margin-left: auto;
+}
+.home-alerts {
+  margin: 0;
+  padding-left: 18px;
+}
+.home-shortcuts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 10px;
+}
+.home-shortcut {
+  display: block;
+  padding: 12px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  color: var(--text);
+  text-decoration: none;
+  font-weight: 500;
+}
+.home-shortcut:hover {
+  background: var(--accent-soft);
+}
+.home-technical > summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+}
+
 /* ── Structure ─────────────────────────────────────────────────────── */
 
 .shell {

@@ -28,6 +28,27 @@ export const fr: Messages = {
     diagnostics: "Diagnostic",
   },
 
+  home: {
+    allGood: "Tout fonctionne",
+    warn: "Nova fonctionne, mais un point mérite un coup d’œil",
+    down: "La dictée ou l’IA est indisponible en ce moment",
+    engineDetails: "Détails",
+    keyFigures: "En un coup d’œil",
+    activeMonth: "Personnes actives ce mois-ci",
+    dictationsToday: "Dictées des dernières 24 heures",
+    versions: "Versions installées",
+    noVersion: "Aucun poste vu depuis 30 jours",
+    alertsTitle: "À traiter",
+    noAlert: "Rien à faire pour le moment.",
+    shortcutsTitle: "Tâches courantes",
+    shortcuts: {
+      members: "Ajouter ou gérer des personnes",
+      usage: "Voir l’usage",
+      groups: "Gérer les groupes",
+      audit: "Voir le journal",
+    },
+    technical: "Détails techniques",
+  },
   navGroups: {
     overview: "Vue d’ensemble",
     people: "Personnes",
