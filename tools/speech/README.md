@@ -62,3 +62,23 @@ Inventions sur des silences et des bruits :
 - La confiance par passage (`avg_logprob`) est rendue avec Whisper, pas avec les modèles GGUF.
 
 Tests : `test_speech_service.py`, à la racine du dépôt.
+
+## Voix basse
+
+`SPEECH_LEVEL_TARGET_DBFS` remonte une voix basse vers ce niveau avant le modèle : au plus +30 dB,
+sans écrêter, et jamais un silence (sous −70 dBFS). Vide dans l'image ; `-24` dans le
+docker-compose (`NOVA_SPEECH_LEVEL_TARGET_DBFS=` le coupe).
+
+Banc du 09/11 (600 dictées, speech-gguf turbo Q8_0, synthèse atténuée, pas de vrais
+chuchotements ; release `voix-basse-niveau-2026-11-09` de nova-bench-data) :
+
+| réglage | −30 dB + bruit : WER / termes / vides | origine : WER / termes / vides |
+|---|---|---|
+| sans | 41,2 % / 59,0 % / 9,8 % | 30,4 % / 71,8 % / 0,7 % |
+| `-24` | 36,8 % / 63,4 % / 3,3 % | 30,3 % / 71,9 % / 0,3 % |
+| `-20` | 36,3 % / 63,3 % / 3,5 % | 30,5 % / 71,4 % / 0,3 % |
+| `-16` | 36,4 % / 63,6 % / 3,5 % | — |
+
+`-24` garde le gain à voix très basse sans rien coûter à voix normale (25 textes sur 600
+changent, contre 70 avec `-20`). Inventions sur 6 silences et bruits : 0 dans tous les cas.
+Délai médian +15 à 30 ms.

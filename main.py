@@ -3226,10 +3226,16 @@ def ai_local_only(email: str | None) -> bool:
     return bool(state and (state["empty"] or state["mine_over"]))
 
 
+def is_bench_account(email: str | None) -> bool:
+    """Les comptes de banc (`@nova.invalid`, domaine réservé, jamais un élève) ne
+    comptent ni dans l'usage ni dans l'enveloppe : le PC fixe, 11/11."""
+    return (email or "").lower().endswith("@nova.invalid")
+
+
 def record_ai_spend(email: str | None, usage: dict, backend: dict, eur: float | None = None):
     """Ajoute le coût d'un appel servi par le moteur externe, et alerte à 80 %
     puis 100 % de ce qui est ouvert (l'école dans la console, Sash par le journal)."""
-    if backend.get("fallback") or not ai_envelope.priced():
+    if backend.get("fallback") or not ai_envelope.priced() or is_bench_account(email):
         return
     cost = ai_envelope.call_cost(usage) if eur is None else eur
     if cost <= 0:
@@ -3455,6 +3461,8 @@ def count_usage(
     audio_seconds: float = 0.0,
     latency_ms: float | None = None,
 ):
+    if is_bench_account(email):
+        return
     day = time.strftime("%Y-%m-%d")
     hour = time.strftime("%Y-%m-%dT%H")
     col = "transcriptions" if kind == "transcription" else "reformulations"
@@ -4367,6 +4375,9 @@ class CommandRequest(BaseModel):
 
     instruction: str = Field(max_length=MAX_INFERENCE_TEXT_CHARS)
     text: str = Field(max_length=MAX_ENGINEERING_NOTES_CHARS)
+    # La langue de l'application (« fr », « fr-FR ») : celle d'une explication
+    # ou d'un résumé, et le repli quand le texte ne dit pas la sienne.
+    language: str | None = Field(default=None, max_length=16)
 
 # Notes structurees : un type de note, une structure. Le poste choisit le type,
 # jamais la consigne — elle est ecrite ici, comme celle des notes d'ingenierie,
@@ -11734,7 +11745,15 @@ COMMAND_SHARED_WORDS = frozenset(
     "aussi bien tres seulement rien autre autres your with this that from into "
     "make write give each about only".split()
 )
-LANGUAGE_NAMES_FOR_PROMPT = {"fr": "French", "en": "English"}
+# Les langues de l'application (`src/lib/commands/catalog.ts` du poste). Une
+# valeur hors de cette liste n'entre jamais dans la consigne.
+LANGUAGE_NAMES_FOR_PROMPT = {
+    "ar": "Arabic", "bg": "Bulgarian", "cs": "Czech", "de": "German", "en": "English",
+    "es": "Spanish", "fr": "French", "he": "Hebrew", "it": "Italian", "ja": "Japanese",
+    "ko": "Korean", "ne": "Nepali", "nl": "Dutch", "pl": "Polish", "pt": "Portuguese",
+    "ru": "Russian", "sv": "Swedish", "tr": "Turkish", "uk": "Ukrainian",
+    "vi": "Vietnamese", "zh": "Chinese",
+}
 
 
 def command_kind(instruction: str) -> str:
@@ -11752,18 +11771,37 @@ def command_kind(instruction: str) -> str:
     return "other"
 
 
-def command_language_line(instruction: str, text: str) -> str:
+def answer_language(instruction: str, text: str, app_language: str | None = None) -> str | None:
+    """La langue attendue de la réponse, ou `None` (traduction, ou rien de sûr).
+
+    Une explication ou un résumé s'écrit dans la langue de l'application : c'est
+    l'élève qui le lit (capture de Sash, 10/11 : « quelle était l'heure d »
+    expliqué en anglais). Une réécriture garde la langue du texte. Quand le texte
+    ne dit pas la sienne, celle de l'application sert de repli.
+    """
+    kind = command_kind(instruction)
+    if kind == "translate":
+        return None
+    app = (app_language or "").split("-")[0].lower()
+    app = app if app in LANGUAGE_NAMES_FOR_PROMPT else None
+    if kind == "condense" and app:
+        return app
+    return dictation_language(text) or app
+
+
+def command_language_line(instruction: str, text: str, app_language: str | None = None) -> str:
     """La langue de la réponse, dite au modèle quand la consigne ne la nomme pas.
 
     « Answer in the language of the text » ne suffisait pas : le modèle du
     RTX suivait la langue de la consigne système, l'anglais.
     """
-    if command_kind(instruction) == "translate":
-        return ""
-    language = LANGUAGE_NAMES_FOR_PROMPT.get(dictation_language(text) or "")
+    language = LANGUAGE_NAMES_FOR_PROMPT.get(
+        answer_language(instruction, text, app_language) or "")
     if not language:
         return ""
-    return f"\n\nThe text is written in {language}. Write the result in {language}."
+    if LANGUAGE_NAMES_FOR_PROMPT.get(dictation_language(text) or "") == language:
+        return f"\n\nThe text is written in {language}. Write the result in {language}."
+    return f"\n\nWrite the result in {language}."
 
 
 def _stem(word: str) -> str:
@@ -11915,7 +11953,8 @@ def formula_changed(text: str, answer: str) -> bool:
     return False
 
 
-def command_refusal(instruction: str, text: str, answer: str) -> str | None:
+def command_refusal(instruction: str, text: str, answer: str,
+                    app_language: str | None = None) -> str | None:
     """Pourquoi cette réponse ne doit pas être proposée à l'élève, ou `None`."""
     output = (answer or "").strip()
     if not output:
@@ -11927,7 +11966,8 @@ def command_refusal(instruction: str, text: str, answer: str) -> str | None:
         return None
     source_language = dictation_language(text)
     written_language = dictation_language(output)
-    if source_language and written_language and source_language != written_language:
+    expected = answer_language(instruction, text, app_language)
+    if expected and written_language and expected != written_language:
         return "language-changed"
     # Une réécriture garde les nombres ; une explication ou un résumé peut en
     # omettre, jamais en inventer.
@@ -12039,13 +12079,13 @@ ADDRESSEE_PRONOUNS = ("vous", "tu", "te", "toi", "quelquun", "you", "someone", "
 
 
 async def run_command(task_type: TaskType, instruction: str, text: str,
-                      vocabulary: str) -> str:
+                      vocabulary: str, app_language: str | None = None) -> str:
     """Le circuit d'une commande, sans la route HTTP : consigne, modèle,
     contrôles. Les routes et le banc de mesure l'appellent tous deux."""
     system_prompt = command_prompt(instruction, vocabulary) + command_language_line(
-        instruction, text)
+        instruction, text, app_language)
     answer = await execute_text(task_type, system_prompt, command_text(text))
-    reason = command_refusal(instruction, text, answer)
+    reason = command_refusal(instruction, text, answer, app_language)
     if reason:
         observability.log("command.refused", level="warning", reason=reason,
                           kind=command_kind(instruction))
@@ -12489,8 +12529,10 @@ _WAV_HEADER_PROBE_BYTES = 64 * 1024
 
 # Sous ce niveau, au moment le plus fort de l'enregistrement, personne n'a
 # parlé : un micro coupé ou une pièce silencieuse. Une voix basse en classe
-# reste bien au-dessus (vers −45 dBFS).
-SILENT_PEAK_DBFS = -58.0
+# reste bien au-dessus (vers −45 dBFS). −60 et non −58 : banc du 09/11, deux
+# dictées justes à −59 dBFS, que le service remonte (-24), étaient bloquées ;
+# souffle, brouhaha et bruit blanc à −59/−60/−61 ne donnent aucun texte.
+SILENT_PEAK_DBFS = -60.0
 # Le niveau se mesure par tranches de 30 ms, comme un détecteur de parole.
 LEVEL_WINDOW_SECONDS = 0.03
 
@@ -12942,7 +12984,9 @@ def dictation_unclear(text: str, avg_logprob: float | None) -> bool:
         return True
     if only_subtitle_credits(text):
         return True
-    if lone_thanks(text) and avg_logprob is not None and avg_logprob < LONE_THANKS_AVG_LOGPROB:
+    # Sans confiance (speech-gguf n'en rend pas) : un « Merci. » seul est le
+    # plus souvent un souffle ; une vraie dictée d'un seul « merci » est rare.
+    if lone_thanks(text) and (avg_logprob is None or avg_logprob < LONE_THANKS_AVG_LOGPROB):
         return True
     # Une phrase dite deux fois de suite avec une bonne confiance, c'est
     # l'élève qui se répète : la boucle demande alors une troisième copie
@@ -13075,8 +13119,9 @@ _WORD_EDGES = ".,;:!?«»\"'()[]…"
 def changed_words(heard: str, read: str) -> list[str]:
     """Les mots de la relecture qui ne viennent pas de Whisper : les mots à vérifier (1.2).
 
-    Banc du 06/11 sur 600 dictées : 88,9 % sont vraiment faux, et ils couvrent
-    54,6 % des erreurs ; mieux que la confiance de faster-whisper (62,5 %).
+    Banc du 06/11 sur 600 dictées : 88,9 % des mots de Whisper que la relecture
+    change étaient vraiment faux, et ils couvrent 54,6 % des erreurs ; mieux que la
+    confiance de faster-whisper (62,5 %). Le mot renvoyé est celui de la relecture.
     """
     key = lambda word: word.strip(_WORD_EDGES).casefold()  # noqa: E731
     before, after = [key(w) for w in heard.split()], read.split()
@@ -14959,7 +15004,7 @@ async def command(body: CommandRequest, user: str = Depends(current_user),
     instruction = clean_required(body.instruction, "instruction", 2000)
     enforce_inference_quota("text", user, account_organization(account))
     return {"text": await run_command(TaskType.VOICE_COMMAND, instruction, body.text,
-                                      vocabulary_context(user))}
+                                      vocabulary_context(user), body.language)}
 
 class SkillRunRequest(BaseModel):
     skill_id: str = Field(max_length=MAX_INFERENCE_ID_CHARS)
@@ -16389,6 +16434,7 @@ def usage_timeline(since: str) -> list[dict]:
                 "people": row["people"] or 0,
                 "latency_ms_average": round(row["latency_sum"] / count) if count else None,
                 "latency_ms_max": round(row["latency_max"] or 0.0) or None,
+                "latency_ms_count": count,
             }
         )
     return timeline
@@ -16464,7 +16510,8 @@ def estimated_cost_usd(transcriptions: int) -> float | None:
         unit = float(os.getenv("NOVA_COST_PER_DICTATION_USD", "") or 0)
     except ValueError:
         return None
-    return round(transcriptions * unit, 2) if unit > 0 else None
+    # Au dixième de centime : à 0,00347 $ la dictée, le centime affichait 0,00 $.
+    return round(transcriptions * unit, 4) if unit > 0 else None
 
 
 def usage_summary(timeline: list[dict]) -> dict:
@@ -16481,9 +16528,12 @@ def usage_summary(timeline: list[dict]) -> dict:
         }
     total = sum(h["transcriptions"] + h["reformulations"] for h in timeline)
     busiest = max(timeline, key=lambda h: h["transcriptions"] + h["reformulations"])
-    measured = [h for h in timeline if h["latency_ms_average"] is not None]
+    # Pondérée par le nombre de mesures : une heure à 2 dictées ne pèse pas
+    # autant qu'une heure à 5.
+    measured = sum(h["latency_ms_count"] for h in timeline)
     average = (
-        round(sum(h["latency_ms_average"] for h in measured) / len(measured))
+        round(sum(h["latency_ms_average"] * h["latency_ms_count"] for h in timeline
+                  if h["latency_ms_count"]) / measured)
         if measured else None
     )
     peaks = [h["latency_ms_max"] for h in timeline if h["latency_ms_max"]]

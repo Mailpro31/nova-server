@@ -43,6 +43,12 @@ class HttpHardeningTests(unittest.TestCase):
         self.assertIsNotNone(identifier)
         self.assertRegex(identifier, r"^[A-Za-z0-9._-]{8,64}$")
 
+    def test_health_serves_the_version_the_diagnostics_page_displays(self):
+        body = self.client.get("/api/health").json()
+        self.assertEqual(body["status"], "ok")
+        self.assertEqual(body["version"], main.app.version)
+        self.assertRegex(body["version"], r"^\d+\.\d+\.\d+$")
+
     def test_a_well_formed_client_request_id_is_echoed(self):
         response = self.client.get(
             "/api/health", headers={observability.REQUEST_ID_HEADER: "trace-abc-123"}

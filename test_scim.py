@@ -411,6 +411,37 @@ class ScimProvisioningTests(unittest.TestCase):
         with main.db() as conn:
             self.assertIsNotNone(main.user_by_id(conn, user["id"]))
 
+    def test_the_provisioning_page_counts_users_groups_and_members_exactly(self):
+        """Provisioning : « personnes gérées », « groupes gérés » et la colonne
+        « membres » de chaque groupe, calculés sur 3 personnes et 2 groupes."""
+        users = []
+        for index in range(3):
+            payload = fixture("entra-create-user.json")
+            payload.update({
+                "externalId": f"entra-count-{index}", "userName": f"compte{index}@example.com",
+                "emails": [{"value": f"compte{index}@example.com", "primary": True}]})
+            users.append(self.client.post(
+                "/scim/v2/Users", headers=self.scim_headers, json=payload).json()["id"])
+        for name, members in (("Groupe A", users[:2]), ("Groupe B", [])):
+            payload = fixture("entra-create-group.json")
+            payload.update({"externalId": f"ext-{name}", "displayName": name})
+            group_id = self.client.post("/scim/v2/Groups", headers=self.scim_headers,
+                                        json=payload).json()["id"]
+            for user_id in members:
+                add = fixture("entra-add-member.json")
+                add["Operations"][0]["value"][0]["value"] = user_id
+                self.assertEqual(self.client.patch(
+                    f"/scim/v2/Groups/{group_id}", headers=self.scim_headers,
+                    json=add).status_code, 204)
+        view = self.client.get(
+            f"/api/control/organizations/{self.organization_id}/provisioning",
+            headers=self.admin_headers).json()
+        self.assertEqual(view["users_managed"], 3)
+        self.assertEqual(view["groups_managed"], 2)
+        self.assertEqual(
+            [(g["display_name"], g["member_count"]) for g in view["managed_groups"]],
+            [("Groupe A", 2), ("Groupe B", 0)])
+
     def test_cross_tenant_ids_and_group_members_are_rejected(self):
         user_a = self._create_user().json()
         tenant_b = str(uuid.uuid4())

@@ -4,9 +4,11 @@ Le serveur Nova doit l'appeler sans changer de code (`WhisperCompatibleSpeechBac
 même route, mêmes champs, même santé, et un audio illisible rendu en 400.
 """
 
+import array
 import asyncio
 import importlib.util
 import io
+import math
 import os
 import sys
 import types
@@ -127,6 +129,34 @@ class SpeechServiceTests(unittest.TestCase):
         client = TestClient(speech.create_app(engine))
         response = client.post("/v1/audio/transcriptions", files={"file": ("a.wav", wav(0.5))})
         self.assertEqual(response.status_code, 425)
+
+
+class RaiseLevelTests(unittest.TestCase):
+    @staticmethod
+    def tone(amplitude: float) -> "array.array":
+        return array.array("f", (amplitude * math.sin(i / 5) for i in range(16000)))
+
+    def test_off_by_default(self):
+        quiet = self.tone(0.01)
+        self.assertIs(speech.raise_level(quiet, float("nan")), quiet)
+
+    def test_a_quiet_voice_is_raised_toward_the_target(self):
+        raised = speech.raise_level(self.tone(0.01), -20.0)
+        self.assertAlmostEqual(speech.loudest_dbfs(raised), -20.0, delta=0.5)
+
+    def test_the_gain_is_capped_and_silence_is_left_alone(self):
+        raised = speech.raise_level(self.tone(0.001), -10.0)
+        self.assertAlmostEqual(
+            speech.loudest_dbfs(raised) - speech.loudest_dbfs(self.tone(0.001)), 30.0, delta=0.5)
+        silent = self.tone(0.00001)
+        self.assertIs(speech.raise_level(silent, -20.0), silent)
+
+    def test_a_loud_voice_is_never_lowered_nor_clipped(self):
+        loud = self.tone(0.9)
+        self.assertIs(speech.raise_level(loud, -20.0), loud)
+        spiky = self.tone(0.01)
+        spiky[100] = 0.5
+        self.assertLessEqual(max(speech.raise_level(spiky, -10.0)), 0.99 + 1e-6)
 
 
 class FakeWhisperModel:

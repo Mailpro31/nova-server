@@ -47,6 +47,35 @@ class AudioRefineBackendTests(unittest.TestCase):
         # Les reprises restent dans la transcription : le Style les résout ensuite.
         self.assertIn("écris le mot de reprise ET les deux valeurs", system["content"])
 
+    def test_the_reasoning_effort_is_sent_only_when_configured(self):
+        bodies = []
+
+        def handler(request):
+            bodies.append(json.loads(request.content))
+            return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+        for effort in ("minimal", ""):
+            asyncio.run(AudioRefineBackend("http://refine:8000/v1", "m", reasoning_effort=effort,
+                                           transport=httpx.MockTransport(handler)).refine(b"x", "wav", "t", []))
+        self.assertEqual(bodies[0]["reasoning_effort"], "minimal")
+        self.assertNotIn("reasoning_effort", bodies[1])
+
+    def test_the_tokens_of_a_reading_are_logged_without_text(self):
+        def handler(request):
+            return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}], "usage": {
+                "prompt_tokens": 805, "completion_tokens": 216,
+                "completion_tokens_details": {"reasoning_tokens": 0}}})
+
+        # Le journal ET le compteur Prometheus : sans lui, le tableau coût du
+        # panel omettait le poste le plus lourd (PC fixe, 11/11).
+        with patch.object(ai_runtime.observability, "log") as log, \
+                patch.object(ai_runtime.observability.METRICS, "add_tokens") as count:
+            asyncio.run(backend(handler).refine(b"x", "wav", "t", []))
+        count.assert_called_once_with("audio_refine", {"prompt_tokens": 805, "completion_tokens": 216,
+                                                       "completion_tokens_details": {"reasoning_tokens": 0}})
+        log.assert_any_call("ai.usage", task="audio_refine", prompt_tokens=805,
+                            completion_tokens=216, reasoning_tokens=0)
+
     def test_an_engine_error_is_a_runtime_error(self):
         with self.assertRaises(AIRuntimeError) as raised:
             asyncio.run(backend(lambda request: httpx.Response(500)).refine(b"x", "wav", "t", []))

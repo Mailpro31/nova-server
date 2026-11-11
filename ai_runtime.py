@@ -382,6 +382,7 @@ class OpenAICompatibleTextBackend:
         token: str = "",
         health_timeout: float = 3.0,
         reasoning_supported: bool = False,
+        reasoning_off_effort: str = "",
         transport: httpx.AsyncBaseTransport | None = None,
     ):
         self.base_url = validate_private_runtime_url(base_url) if base_url else ""
@@ -389,6 +390,9 @@ class OpenAICompatibleTextBackend:
         self.token = token
         self.health_timeout = health_timeout
         self.reasoning_supported = reasoning_supported
+        # Effort envoyé quand la réflexion est coupée : les modèles qui réfléchissent
+        # par défaut (Gemini 3.5 sur Vertex) le font sinon à chaque dictée.
+        self.reasoning_off_effort = reasoning_off_effort.strip()
         self.transport = transport
         self._context_window: int | None = None
         # Une API qui n'a pas `/tokenize` ou n'annonce pas sa fenêtre ne
@@ -521,6 +525,8 @@ class OpenAICompatibleTextBackend:
             payload["reasoning_effort"] = (
                 "high" if request.options.reasoning == ReasoningMode.ON else "medium"
             )
+        elif request.options.reasoning == ReasoningMode.OFF and self.reasoning_off_effort:
+            payload["reasoning_effort"] = self.reasoning_off_effort
         started = time.monotonic()
         try:
             async with httpx.AsyncClient(
@@ -1347,6 +1353,7 @@ def router_from_environment() -> OrganizationAIRouter:
             token=text_token,
             reasoning_supported=os.getenv("NOVA_AI_REASONING_ADAPTER", "false").lower()
             == "true",
+            reasoning_off_effort=os.getenv("NOVA_AI_REASONING_OFF_EFFORT", ""),
         ),
         WhisperCompatibleSpeechBackend(speech_url, speech_model, token=speech_token),
         profile=profile,
@@ -1401,11 +1408,12 @@ class AudioRefineBackend:
     adapter_name = "openai_compatible_audio"
 
     def __init__(self, base_url: str, model: str, *, token: str = "",
-                 timeout: float = AUDIO_REFINE_TIMEOUT_SECONDS,
+                 timeout: float = AUDIO_REFINE_TIMEOUT_SECONDS, reasoning_effort: str = "",
                  transport: httpx.AsyncBaseTransport | None = None):
         self.base_url = validate_private_runtime_url(base_url)
         self.model = model.strip()
         self.token = token
+        self.reasoning_effort = reasoning_effort.strip()  # Gemini 3.5 : sinon il réfléchit et frôle le délai
         self.timeout = timeout
         self.transport = transport
 
@@ -1441,6 +1449,8 @@ class AudioRefineBackend:
                 ]},
             ],
         }
+        if self.reasoning_effort:
+            payload["reasoning_effort"] = self.reasoning_effort
         started = time.monotonic()
         try:
             # Connexion courte : une API injoignable ne retient pas la dictée
@@ -1458,10 +1468,18 @@ class AudioRefineBackend:
             _log_engine_refusal(self.adapter_name, response)
             raise AIRuntimeError(AI_RUNTIME_FAILED)
         try:
-            text = response.json()["choices"][0]["message"]["content"]
+            body = response.json()
+            text = body["choices"][0]["message"]["content"]
         except (ValueError, KeyError, IndexError, TypeError) as error:
             raise AIRuntimeError(AI_RUNTIME_FAILED) from error
         observability.METRICS.observe_stage("relecture", time.monotonic() - started)
+        # Le coût réel d'une dictée (11/11) : des comptes, jamais le texte.
+        usage = body.get("usage") if isinstance(body.get("usage"), dict) else {}
+        observability.METRICS.add_tokens("audio_refine", usage)
+        observability.log("ai.usage", task="audio_refine",
+                          prompt_tokens=usage.get("prompt_tokens"),
+                          completion_tokens=usage.get("completion_tokens"),
+                          reasoning_tokens=(usage.get("completion_tokens_details") or {}).get("reasoning_tokens"))
         return (text or "").strip()
 
 
@@ -1493,7 +1511,8 @@ def audio_refiner_from_environment() -> AudioRefineBackend | None:
     token = (vertex_auth.token_from_environment()
              or secrets_provider.resolve_value(os.getenv("NOVA_AI_SPEECH_REFINE_TOKEN", "")) or "")
     observability.log("ai.speech_refine_enabled", level="warning", url=url, model=model)
-    return AudioRefineBackend(url, model, token=token)
+    return AudioRefineBackend(url, model, token=token,
+                              reasoning_effort=os.getenv("NOVA_AI_REASONING_OFF_EFFORT", ""))
 
 
 class VoiceBackend:

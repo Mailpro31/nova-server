@@ -521,8 +521,10 @@ class CommandContextTests(unittest.TestCase):
     # -- API contract ------------------------------------------------------
     def test_request_contract_is_unchanged(self):
         self.assertEqual(
-            set(main.CommandRequest.model_fields), {"instruction", "text"}
+            set(main.CommandRequest.model_fields), {"instruction", "text", "language"}
         )
+        # Optionnel : un poste d'avant le 10/11 ne l'envoie pas.
+        self.assertFalse(main.CommandRequest.model_fields["language"].is_required())
 
     def test_dictation_still_receives_every_context(self):
         # Guard-rail the other way round: dictation rewriting must keep
@@ -4137,6 +4139,9 @@ class AdminTestCase(unittest.TestCase):
 
     def setUp(self):
         open_optional_features(self)
+        # Comme `conftest.py` sous pytest : sans lui, `unittest` seul voit la
+        # limite de demandes de code refuser les derniers tests d'une classe.
+        main.rate_limiter().reset()
         with main.db() as conn:
             # Comptes et sessions compris : un test qui suspend un compte ne
             # doit pas empêcher le suivant de se connecter.
@@ -4864,6 +4869,17 @@ class AdminStepUpTests(AdminTestCase):
         flow_id = self.step_up_start(user_token).json()["flow_id"]
         body = self.step_up_complete(user_token, flow_id).json()
         self.assertLessEqual(body["expires_in"], main.ADMIN_SESSION_TTL_SECONDS)
+
+    def test_the_session_countdown_is_the_real_remaining_lifetime(self):
+        """Rest : le compte à rebours « h min » part de `expires_in`, qui doit
+        valoir la durée de vie restante, à quelques secondes près."""
+        user_token, _ = self.prepared()
+        flow_id = self.step_up_start(user_token).json()["flow_id"]
+        body = self.step_up_complete(user_token, flow_id).json()
+        self.assertGreaterEqual(body["expires_in"], main.ADMIN_SESSION_TTL_SECONDS - 10)
+        with main.db() as conn:
+            stored = conn.execute("SELECT MAX(expires_at) e FROM admin_sessions").fetchone()["e"]
+        self.assertAlmostEqual(stored - time.time(), body["expires_in"], delta=10)
 
     # -- fraîcheur ---------------------------------------------------------
 
@@ -5678,6 +5694,23 @@ class MemberManagementTests(AdminTestCase):
         self.assertTrue(body["has_more"])
         self.assertEqual(body["limit"], 2)
 
+    def test_the_total_counts_every_account_whatever_the_page_or_the_filter(self):
+        """Members : « 2 sur 4 ». Le total est celui de l'organisation entière."""
+        token = self.admin_session()  # 1 compte
+        for n in range(3):
+            self.member(f"total{n}@example.com")  # 3 comptes de plus
+        other = main.nova_organization_id() + "-autre"
+        with main.db() as conn:
+            conn.execute(
+                "INSERT INTO organizations(id, slug, display_name, org_type, created_at) "
+                "VALUES (?,?,?,?,?)", (other, "autre-total", "Autre", "business", time.time()))
+            main.create_user(conn, other, "ailleurs@example.com")
+        for query in ("?limit=2", "?query=total0", "?status=disabled"):
+            body = self.client.get(self.members(query), headers=self.auth(token)).json()
+            self.assertEqual(body["total"], 4, query)
+        page = self.client.get(self.members("?limit=2"), headers=self.auth(token)).json()
+        self.assertEqual(len(page["members"]), 2)
+
     def test_an_absurd_limit_is_capped(self):
         token = self.admin_session()
         body = self.client.get(self.members("?limit=99999"),
@@ -6060,6 +6093,41 @@ class SeatsTests(AdminTestCase):
                                headers=self.auth(token)).json()
         self.assertEqual(body["seats"]["used"],
                          main.seats_in_use(main.nova_organization_id()))
+
+    def test_the_seat_count_is_exact_on_known_data(self):
+        """Overview : « n / limite ». Valeur calculée à la main."""
+        token = self.admin_session()  # l'administrateur occupe 1 siège
+        self.sign_in("a@example.com", machine="poste-1")
+        self.sign_in("a@example.com", machine="poste-2")  # même personne : +1 en tout
+        self.sign_in("b@example.com")  # jeton désactivé : ne compte pas
+        self.sign_in("c@example.com")  # jeton expiré : ne compte pas
+        self.sign_in("d@example.com")  # autre organisation : ne compte pas
+        with main.db() as conn:
+            conn.execute("UPDATE tokens SET active=0 WHERE email='b@example.com'")
+            conn.execute("UPDATE tokens SET expires_at=? WHERE email='c@example.com'",
+                         (time.time() - 10,))
+            conn.execute("UPDATE tokens SET organization_id='autre-org' "
+                         "WHERE email='d@example.com'")
+        body = self.client.get("/api/control/organization",
+                               headers=self.auth(token)).json()
+        self.assertEqual(body["seats"], {"used": 2, "limit": main.MAX_SEATS})
+
+    def test_the_provider_summary_counts_declared_and_enabled(self):
+        """Overview et Diagnostics : « n actifs sur m » par type de fournisseur."""
+        token = self.admin_session()
+        organization_id = main.nova_organization_id()
+        now = time.time()
+        with main.db() as conn:
+            conn.execute("DELETE FROM organization_provider_configs")
+            for enabled in (1, 1, 0):
+                conn.execute(
+                    "INSERT INTO organization_provider_configs(id, organization_id, "
+                    "provider_type, enabled, created_at, updated_at) VALUES (?,?,?,?,?,?)",
+                    (str(uuid.uuid4()), organization_id, "oidc", enabled, now, now))
+        body = self.client.get("/api/control/organization",
+                               headers=self.auth(token)).json()
+        self.assertEqual(body["providers"],
+                         [{"provider_type": "oidc", "count": 3, "enabled_count": 2}])
 
 
 

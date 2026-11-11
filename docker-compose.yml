@@ -97,6 +97,8 @@ x-nova-environment: &nova-environment
     # Gemini via Vertex AI (3.1) : chemin du fichier du compte de service,
     # monté en lecture seule (en production : /run/secrets/vertex.json).
     NOVA_VERTEX_CREDENTIALS_FILE: "${NOVA_VERTEX_CREDENTIALS_FILE:-}"
+    # Effort de réflexion quand elle est coupée (ex. minimal pour Gemini 3.5 sur Vertex).
+    NOVA_AI_REASONING_OFF_EFFORT: "${NOVA_AI_REASONING_OFF_EFFORT:-}"
 
 services:
   # La preparation de la base, explicite : le schema puis les premieres lignes
@@ -269,6 +271,10 @@ services:
       SPEECH_BACKEND: "${NOVA_SPEECH_BACKEND:-cuda}"
       SPEECH_MODEL_PATH: /models/speech.gguf
       SPEECH_MODEL_NAME: "${NOVA_SPEECH_GGUF_NAME:-whisper-large-v3-turbo-q8_0}"
+      # Voix basse remontée avant le modèle (tools/speech/README.md). Banc du 09/11 :
+      # à −30 dB, dictées vides 9,8 → 3,3 %, WER 41,2 → 36,8 % ; voix normale sans
+      # coût (30,4 → 30,3 %), contrairement à -20 ; 0 invention. Vide : coupé.
+      SPEECH_LEVEL_TARGET_DBFS: "${NOVA_SPEECH_LEVEL_TARGET_DBFS--24}"
       SPEECH_DEFAULT_LANGUAGE: fr
     volumes:
       - "${NOVA_SPEECH_GGUF_PATH:-./models/speech.gguf}:/models/speech.gguf:ro"
