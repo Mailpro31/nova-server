@@ -34,6 +34,27 @@ const en = {
 
   // Les domaines de la barre latérale. Un domaine d'une seule page prête son
   // nom au lien : « App features » mène à Configuration.
+  home: {
+    allGood: "Everything is working",
+    warn: "Nova works, but something needs a look",
+    down: "Dictation or AI is currently unavailable",
+    engineDetails: "Details",
+    keyFigures: "At a glance",
+    activeMonth: "People active this month",
+    dictationsToday: "Dictations in the last 24 hours",
+    versions: "Installed versions",
+    noVersion: "No workstation seen in 30 days",
+    alertsTitle: "Needs your attention",
+    noAlert: "Nothing to do right now.",
+    shortcutsTitle: "Common tasks",
+    shortcuts: {
+      members: "Add or manage people",
+      usage: "See usage",
+      groups: "Manage groups",
+      audit: "See the audit log",
+    },
+    technical: "Technical details",
+  },
   navGroups: {
     overview: "Overview",
     people: "People",

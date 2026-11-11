@@ -9,7 +9,7 @@ import { subscriptionAlerts, type SubscriptionReport } from "../lib/subscription
 import { useSession } from "../lib/useAdminSession";
 import { useResource } from "../lib/useResource";
 
-function alertText(alert: ReturnType<typeof subscriptionAlerts>[number], report: SubscriptionReport) {
+export function alertText(alert: ReturnType<typeof subscriptionAlerts>[number], report: SubscriptionReport) {
   const days = report.licence.days_left ?? 0;
   const grace = (report.licence.grace_days ?? 0) + days;
   switch (alert) {
