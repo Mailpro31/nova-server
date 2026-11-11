@@ -14154,6 +14154,16 @@ def without_abandoned(text: str) -> str:
     return " ".join(word for word, gone in zip(raw, dropped) if not gone)
 
 
+# Des chiffres dits par groupes (« 21 45 87 32 ») : le modèle les écrit souvent
+# collés (21458732, banc du 11/11). La suite entière vaut alors ses morceaux.
+DIGIT_RUN = re.compile(r"\d+(?:[   ]+\d+)+")
+
+
+def joined_digit_runs(text: str) -> dict[str, set[str]]:
+    """Chaque suite de groupes de chiffres, collée, avec les nombres qu'elle contient."""
+    return {re.sub(r"\s", "", run): numbers_in(run) for run in DIGIT_RUN.findall(text or "")}
+
+
 def facts_refusal(dictated: str, text: str, lost_matters: bool) -> str | None:
     """Les nombres et les dates de la sortie face a ceux de la dictee.
 
@@ -14165,8 +14175,11 @@ def facts_refusal(dictated: str, text: str, lost_matters: bool) -> str | None:
     dictated = REWRITE_MARKER.sub(" ", dictated or "")
     text = LIST_NUMBERING.sub("", REWRITE_MARKER.sub(" ", text or ""))
     written_numbers, written_dates = numbers_in(text), dates_in(text)
-    if written_numbers - numbers_in(dictated):
+    runs = joined_digit_runs(dictated)
+    if written_numbers - numbers_in(dictated) - runs.keys():
         return "number-changed"
+    written_numbers |= {part for joined, parts in runs.items() if joined in written_numbers
+                        for part in parts}
     if written_dates - dates_in(dictated):
         return "date-changed"
     if lost_matters:

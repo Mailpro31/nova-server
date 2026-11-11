@@ -48,6 +48,18 @@ class AllStylesFactsTests(unittest.TestCase):
             "default_improve_transcriptions",
         ), "number-lost")
 
+    def test_digits_said_in_pairs_may_be_written_together(self):
+        # Banc du 11/11 (Vertex 3.5 Flash) : « 21 45 87 32 » écrit 21458732,
+        # refusé à tort dans trois Styles. Un chiffre changé reste refusé.
+        for style in ("nova_style_everyday", "default_improve_transcriptions", "nova_style_email"):
+            with self.subTest(style=style):
+                self.assertIsNone(refusal("mon numéro étudiant c'est 21 45 87 32",
+                                          "Mon numéro étudiant c'est 21458732.", style))
+        self.assertIsNotNone(refusal("mon numéro étudiant c'est 21 45 87 32",
+                                     "Mon numéro étudiant c'est 21458733.", "nova_style_everyday"))
+        self.assertIsNotNone(refusal("mon numéro étudiant c'est 21 45 87 32",
+                                     "Mon numéro étudiant c'est 214587.", "nova_style_everyday"))
+
     def test_a_self_correction_may_drop_the_abandoned_value(self):
         self.assertIsNone(refusal(
             "le rendez-vous est le 12 non pardon le 13 en salle B204",
