@@ -507,12 +507,12 @@ export function Provisioning() {
               {view.managed_groups.length === 0 ? (
                 <p>{t.provisioning.noGroups}</p>
               ) : (
-                <table>
+                <table aria-label={t.provisioning.groupsTitle}>
                   <thead>
                     <tr>
-                      <th>{t.provisioning.group}</th>
-                      <th>{t.provisioning.members}</th>
-                      <th>{t.provisioning.updated}</th>
+                      <th scope="col">{t.provisioning.group}</th>
+                      <th scope="col">{t.provisioning.members}</th>
+                      <th scope="col">{t.provisioning.updated}</th>
                     </tr>
                   </thead>
                   <tbody>
