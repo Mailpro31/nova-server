@@ -35,8 +35,7 @@ import {
   Facts,
   Notice,
   Panel,
-  Tag,
-} from "../components/primitives";
+  Tag, MoreActions } from "../components/primitives";
 
 type Draft = Record<string, unknown>;
 
@@ -619,6 +618,7 @@ function PackageCard({
               <button disabled={busy} onClick={() => void openDraft()}>
                 {draftVersion ? t.packages.editDraft : t.packages.newDraft}
               </button>
+              <MoreActions>
               {entry.status === "archived" ? (
                 <>
                   <button
@@ -650,6 +650,7 @@ function PackageCard({
                   {t.packages.archive}
                 </button>
               )}
+              </MoreActions>
             </div>
           )}
 

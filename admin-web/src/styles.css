@@ -169,6 +169,41 @@ p {
   margin-bottom: 12px;
 }
 
+/* « Plus d'actions » : un bouton discret, le menu s'ouvre sous lui. */
+.more-actions {
+  position: relative;
+}
+.more-actions > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 6px 13px;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--border-strong);
+  font-size: 13.5px;
+  color: var(--text-muted);
+}
+.more-actions > summary::-webkit-details-marker {
+  display: none;
+}
+.more-actions-menu {
+  position: absolute;
+  right: 0;
+  z-index: 5;
+  margin-top: 4px;
+  min-width: 180px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
+}
+.more-actions-menu button {
+  text-align: left;
+}
+
 /* ── Structure ─────────────────────────────────────────────────────── */
 
 .shell {

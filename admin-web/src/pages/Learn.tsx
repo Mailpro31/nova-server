@@ -52,7 +52,7 @@ import { errorMessage, t } from "../lib/messages";
 import { CAPABILITY, can } from "../lib/session";
 import { useResource } from "../lib/useResource";
 import { useSession } from "../lib/useAdminSession";
-import { AsyncSection, ConfirmDialog, Notice, Panel, Tag } from "../components/primitives";
+import { AsyncSection, ConfirmDialog, Notice, Panel, Tag, MoreActions } from "../components/primitives";
 
 interface Option {
   id: string;
@@ -305,14 +305,15 @@ function LessonRow({
                 {t.learn.edit}
               </button>
             )}
+            <button disabled={busy} aria-expanded={open} onClick={() => setOpen(!open)}>
+              {t.learn.settings}
+            </button>
+            <MoreActions>
             {canCustomize(lesson) && (
               <button disabled={busy} onClick={() => setConfirmCustomize(true)}>
                 {t.learn.customize}
               </button>
             )}
-            <button disabled={busy} aria-expanded={open} onClick={() => setOpen(!open)}>
-              {t.learn.settings}
-            </button>
             {archived ? (
               <button
                 disabled={busy}
@@ -327,6 +328,7 @@ function LessonRow({
                 {t.learn.archive}
               </button>
             )}
+            </MoreActions>
           </div>
         )}
       </div>

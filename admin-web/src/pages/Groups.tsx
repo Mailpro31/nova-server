@@ -22,8 +22,7 @@ import {
   Facts,
   Notice,
   Panel,
-  Tag,
-} from "../components/primitives";
+  Tag, MoreActions } from "../components/primitives";
 
 function failureText(raised: unknown): string {
   return raised instanceof ApiError
@@ -319,7 +318,7 @@ function GroupCard({
             {looksMedical(renaming) && <Notice>{t.groups.medicalName}</Notice>}
           </div>
         ) : (
-          <div className="row">
+          <MoreActions>
             <button disabled={busy} onClick={() => setRenaming(group.label)}>
               {t.groups.rename}
             </button>
@@ -330,7 +329,7 @@ function GroupCard({
             >
               {t.groups.delete}
             </button>
-          </div>
+          </MoreActions>
         ))}
       {failure && <Notice tone="danger">{failure}</Notice>}
 
