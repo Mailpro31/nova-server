@@ -933,7 +933,7 @@ const en = {
     dictations: "Dictations",
     peoplePeak: "People at peak",
     estimatedCost: "Estimated AI cost",
-    dollars: (value: number) => `$${value.toFixed(2)}`,
+    dollars: (value: number) => `$${value.toFixed(value < 1 ? 4 : 2)}`,
     busiestHour: "Busiest hour",
     latencyAverage: "Average wait",
     latencyPeak: "Worst wait",

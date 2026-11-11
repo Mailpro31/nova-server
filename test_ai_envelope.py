@@ -5,6 +5,7 @@ moteur local et la bulle se met en pause."""
 import asyncio
 import time
 import unittest
+from unittest.mock import patch
 from unittest import mock
 
 from test_main import AdminTestCase  # noqa: F401  — prépare la base de test
@@ -156,3 +157,17 @@ class EnvelopeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BenchSpendTests(unittest.TestCase):
+    def test_a_bench_account_never_spends_the_school_envelope(self):
+        import main
+        with patch.dict("os.environ", {"NOVA_AI_REFINE_EUR_PER_CALL": "0.003"}),                 patch.object(main, "ai_envelope_state", return_value=None):
+            with main.db() as conn:
+                conn.execute("DELETE FROM ai_spend")
+            main.record_ai_spend("banc@nova.invalid", {}, {}, eur=0.003)
+            main.record_ai_spend("eleve@ecole.example", {}, {}, eur=0.003)
+            with main.db() as conn:
+                rows = conn.execute("SELECT email FROM ai_spend").fetchall()
+        self.assertEqual([r["email"] for r in rows], ["eleve@ecole.example"])
+

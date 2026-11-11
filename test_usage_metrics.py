@@ -286,9 +286,11 @@ class UsageMetricsApiTests(AdminTestCase):
         timeline = self.read().json()["timeline"]
         self.assertEqual(timeline, [
             {"hour": h1, "transcriptions": 4, "reformulations": 1, "audio_seconds": 90.5,
-             "people": 2, "latency_ms_average": 1000, "latency_ms_max": 2000},
+             "people": 2, "latency_ms_average": 1000, "latency_ms_max": 2000,
+             "latency_ms_count": 5},
             {"hour": h2, "transcriptions": 2, "reformulations": 2, "audio_seconds": 10.0,
-             "people": 1, "latency_ms_average": 3000, "latency_ms_max": 5200},
+             "people": 1, "latency_ms_average": 3000, "latency_ms_max": 5200,
+             "latency_ms_count": 2},
         ])
 
     def test_the_summary_tiles_are_exact(self):
@@ -302,14 +304,21 @@ class UsageMetricsApiTests(AdminTestCase):
         self.assertEqual(summary["over_five_seconds"], 1)   # seule h2 dépasse 5 s
         self.assertEqual(summary["estimated_cost_usd"], 3.0)  # 6 dictées x 0,5 $
 
-    @unittest.expectedFailure
     def test_the_average_wait_is_weighted_by_the_number_of_dictations(self):
-        """bug : `usage_summary` fait la moyenne des moyennes horaires
-        ((1000 + 3000) / 2 = 2000 ms), si bien qu'une heure à 2 dictées pèse
-        autant qu'une heure à 5. La moyenne réelle de l'« Attente moyenne » est
-        11000 ms / 7 dictées = 1571 ms."""
+        """Une heure à 2 dictées ne pèse pas autant qu'une heure à 5 : la moyenne
+        des moyennes horaires donnait 2000 ms, la vraie est 11000 / 7 = 1571 ms."""
         self.seed_known()
         self.assertEqual(self.read().json()["summary"]["latency_ms_average"], 1571)
+
+    def test_bench_accounts_are_never_counted(self):
+        # Domaine réservé (RFC 2606) : jamais un élève. Le PC fixe, 11/11 :
+        # ses bancs gonflaient les actifs du mois et le coût affiché.
+        main.count_usage("banc@nova.invalid", "transcription", 10.0, 900.0)
+        self.assertEqual(self.read().json()["summary"]["dictations"], 0)
+
+    def test_a_small_cost_is_not_rounded_to_zero(self):
+        with patch.dict("os.environ", {"NOVA_COST_PER_DICTATION_USD": "0.00347"}):
+            self.assertEqual(main.estimated_cost_usd(3), 0.0104)
 
     def test_the_per_person_table_is_exact(self):
         self.seed_known()

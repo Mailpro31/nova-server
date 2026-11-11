@@ -905,7 +905,7 @@ export const fr: Messages = {
     dictations: "Dictées",
     peoplePeak: "Personnes au pic",
     estimatedCost: "Coût estimé de l’IA",
-    dollars: (value: number) => `${value.toFixed(2).replace(".", ",")} $`,
+    dollars: (value: number) => `${value.toFixed(value < 1 ? 4 : 2).replace(".", ",")} $`,
     busiestHour: "Heure la plus chargée",
     latencyAverage: "Attente moyenne",
     latencyPeak: "Pire attente",
