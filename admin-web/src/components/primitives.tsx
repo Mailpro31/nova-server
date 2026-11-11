@@ -5,7 +5,7 @@
  * elle ne se contemple pas.
  */
 
-import type { ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 import { t } from "../lib/messages";
 
 export function Panel({
@@ -156,5 +156,26 @@ export function ConfirmDialog({
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * « Plus d'actions » : les actions rares d'une ligne (archiver, supprimer…),
+ * repliées derrière un seul bouton. Le menu se referme dès qu'on choisit.
+ */
+export function MoreActions({ children }: { children: ReactNode }) {
+  const ref = useRef<HTMLDetailsElement>(null);
+  return (
+    <details
+      className="more-actions"
+      ref={ref}
+      onClick={(event) => {
+        if ((event.target as HTMLElement).closest(".more-actions-menu button") && ref.current)
+          ref.current.open = false;
+      }}
+    >
+      <summary>{t.moreActions}</summary>
+      <div className="more-actions-menu">{children}</div>
+    </details>
   );
 }
