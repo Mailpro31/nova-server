@@ -15,15 +15,16 @@ export type NavSectionId =
   | "people"
   | "features"
   | "content"
-  | "limits"
-  | "signIn"
+  | "tracking"
   | "audit"
-  | "infrastructure";
+  | "advanced";
 
 export interface NavSection {
   id: NavSectionId;
   /** Les adresses des pages du domaine, dans l'ordre d'affichage. */
   pages: readonly string[];
+  /** Replié par défaut : les réglages techniques, qu'on ouvre rarement. */
+  collapsed?: boolean;
 }
 
 export const NAV_SECTIONS: readonly NavSection[] = [
@@ -31,8 +32,10 @@ export const NAV_SECTIONS: readonly NavSection[] = [
   { id: "people", pages: ["members", "groups", "administrators", "provisioning"] },
   { id: "features", pages: ["configuration", "learn"] },
   { id: "content", pages: ["packages"] },
-  { id: "limits", pages: ["limits", "usage", "adoption", "subscription"] },
-  { id: "signIn", pages: ["identity", "security"] },
+  // Le suivi : ce qu'une direction consulte. Rangé sous « Limites », on ne l'y
+  // cherchait pas (demande de Sash, 11/11).
+  { id: "tracking", pages: ["usage", "adoption", "subscription", "limits"] },
   { id: "audit", pages: ["audit"] },
-  { id: "infrastructure", pages: ["deployment", "diagnostics"] },
+  // Les réglages techniques, repliés : une direction n'y va presque jamais.
+  { id: "advanced", pages: ["identity", "security", "deployment", "diagnostics"], collapsed: true },
 ];
