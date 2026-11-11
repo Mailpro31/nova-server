@@ -10,7 +10,9 @@ import csv
 from dataclasses import dataclass
 import io
 import math
+import functools
 import os
+import shutil
 import urllib.parse
 import random
 import difflib
@@ -16905,6 +16907,46 @@ _APP_VERSION = re.compile(r"^\d{1,3}\.\d{1,3}\.\d{1,4}$")
 METRICS_VERSION_WINDOW_SECONDS = 30 * 86400
 
 
+# Le materiel ne change pas pendant la vie du processus : nvidia-smi une fois.
+_hardware = functools.cache(detect_hardware)
+_STARTED_AT = time.time()
+
+
+def school_sheet() -> list[tuple[str, str, dict[str, str], float]]:
+    """La fiche de l'ecole pour le panel : reglages, materiel et effectifs.
+
+    Des comptes et des reglages, jamais un nom ni une adresse : de quoi
+    diagnostiquer un bug sans aller sur place.
+    """
+    hardware = _hardware()
+    with db() as conn:
+        members = conn.execute(
+            "SELECT SUM(disabled = 0) AS active, SUM(disabled <> 0) AS disabled FROM users"
+        ).fetchone()
+        groups = conn.execute("SELECT COUNT(*) AS n FROM organization_groups").fetchone()["n"]
+    info = {
+        "server_version": app.version,
+        "mode": NOVA_SERVER_MODE,
+        "auth": ",".join(sorted(public_campus_config()["auth_methods"])),
+        "processing": "external" if public_endpoint_allowed() else "private",
+        "gpu": hardware.gpu_model or "none",
+    }
+    series = [("nova_server_info", "Fiche de l'ecole : version, mode, connexion, GPU (1).",
+               {key: observability.label_value(value) for key, value in info.items()}, 1)]
+    series += [("nova_members", "Comptes de l'ecole, actifs ou suspendus.",
+                {"state": state}, members[state] or 0) for state in ("active", "disabled")]
+    series.append(("nova_groups", "Groupes de l'ecole.", {}, groups))
+    series.append(("nova_uptime_seconds", "Secondes depuis le demarrage du serveur.",
+                   {}, round(time.time() - _STARTED_AT)))
+    series.append(("nova_disk_free_bytes", "Place libre sur le disque des donnees.",
+                   {}, shutil.disk_usage(os.path.dirname(os.path.abspath(DB_PATH))).free))
+    if hardware.ram_gb:
+        series.append(("nova_ram_gb", "Memoire vive du serveur.", {}, hardware.ram_gb))
+    if hardware.vram_gb:
+        series.append(("nova_vram_gb", "Memoire de la carte graphique.", {}, hardware.vram_gb))
+    return series
+
+
 def business_metrics() -> list[tuple[str, str, dict[str, str], float]]:
     """Les jauges metier de Prometheus (point 5.1) : des comptes, sans nom.
 
@@ -16936,7 +16978,7 @@ def business_metrics() -> list[tuple[str, str, dict[str, str], float]]:
     if "days_left" in state:
         series.append(("nova_licence_days_left", "Jours avant l'echeance de la licence.",
                        {}, state["days_left"]))
-    return series
+    return series + school_sheet()
 
 
 @app.get("/api/metrics")
