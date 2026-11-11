@@ -23,6 +23,7 @@
  */
 
 import { useState } from "react";
+import { engineSummary } from "../lib/home";
 import { ApiError } from "../lib/api";
 import type { AIRuntimeEngineView } from "../lib/controlPlane";
 import { errorMessage, t } from "../lib/messages";
@@ -218,6 +219,17 @@ export function AIRuntime() {
             </Panel>
 
             <Panel title={t.aiRuntime.statusTitle}>
+              {/* D'abord une phrase que tout le monde comprend ; les états
+                  détaillés suivent. */}
+              <p role="status">
+                <strong>
+                  {{
+                    ok: t.home.allGood,
+                    warn: t.home.warn,
+                    down: t.home.down,
+                  }[engineSummary(view.reported.runtime_status)]}
+                </strong>
+              </p>
               <Facts
                 entries={[
                   [
