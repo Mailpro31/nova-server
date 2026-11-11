@@ -73,6 +73,10 @@ function Console() {
 
   return (
     <div className="shell">
+      {/* Au clavier, sauter les dix-sept liens de la barre latérale. */}
+      <a className="skip-link" href="#contenu">
+        {t.skipToContent}
+      </a>
       <nav className="sidebar" aria-label={t.product}>
         <div className="brand">
           {t.product}
@@ -125,7 +129,7 @@ function Console() {
             </button>
           </div>
         </header>
-        <main className="content">
+        <main className="content" id="contenu" tabIndex={-1}>
           <Routes>
             <Route index element={<Navigate to="overview" replace />} />
             {PAGES.map((page) => (

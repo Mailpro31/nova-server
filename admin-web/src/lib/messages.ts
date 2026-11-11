@@ -13,6 +13,7 @@ import { fr } from "./messages.fr";
 
 const en = {
   product: "Nova Admin",
+  skipToContent: "Skip to content",
 
   nav: {
     overview: "Overview",

@@ -9,6 +9,7 @@ import type { Messages } from "./messages";
 
 export const fr: Messages = {
   product: "Nova Admin",
+  skipToContent: "Aller au contenu",
 
   nav: {
     overview: "Vue d’ensemble",
