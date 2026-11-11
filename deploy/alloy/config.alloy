@@ -21,6 +21,12 @@ prometheus.remote_write "panel" {
   external_labels = {"school" = sys.env("NOVA_PANEL_SCHOOL")}
   endpoint {
     url = sys.env("NOVA_PANEL_PROMETHEUS_URL")
+    // Grafana Cloud : identifiant de l'instance et jeton d'écriture. Vides,
+    // le panel local n'en tient pas compte.
+    basic_auth {
+      username = sys.env("NOVA_PANEL_PROMETHEUS_USER")
+      password = sys.env("NOVA_PANEL_TOKEN")
+    }
   }
 }
 
@@ -66,5 +72,9 @@ loki.write "panel" {
   external_labels = {"school" = sys.env("NOVA_PANEL_SCHOOL")}
   endpoint {
     url = sys.env("NOVA_PANEL_LOKI_URL")
+    basic_auth {
+      username = sys.env("NOVA_PANEL_LOKI_USER")
+      password = sys.env("NOVA_PANEL_TOKEN")
+    }
   }
 }

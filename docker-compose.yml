@@ -230,6 +230,9 @@ services:
       NOVA_PANEL_SCHOOL: "${NOVA_PANEL_SCHOOL:-}"
       NOVA_PANEL_PROMETHEUS_URL: "${NOVA_PANEL_PROMETHEUS_URL:-}"
       NOVA_PANEL_LOKI_URL: "${NOVA_PANEL_LOKI_URL:-}"
+      NOVA_PANEL_PROMETHEUS_USER: "${NOVA_PANEL_PROMETHEUS_USER:-}"
+      NOVA_PANEL_LOKI_USER: "${NOVA_PANEL_LOKI_USER:-}"
+      NOVA_PANEL_TOKEN: "${NOVA_PANEL_TOKEN:-}"
     volumes:
       - ./deploy/alloy/config.alloy:/etc/alloy/config.alloy:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
