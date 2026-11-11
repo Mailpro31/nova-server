@@ -22,10 +22,11 @@ def expressions(board: dict) -> list[str]:
 
 
 class DashboardTests(unittest.TestCase):
-    def test_five_dashboards_with_distinct_ids(self):
+    def test_six_dashboards_with_distinct_ids(self):
+        # Les cinq de 5.5, plus la fiche école (11/11).
         boards = [json.loads(path.read_text(encoding="utf-8")) for path in DASHBOARDS]
-        self.assertEqual(len(boards), 5)
-        self.assertEqual(len({board["uid"] for board in boards}), 5)
+        self.assertEqual(len(boards), 6)
+        self.assertEqual(len({board["uid"] for board in boards}), 6)
 
     def test_every_series_is_one_the_server_produces(self):
         for path in DASHBOARDS:
