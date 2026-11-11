@@ -37,11 +37,12 @@ BUSINESS = ("nova_active_users", "nova_ai_tokens_total", "nova_stage_seconds",
             "nova_rewrite_refused_total", "nova_command_refused_total",
             "nova_ai_fallback_total", "nova_refine_total", "nova_app_versions", "nova_licence",
             "nova_server_info", "nova_members", "nova_groups", "nova_uptime_seconds",
-            "nova_disk_free_bytes", "nova_ram_gb", "nova_vram_gb")
+            "nova_disk_free_bytes", "nova_ram_gb", "nova_vram_gb", "nova_engine_info",
+            "nova_ai_envelope")
 LABELS = {"route", "status", "le", "event", "outcome", "period", "task", "kind", "stage",
           "style", "reason", "version", "tier",
           # Fiche de l'ecole : des reglages, aucun identifiant.
-          "server_version", "mode", "auth", "processing", "gpu", "state"}
+          "server_version", "mode", "auth", "processing", "gpu", "state", "adapter", "model"}
 
 
 class CountingTextBackend:
@@ -234,6 +235,16 @@ class MetricsPrometheusTests(unittest.TestCase):
         self.assertIn("nova_groups ", rendered)
         self.assertIn("nova_disk_free_bytes ", rendered)
         self.assertNotIn("fiche@example.com", rendered)
+        self.assertRegex(rendered, r'nova_engine_info\{[^}]*task="text"[^}]*\} 1')
+        self.assertRegex(rendered, r'nova_engine_info\{[^}]*task="speech"[^}]*\} 1')
+
+    def test_the_ai_envelope_is_shown_when_the_contract_has_one(self):
+        envelope = {"annual_eur": 1200, "allowance_eur": 300.0, "spent_eur": 42.5,
+                    "month_eur": 7.25, "percent": 14, "empty": False, "mine_over": False}
+        with patch.object(main, "ai_envelope_state", lambda *a, **k: envelope):
+            rendered = self.scrape().text
+        self.assertIn('nova_ai_envelope_eur{kind="spent"} 42.5', rendered)
+        self.assertIn("nova_ai_envelope_percent 14", rendered)
 
     def test_no_licence_says_so_without_a_deadline(self):
         with patch.object(main, "NOVA_LICENCE", ""):
