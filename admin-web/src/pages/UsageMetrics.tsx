@@ -282,12 +282,12 @@ export function UsageMetrics() {
               {named && maySeeNames && (
                 <>
                   <Notice>{t.usageMetrics.namesAreJournalled}</Notice>
-                  <table className="usage-members">
+                  <table className="usage-members" aria-label={t.usageMetrics.member}>
                     <thead>
                       <tr>
-                        <th>{t.usageMetrics.member}</th>
-                        <th>{t.usageMetrics.dictations}</th>
-                        <th>{t.usageMetrics.latencyAverage}</th>
+                        <th scope="col">{t.usageMetrics.member}</th>
+                        <th scope="col">{t.usageMetrics.dictations}</th>
+                        <th scope="col">{t.usageMetrics.latencyAverage}</th>
                       </tr>
                     </thead>
                     <tbody>

@@ -97,14 +97,14 @@ export function Adoption() {
               </Notice>
 
               <h4>{t.adoption.byWeek}</h4>
-              <table className="usage-members">
+              <table className="usage-members" aria-label={t.adoption.byWeek}>
                 <thead>
                   <tr>
-                    <th>{t.adoption.week}</th>
-                    <th>{t.adoption.people}</th>
-                    <th>{t.adoption.regularPeople(report.regular_days)}</th>
-                    <th>{t.adoption.dictations}</th>
-                    <th>{t.adoption.minutes}</th>
+                    <th scope="col">{t.adoption.week}</th>
+                    <th scope="col">{t.adoption.people}</th>
+                    <th scope="col">{t.adoption.regularPeople(report.regular_days)}</th>
+                    <th scope="col">{t.adoption.dictations}</th>
+                    <th scope="col">{t.adoption.minutes}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -124,13 +124,13 @@ export function Adoption() {
               {report.months.length === 0 ? (
                 <Notice>{t.adoption.empty}</Notice>
               ) : (
-                <table className="usage-members">
+                <table className="usage-members" aria-label={t.adoption.byMonth}>
                   <thead>
                     <tr>
-                      <th>{t.adoption.month}</th>
-                      <th>{t.adoption.people}</th>
-                      <th>{t.adoption.dictations}</th>
-                      <th>{t.adoption.minutes}</th>
+                      <th scope="col">{t.adoption.month}</th>
+                      <th scope="col">{t.adoption.people}</th>
+                      <th scope="col">{t.adoption.dictations}</th>
+                      <th scope="col">{t.adoption.minutes}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -167,12 +167,12 @@ export function Adoption() {
               {report.survey.length === 0 ? (
                 <Notice>{t.adoption.noSurvey}</Notice>
               ) : (
-                <table className="usage-members">
+                <table className="usage-members" aria-label={t.adoption.surveyTitle}>
                   <thead>
                     <tr>
-                      <th>{t.adoption.month}</th>
-                      <th>{t.adoption.surveyAverage}</th>
-                      <th>{t.adoption.surveyAnswers}</th>
+                      <th scope="col">{t.adoption.month}</th>
+                      <th scope="col">{t.adoption.surveyAverage}</th>
+                      <th scope="col">{t.adoption.surveyAnswers}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -199,11 +199,11 @@ export function Adoption() {
               {report.versions.length === 0 ? (
                 <Notice>{t.adoption.noVersions}</Notice>
               ) : (
-                <table className="usage-members">
+                <table className="usage-members" aria-label={t.adoption.versions}>
                   <thead>
                     <tr>
-                      <th>{t.adoption.version}</th>
-                      <th>{t.adoption.people}</th>
+                      <th scope="col">{t.adoption.version}</th>
+                      <th scope="col">{t.adoption.people}</th>
                     </tr>
                   </thead>
                   <tbody>
