@@ -98,6 +98,28 @@ class DictationLimitDeliveryTests(AdminTestCase):
                 "/api/transcribe", headers=self.auth(token),
                 files={"file": ("recording.wav", audio, "audio/wav")})
 
+    def test_the_limits_page_reads_exact_values_before_and_after_saving(self):
+        """Limites : durée (s -> min), plafond de mises au propre, conservation (jours)."""
+        token = self.admin_session()
+        before = self.client.get(self.PATH, headers=self.auth(token)).json()
+        self.assertEqual(
+            {k: before["settings"][k] for k in
+             ("max_dictation_seconds", "daily_rewrites_per_member", "past_dictations_days")},
+            {"max_dictation_seconds": 600, "daily_rewrites_per_member": 0,
+             "past_dictations_days": 0})
+        saved = self.client.put(self.PATH, headers=self.auth(token), json={
+            "expected_revision": before["revision"],
+            "settings": {"max_dictation_seconds": 7200, "daily_rewrites_per_member": 25,
+                         "past_dictations_days": 30}})
+        self.assertEqual(saved.status_code, 200, saved.text)
+        after = self.client.get(self.PATH, headers=self.auth(token)).json()
+        self.assertEqual(after["revision"], before["revision"] + 1)
+        self.assertEqual(
+            {k: after["settings"][k] for k in
+             ("max_dictation_seconds", "daily_rewrites_per_member", "past_dictations_days")},
+            {"max_dictation_seconds": 7200, "daily_rewrites_per_member": 25,
+             "past_dictations_days": 30})
+
     def test_the_workstation_learns_the_default_limit(self):
         self.assertEqual(
             main.public_campus_config()["limits"], {"max_dictation_seconds": 600})

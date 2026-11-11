@@ -258,6 +258,91 @@ class UsageMetricsApiTests(AdminTestCase):
         self.assertEqual(summary["latency_ms_max"], 6200)
         self.assertEqual(summary["over_five_seconds"], 1)
 
+    def seed_known(self):
+        """Deux heures de données connues. Valeurs attendues calculées à la main.
+
+        h1 : a = 3 dictées + 1 mise au propre, 60 s, latences 4000 ms sur 4 (max 2000) ;
+             b = 1 dictée, 30,5 s, 1000 ms sur 1 (max 1000).
+        h2 : a = 2 dictées + 2 mises au propre, 10 s, 6000 ms sur 2 (max 5200).
+        """
+        now = time.time()
+        h1 = time.strftime("%Y-%m-%dT%H", time.gmtime(now - 2 * 3600))
+        h2 = time.strftime("%Y-%m-%dT%H", time.gmtime(now - 3600))
+        rows = (
+            ("a@ecole.example", h1, 3, 1, 60.0, 4000.0, 4, 2000.0),
+            ("b@ecole.example", h1, 1, 0, 30.5, 1000.0, 1, 1000.0),
+            ("a@ecole.example", h2, 2, 2, 10.0, 6000.0, 2, 5200.0),
+        )
+        with main.db() as conn:
+            for row in rows:
+                conn.execute(
+                    """INSERT INTO usage_hourly(email, hour, transcriptions, reformulations,
+                           audio_seconds, latency_ms_sum, latency_ms_count, latency_ms_max)
+                       VALUES (?,?,?,?,?,?,?,?)""", row)
+        return h1, h2
+
+    def test_the_hourly_curves_carry_the_exact_figures(self):
+        h1, h2 = self.seed_known()
+        timeline = self.read().json()["timeline"]
+        self.assertEqual(timeline, [
+            {"hour": h1, "transcriptions": 4, "reformulations": 1, "audio_seconds": 90.5,
+             "people": 2, "latency_ms_average": 1000, "latency_ms_max": 2000,
+             "latency_ms_count": 5},
+            {"hour": h2, "transcriptions": 2, "reformulations": 2, "audio_seconds": 10.0,
+             "people": 1, "latency_ms_average": 3000, "latency_ms_max": 5200,
+             "latency_ms_count": 2},
+        ])
+
+    def test_the_summary_tiles_are_exact(self):
+        h1, _ = self.seed_known()
+        with patch.dict("os.environ", {"NOVA_COST_PER_DICTATION_USD": "0.5"}):
+            summary = self.read().json()["summary"]
+        self.assertEqual(summary["dictations"], 9)          # 4+1 puis 2+2
+        self.assertEqual(summary["people_peak"], 2)
+        self.assertEqual(summary["busiest_hour"], h1)       # 5 contre 4
+        self.assertEqual(summary["latency_ms_max"], 5200)
+        self.assertEqual(summary["over_five_seconds"], 1)   # seule h2 dépasse 5 s
+        self.assertEqual(summary["estimated_cost_usd"], 3.0)  # 6 dictées x 0,5 $
+
+    def test_the_average_wait_is_weighted_by_the_number_of_dictations(self):
+        """Une heure à 2 dictées ne pèse pas autant qu'une heure à 5 : la moyenne
+        des moyennes horaires donnait 2000 ms, la vraie est 11000 / 7 = 1571 ms."""
+        self.seed_known()
+        self.assertEqual(self.read().json()["summary"]["latency_ms_average"], 1571)
+
+    def test_bench_accounts_are_never_counted(self):
+        # Domaine réservé (RFC 2606) : jamais un élève. Le PC fixe, 11/11 :
+        # ses bancs gonflaient les actifs du mois et le coût affiché.
+        main.count_usage("banc@nova.invalid", "transcription", 10.0, 900.0)
+        self.assertEqual(self.read().json()["summary"]["dictations"], 0)
+
+    def test_a_small_cost_is_not_rounded_to_zero(self):
+        with patch.dict("os.environ", {"NOVA_COST_PER_DICTATION_USD": "0.00347"}):
+            self.assertEqual(main.estimated_cost_usd(3), 0.0104)
+
+    def test_the_per_person_table_is_exact(self):
+        self.seed_known()
+        members = self.read("?members=true").json()["members"]
+        self.assertEqual(members, [
+            {"email": "a@ecole.example", "transcriptions": 5, "reformulations": 3,
+             "audio_seconds": 70.0, "latency_ms_average": 1667},   # 10000 / 6
+            {"email": "b@ecole.example", "transcriptions": 1, "reformulations": 0,
+             "audio_seconds": 30.5, "latency_ms_average": 1000},
+        ])
+
+    def test_the_machine_curves_keep_empty_values_empty(self):
+        """Sans carte graphique, la console lit `null` et non 0 % : valeurs exactes."""
+        stamp = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(time.time() - 1800))
+        with main.db() as conn:
+            conn.execute(
+                "INSERT INTO host_samples(sampled_at, cpu_percent, ram_used_gb, ram_total_gb) "
+                "VALUES (?,?,?,?)", (stamp, 37.5, 12.25, 32.0))
+        host = self.read().json()["host"]
+        self.assertEqual(host, [{
+            "sampled_at": stamp, "cpu_percent": 37.5, "ram_used_gb": 12.25,
+            "ram_total_gb": 32.0, "gpu_percent": None, "vram_used_gb": None,
+            "vram_total_gb": None, "gpu_temperature_c": None, "gpu_power_w": None}])
+
     def test_the_named_detail_is_journalled(self):
         self.seed()
         payload = self.read("?members=true").json()

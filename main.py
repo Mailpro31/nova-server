@@ -3224,10 +3224,16 @@ def ai_local_only(email: str | None) -> bool:
     return bool(state and (state["empty"] or state["mine_over"]))
 
 
+def is_bench_account(email: str | None) -> bool:
+    """Les comptes de banc (`@nova.invalid`, domaine réservé, jamais un élève) ne
+    comptent ni dans l'usage ni dans l'enveloppe : le PC fixe, 11/11."""
+    return (email or "").lower().endswith("@nova.invalid")
+
+
 def record_ai_spend(email: str | None, usage: dict, backend: dict, eur: float | None = None):
     """Ajoute le coût d'un appel servi par le moteur externe, et alerte à 80 %
     puis 100 % de ce qui est ouvert (l'école dans la console, Sash par le journal)."""
-    if backend.get("fallback") or not ai_envelope.priced():
+    if backend.get("fallback") or not ai_envelope.priced() or is_bench_account(email):
         return
     cost = ai_envelope.call_cost(usage) if eur is None else eur
     if cost <= 0:
@@ -3453,6 +3459,8 @@ def count_usage(
     audio_seconds: float = 0.0,
     latency_ms: float | None = None,
 ):
+    if is_bench_account(email):
+        return
     day = time.strftime("%Y-%m-%d")
     hour = time.strftime("%Y-%m-%dT%H")
     col = "transcriptions" if kind == "transcription" else "reformulations"
@@ -16393,6 +16401,7 @@ def usage_timeline(since: str) -> list[dict]:
                 "people": row["people"] or 0,
                 "latency_ms_average": round(row["latency_sum"] / count) if count else None,
                 "latency_ms_max": round(row["latency_max"] or 0.0) or None,
+                "latency_ms_count": count,
             }
         )
     return timeline
@@ -16468,7 +16477,8 @@ def estimated_cost_usd(transcriptions: int) -> float | None:
         unit = float(os.getenv("NOVA_COST_PER_DICTATION_USD", "") or 0)
     except ValueError:
         return None
-    return round(transcriptions * unit, 2) if unit > 0 else None
+    # Au dixième de centime : à 0,00347 $ la dictée, le centime affichait 0,00 $.
+    return round(transcriptions * unit, 4) if unit > 0 else None
 
 
 def usage_summary(timeline: list[dict]) -> dict:
@@ -16485,9 +16495,12 @@ def usage_summary(timeline: list[dict]) -> dict:
         }
     total = sum(h["transcriptions"] + h["reformulations"] for h in timeline)
     busiest = max(timeline, key=lambda h: h["transcriptions"] + h["reformulations"])
-    measured = [h for h in timeline if h["latency_ms_average"] is not None]
+    # Pondérée par le nombre de mesures : une heure à 2 dictées ne pèse pas
+    # autant qu'une heure à 5.
+    measured = sum(h["latency_ms_count"] for h in timeline)
     average = (
-        round(sum(h["latency_ms_average"] for h in measured) / len(measured))
+        round(sum(h["latency_ms_average"] * h["latency_ms_count"] for h in timeline
+                  if h["latency_ms_count"]) / measured)
         if measured else None
     )
     peaks = [h["latency_ms_max"] for h in timeline if h["latency_ms_max"]]
