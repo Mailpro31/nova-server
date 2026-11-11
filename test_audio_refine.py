@@ -66,8 +66,13 @@ class AudioRefineBackendTests(unittest.TestCase):
                 "prompt_tokens": 805, "completion_tokens": 216,
                 "completion_tokens_details": {"reasoning_tokens": 0}}})
 
-        with patch.object(ai_runtime.observability, "log") as log:
+        # Le journal ET le compteur Prometheus : sans lui, le tableau coût du
+        # panel omettait le poste le plus lourd (PC fixe, 11/11).
+        with patch.object(ai_runtime.observability, "log") as log, \
+                patch.object(ai_runtime.observability.METRICS, "add_tokens") as count:
             asyncio.run(backend(handler).refine(b"x", "wav", "t", []))
+        count.assert_called_once_with("audio_refine", {"prompt_tokens": 805, "completion_tokens": 216,
+                                                       "completion_tokens_details": {"reasoning_tokens": 0}})
         log.assert_any_call("ai.usage", task="audio_refine", prompt_tokens=805,
                             completion_tokens=216, reasoning_tokens=0)
 

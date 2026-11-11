@@ -1475,6 +1475,7 @@ class AudioRefineBackend:
         observability.METRICS.observe_stage("relecture", time.monotonic() - started)
         # Le coût réel d'une dictée (11/11) : des comptes, jamais le texte.
         usage = body.get("usage") if isinstance(body.get("usage"), dict) else {}
+        observability.METRICS.add_tokens("audio_refine", usage)
         observability.log("ai.usage", task="audio_refine",
                           prompt_tokens=usage.get("prompt_tokens"),
                           completion_tokens=usage.get("completion_tokens"),
