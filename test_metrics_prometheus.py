@@ -238,6 +238,17 @@ class MetricsPrometheusTests(unittest.TestCase):
         self.assertRegex(rendered, r'nova_engine_info\{[^}]*task="text"[^}]*\} 1')
         self.assertRegex(rendered, r'nova_engine_info\{[^}]*task="speech"[^}]*\} 1')
 
+    def test_bench_accounts_are_not_members_and_models_are_named(self):
+        with main.db() as conn:
+            before = conn.execute("SELECT COUNT(*) FROM users WHERE disabled = 0 AND "
+                                  "email NOT LIKE '%@nova.invalid'").fetchone()[0]
+        main.touch_user("banc@nova.invalid", main.nova_organization_id())
+        backend = main.ORGANIZATION_AI_ROUTER.text_backend
+        with patch.object(backend, "model", "google/gemini-3.5-flash", create=True):
+            rendered = self.scrape().text
+        self.assertIn(f'nova_members{{state="active"}} {before}', rendered)
+        self.assertIn('model="gemini-3.5-flash",task="text"', rendered)
+
     def test_the_ai_envelope_is_shown_when_the_contract_has_one(self):
         envelope = {"annual_eur": 1200, "allowance_eur": 300.0, "spent_eur": 42.5,
                     "month_eur": 7.25, "percent": 14, "empty": False, "mine_over": False}
