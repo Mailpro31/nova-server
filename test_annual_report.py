@@ -87,3 +87,45 @@ def test_no_email_can_appear(tmp_path):
     out = tmp_path / "r.pdf"
     annual_report.render_pdf(annual_report.collect("demo", START, END, fake()), str(out))
     assert "@" not in text_of(out)
+
+
+def starting_at(day, value=1):
+    """Séries qui n'existent qu'à partir du jour `day` de la période."""
+    base = fake()
+
+    def query(promql, start, end, step):
+        out = []
+        for metric, points in base(promql, start, end, step):
+            kept = [(t, v) for t, v in points if t >= T0 + day * DAY]
+            out.append((metric, [(t, value if "nova_members" in promql else v) for t, v in kept]))
+        return out
+    return query
+
+
+def test_series_starting_mid_period(tmp_path):
+    query = starting_at(70)  # 12 mars : seul mars a des points
+    data = annual_report.collect("demo", START, END, query, now=T0 + 90 * DAY)
+    assert data["members"] == {"2026-03": 1}
+    out = tmp_path / "r.pdf"
+    annual_report.render_pdf(data, str(out))
+    text = text_of(out)
+    assert "non chiffré (moins de 5 personnes)" in text  # mars
+    assert "2026-01 non mesuré" in text  # aucun point en janvier
+
+
+def test_availability_starts_at_first_measure(tmp_path):
+    query = starting_at(70)
+    data = annual_report.collect("demo", START, END, query, now=T0 + 90 * DAY)
+    assert data["availability"] == pytest.approx(0.5, abs=0.02)  # une heure sur deux, depuis le 12 mars
+    assert data["measured_since"] == dt.date(2026, 3, 12)
+    out = tmp_path / "r.pdf"
+    annual_report.render_pdf(data, str(out))
+    assert "depuis le 12/03/2026, début des mesures" in text_of(out)
+
+
+def test_dictations_without_stage_series_are_not_measured(tmp_path):
+    data = annual_report.collect("demo", START, END, fake(missing=("stage_seconds",)))
+    assert data["dictations"] is None and data["members"]
+    out = tmp_path / "r.pdf"
+    annual_report.render_pdf(data, str(out))
+    assert "Dictées par mois (estimation d'après les compteurs du serveur) non mesuré" in " ".join(text_of(out).split("\n"))

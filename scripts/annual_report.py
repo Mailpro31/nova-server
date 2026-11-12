@@ -21,6 +21,7 @@ import os
 import pathlib
 import re
 import sys
+import time
 
 import httpx
 
@@ -67,7 +68,7 @@ def per_month(points, how) -> dict[str, float]:
     return {month: how(values) for month, values in grouped.items()}
 
 
-def collect(school: str, start: dt.date, end: dt.date, query) -> dict:
+def collect(school: str, start: dt.date, end: dt.date, query, now: float | None = None) -> dict:
     """Les chiffres du rapport. Toute série absente reste `None`."""
     if not SLUG.match(school):
         raise ValueError("identifiant d'école invalide")
@@ -77,6 +78,7 @@ def collect(school: str, start: dt.date, end: dt.date, query) -> dict:
     if hours > MAX_POINTS:
         raise ValueError("période trop longue pour un pas d'une heure (13 mois au plus)")
     s = f'school="{school}"'
+    now = time.time() if now is None else now
 
     def first(promql, step="1d"):
         result = query(promql, t0, t1, step)
@@ -86,11 +88,13 @@ def collect(school: str, start: dt.date, end: dt.date, query) -> dict:
         points = first(promql)
         return sorted(points)[-1][1] if points else None
 
-    members = first(f'nova_members{{{s},state="active"}}')
-    active = first(f'nova_active_users{{{s},period="month"}}')
+    # Chaque pas regarde toute sa fenêtre (1 j ou 1 h) : une évaluation instantanée
+    # ne remonte que de 5 minutes et rate une série échantillonnée à la minute.
+    members = first(f'last_over_time(nova_members{{{s},state="active"}}[1d])')
+    active = first(f'max_over_time(nova_active_users{{{s},period="month"}}[1d])')
     stages = query(f"sum by (stage) (increase(nova_stage_seconds_count{{{s}}}[1d]))", t0, t1, "1d")
-    uptime = first(f"nova_uptime_seconds{{{s}}}", "1h")
-    envelope = {kind: last(f'nova_ai_envelope_eur{{{s},kind="{kind}"}}') for kind in ("annual", "spent")}
+    uptime = first(f"count_over_time(nova_uptime_seconds{{{s}}}[1h])", "1h")
+    envelope = {kind: last(f'last_over_time(nova_ai_envelope_eur{{{s},kind="{kind}"}}[1d])') for kind in ("annual", "spent")}
     transcription = next((p for m, p in stages if m.get("stage") == "transcription"), None)
     return {
         "school": school, "start": start, "end": end, "months": months_between(start, end),
@@ -99,10 +103,17 @@ def collect(school: str, start: dt.date, end: dt.date, query) -> dict:
         "dictations": per_month(transcription, sum) if transcription else None,
         "stages": {m.get("stage", "autre"): sum(v for _, v in p) for m, p in stages} if stages else None,
         "envelope": envelope if any(v is not None for v in envelope.values()) else None,
-        "envelope_percent": last(f"nova_ai_envelope_percent{{{s}}}"),
-        # Une mesure par heure attendue : la part d'heures où le serveur a répondu.
-        "availability": min(1.0, len({int(t // 3600) for t, _ in uptime}) / hours) if uptime else None,
+        "envelope_percent": last(f"last_over_time(nova_ai_envelope_percent{{{s}}}[1d])"),
+        # Part des heures avec une mesure, du premier point mesuré jusqu'à maintenant
+        # (ou la fin de la période) : avant le début des mesures, rien n'est dû.
+        "availability": availability(uptime, t1, now) if uptime else None,
+        "measured_since": dt.datetime.fromtimestamp(min(t for t, _ in uptime), dt.timezone.utc).date() if uptime else None,
     }
+
+
+def availability(points, end: float, now: float) -> float:
+    hours = {int(t // 3600) for t, _ in points}
+    return min(1.0, len(hours) / (int(min(end, now) // 3600) - min(hours) + 1))
 
 
 def headcount_ok(data: dict, month: str) -> bool:
@@ -132,25 +143,27 @@ def render_pdf(data: dict, out: str) -> None:
         pdf.multi_cell(0, size * 0.5 + 1.5, pdf_text(text), new_x="LMARGIN", new_y="NEXT")
         pdf.ln(gap)
 
-    def bars(title, series):
-        """Histogramme mensuel d'une série {mois: valeur}, ou None si non mesurée."""
+    def bars(title, series, own_headcount=False):
+        """Histogramme mensuel d'une série {mois: valeur}. Un mois sans point est « non mesuré »,
+        un mois d'effectif inférieur à 5 est « non chiffré »."""
         write(11, title, "B")
-        values = [series.get(m, 0) if series and headcount_ok(data, m) else None for m in months]
         if series is None:
             return write(10, NOT_MEASURED, gap=3)
-        top = max((v for v in values if v is not None), default=0) or 1
+        shown = {m: series[m] for m in months if m in series and (series[m] >= MIN_GROUP if own_headcount else headcount_ok(data, m))}
+        top = max(shown.values(), default=0) or 1
         y = pdf.get_y()
-        for month, value in zip(months, values):
+        for month in months:
             pdf.set_font("Helvetica", "", 8)
             pdf.set_xy(10, y)
             pdf.cell(18, 4.5, month)
-            if value is None:
-                pdf.cell(60, 4.5, pdf_text(f"non chiffré (moins de {MIN_GROUP} personnes)"))
-            else:
+            if month in shown:
                 pdf.set_fill_color(40, 90, 160)
-                pdf.rect(30, y + 0.5, max(0.5, 105 * value / top), 3.5, "F")
-                pdf.set_xy(30 + 105 * value / top + 2, y)
-                pdf.cell(25, 4.5, str(round(value)))
+                pdf.rect(30, y + 0.5, max(0.5, 105 * shown[month] / top), 3.5, "F")
+                pdf.set_xy(30 + 105 * shown[month] / top + 2, y)
+                pdf.cell(25, 4.5, str(round(shown[month])))
+            else:
+                pdf.cell(60, 4.5, pdf_text(NOT_MEASURED if month not in series
+                                           else f"non chiffré (moins de {MIN_GROUP} personnes)"))
             y += 5
         pdf.set_y(y + 3)
 
@@ -159,8 +172,8 @@ def render_pdf(data: dict, out: str) -> None:
     write(9, "Totaux d'école uniquement, issus des mesures du serveur. Aucun nom, aucune adresse, "
              f"aucun chiffre pour un effectif de moins de {MIN_GROUP} personnes.", "I", gap=4)
 
-    bars("Membres actifs en fin de mois", data["members"])
-    bars("Personnes ayant utilisé Nova dans le mois", data["active"])
+    bars("Membres actifs en fin de mois", data["members"], own_headcount=True)
+    bars("Personnes ayant utilisé Nova dans le mois", data["active"], own_headcount=True)
     bars("Dictées par mois (estimation d'après les compteurs du serveur)", data["dictations"])
     write(11, "Heures d'audio transcrites", "B")
     write(10, f"{NOT_MEASURED} : le serveur ne compte pas la durée de l'audio.", gap=3)
@@ -184,8 +197,10 @@ def render_pdf(data: dict, out: str) -> None:
 
     write(11, "Disponibilité du serveur", "B")
     avail = data["availability"]
+    since = data["measured_since"]
     write(10, NOT_MEASURED if avail is None
-          else f"{avail * 100:.1f} % des heures de la période avec un serveur joignable.")
+          else f"{avail * 100:.1f} % des heures avec un serveur joignable"
+               + (f", depuis le {since:%d/%m/%Y}, début des mesures." if since > data["start"] else "."))
     pdf.output(out)
 
 
