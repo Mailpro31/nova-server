@@ -80,8 +80,15 @@ def collect(school: str, start: dt.date, end: dt.date, query, now: float | None 
     s = f'school="{school}"'
     now = time.time() if now is None else now
 
+    def span(step):
+        # Points calés sur min(fin, maintenant) : sinon le dernier jour s'évalue à minuit
+        # et rate tout ce qui a été mesuré depuis.
+        width = {"1d": 86400, "1h": 3600}[step]
+        end = min(t1, now)
+        return end - int((end - t0) // width) * width, end
+
     def first(promql, step="1d"):
-        result = query(promql, t0, t1, step)
+        result = query(promql, *span(step), step)
         return result[0][1] if result else None
 
     def last(promql):
@@ -92,7 +99,7 @@ def collect(school: str, start: dt.date, end: dt.date, query, now: float | None 
     # ne remonte que de 5 minutes et rate une série échantillonnée à la minute.
     members = first(f'last_over_time(nova_members{{{s},state="active"}}[1d])')
     active = first(f'max_over_time(nova_active_users{{{s},period="month"}}[1d])')
-    stages = query(f"sum by (stage) (increase(nova_stage_seconds_count{{{s}}}[1d]))", t0, t1, "1d")
+    stages = query(f"sum by (stage) (increase(nova_stage_seconds_count{{{s}}}[1d]))", *span("1d"), "1d")
     uptime = first(f"count_over_time(nova_uptime_seconds{{{s}}}[1h])", "1h")
     envelope = {kind: last(f'last_over_time(nova_ai_envelope_eur{{{s},kind="{kind}"}}[1d])') for kind in ("annual", "spent")}
     transcription = next((p for m, p in stages if m.get("stage") == "transcription"), None)

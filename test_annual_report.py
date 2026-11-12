@@ -129,3 +129,16 @@ def test_dictations_without_stage_series_are_not_measured(tmp_path):
     out = tmp_path / "r.pdf"
     annual_report.render_pdf(data, str(out))
     assert "Dictées par mois (estimation d'après les compteurs du serveur) non mesuré" in " ".join(text_of(out).split("\n"))
+
+def test_points_are_anchored_on_now_during_the_period():
+    # Le dernier jour s'évaluait à minuit et ratait tout ce qui était mesuré depuis.
+    calls = []
+    def query(promql, start, end, step):
+        calls.append((start, end, step))
+        return []
+    now = annual_report.dt.datetime(END.year, END.month, END.day, 11, 30, tzinfo=annual_report.dt.timezone.utc).timestamp()
+    annual_report.collect("demo", START, END, query, now=now)
+    width = {"1d": 86400, "1h": 3600}
+    for start, end, step in calls:
+        assert end == now
+        assert (end - start) % width[step] == 0
