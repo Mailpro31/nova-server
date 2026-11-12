@@ -16921,15 +16921,18 @@ def school_sheet() -> list[tuple[str, str, dict[str, str], float]]:
     hardware = _hardware()
     with db() as conn:
         members = conn.execute(
-            "SELECT SUM(disabled = 0) AS active, SUM(disabled <> 0) AS disabled FROM users"
+            # Les comptes de banc (@nova.invalid) ne sont pas des membres de l'ecole.
+            "SELECT SUM(disabled = 0) AS active, SUM(disabled <> 0) AS disabled FROM users "
+            "WHERE email NOT LIKE '%@nova.invalid'"
         ).fetchone()
         groups = conn.execute("SELECT COUNT(*) AS n FROM organization_groups").fetchone()["n"]
     info = {
         "server_version": app.version,
         "mode": NOVA_SERVER_MODE,
-        "auth": ",".join(sorted(public_campus_config()["auth_methods"])),
+        "auth": "_".join(sorted(public_campus_config()["auth_methods"])),
         "processing": "external" if public_endpoint_allowed() else "private",
-        "gpu": hardware.gpu_model or "none",
+        # Le conteneur api ne voit pas la carte (seul le moteur de transcription l'a).
+        "gpu": hardware.gpu_model or "not_visible",
     }
     series = [("nova_server_info", "Fiche de l'ecole : version, mode, connexion, GPU (1).",
                {key: observability.label_value(value) for key, value in info.items()}, 1)]
@@ -16951,7 +16954,9 @@ def school_sheet() -> list[tuple[str, str, dict[str, str], float]]:
     series += [("nova_engine_info", "Moteurs de l'ecole : adaptateur et modele (1).",
                 {"task": task,
                  "adapter": observability.label_value(getattr(backend, "adapter_name", "unknown")),
-                 "model": observability.label_value(getattr(backend, "model", "") or "none")}, 1)
+                 # « google/gemini-3.5-flash », « /models/x.gguf » : le nom seul.
+                 "model": observability.label_value(
+                     (getattr(backend, "model", "") or "none").rsplit("/", 1)[-1][:48])}, 1)
                for task, backend in engines.items() if backend is not None]
     envelope = ai_envelope_state()
     if envelope:
