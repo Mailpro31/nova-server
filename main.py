@@ -55,6 +55,7 @@ import group_rules
 import migrations
 import ai_envelope
 import contextvars
+import activation
 import licence
 import observability
 import production_config
@@ -3166,7 +3167,9 @@ def product_capability(capability: str | tuple[str, ...], feature: str):
 
 # La licence de l'école (4.1), posée par la DSI dans la configuration du
 # serveur. Elle n'est pas secrète : elle est signée (`licence.py`).
-NOVA_LICENCE = os.getenv("NOVA_LICENCE", "")
+NOVA_LICENCE = activation.resolve_licence(
+    os.getenv("NOVA_LICENCE", ""), os.getenv("NOVA_ACTIVATION_CODE", ""),
+    os.getenv("NOVA_ACTIVATION_URL", ""), DB_PATH.parent / "licence-activation.txt")
 # Ce qui s'arrête quand la licence est échue depuis plus que le délai de
 # grâce : les fonctions annexes. Jamais la dictée ni ses Styles.
 LICENCE_DEGRADED_CAPABILITIES = frozenset({"commands", "selectionBubble", "aiSkills"})

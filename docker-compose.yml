@@ -93,6 +93,8 @@ x-nova-environment: &nova-environment
     NOVA_AI_REFINE_EUR_PER_CALL: "${NOVA_AI_REFINE_EUR_PER_CALL:-}"
     # La licence signée de l'école (4.1), une ligne posée dans .env. Absente
     # de cette ancre, elle n'atteignait jamais le conteneur.
+    NOVA_ACTIVATION_CODE: "${NOVA_ACTIVATION_CODE:-}"
+    NOVA_ACTIVATION_URL: "${NOVA_ACTIVATION_URL:-}"
     NOVA_LICENCE: "${NOVA_LICENCE:-}"
     # Gemini via Vertex AI (3.1) : chemin du fichier du compte de service,
     # monté en lecture seule (en production : /run/secrets/vertex.json).
