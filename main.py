@@ -4777,6 +4777,48 @@ def auth_verify(body: VerifyCode):
         conn.execute("DELETE FROM auth_codes WHERE email=?", (email,))
     return issue_token(email, body.machine)
 
+class SupportReport(BaseModel):
+    """Rapport de diagnostic du poste. Aucun champ ne porte de dictée : un champ
+    inconnu (« text », « transcript »...) est ignoré, jamais journalisé."""
+
+    app_version: str = Field(default="", max_length=32)
+    os: str = Field(default="", max_length=64)
+    memory_mb: int | None = Field(default=None, ge=0, le=4_000_000)
+    engines: dict[str, str] = Field(default_factory=dict)
+    last_error: str = Field(default="", max_length=80)
+    reported_at: str = Field(default="", max_length=40)
+    description: str = Field(default="", max_length=500)
+
+
+_CODE_VALUE = re.compile(r"[^A-Za-z0-9_.:\- ]")
+
+
+def _diag(value: str, limit: int = 64) -> str:
+    # Un code ou une version : tout ce qui ressemble à du texte libre est retiré.
+    return _CODE_VALUE.sub("", value)[:limit]
+
+
+@app.post("/api/support/report")
+def support_report(body: SupportReport, user: str = Depends(current_user)):
+    """Reçoit le rapport « Signaler un problème » et le journalise en warning,
+    niveau que le journal envoyé à l'éditeur retient."""
+    enforce_rate_limit("principal", hash_token(user), ratelimit.SUPPORT_REPORT)
+    observability.log(
+        "support.report",
+        "warning",
+        user_ref=hash_token(user)[:12],
+        app_version=_diag(body.app_version, 32),
+        os=_diag(body.os),
+        memory_mb=body.memory_mb,
+        engines={_diag(k, 32): _diag(v, 32) for k, v in list(body.engines.items())[:10]},
+        last_error=_diag(body.last_error, 80),
+        reported_at=_diag(body.reported_at, 40),
+        description=body.description,
+    )
+    return {"ok": True}
+
+
+
 @app.post("/api/auth/logout")
 def auth_logout(
     authorization: str = Header(default=""),

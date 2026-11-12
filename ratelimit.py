@@ -253,6 +253,7 @@ CONNECTOR_UPDATE = Quota(30, 60.0, CLASS_CONNECTOR, FAIL_CLOSED)
 AUTH_START = Quota(10, 60.0, CLASS_AUTH, FAIL_CLOSED)
 AUTH_VERIFY = Quota(20, 60.0, CLASS_AUTH, FAIL_CLOSED)
 ADMIN_STEP_UP = Quota(10, 60.0, CLASS_ADMIN, FAIL_CLOSED)
+SUPPORT_REPORT = Quota(5, 3600.0, CLASS_AUTH, FAIL_CLOSED)
 ADMIN_CREDENTIAL_CREATE = Quota(20, 60.0, CLASS_ADMIN, FAIL_CLOSED)
 DEPLOYMENT_VERIFY = Quota(60, 60.0, CLASS_DEPLOYMENT, FAIL_CLOSED)
 # Un exercice Learn appelle un moteur d'inference. La borne protege le
@@ -354,6 +355,7 @@ ALL_QUOTAS = {
     "auth_start": AUTH_START,
     "auth_verify": AUTH_VERIFY,
     "admin_step_up": ADMIN_STEP_UP,
+    "support_report": SUPPORT_REPORT,
     "admin_credential_create": ADMIN_CREDENTIAL_CREATE,
     "deployment_verify": DEPLOYMENT_VERIFY,
     "learning_exercise": LEARNING_EXERCISE,
