@@ -35,9 +35,13 @@ main.init_db()
 TOKEN = "jeton-de-test-prometheus"
 BUSINESS = ("nova_active_users", "nova_ai_tokens_total", "nova_stage_seconds",
             "nova_rewrite_refused_total", "nova_command_refused_total",
-            "nova_ai_fallback_total", "nova_refine_total", "nova_app_versions", "nova_licence")
+            "nova_ai_fallback_total", "nova_refine_total", "nova_app_versions", "nova_licence",
+            "nova_server_info", "nova_members", "nova_groups", "nova_uptime_seconds",
+            "nova_disk_free_bytes", "nova_ram_gb", "nova_vram_gb")
 LABELS = {"route", "status", "le", "event", "outcome", "period", "task", "kind", "stage",
-          "style", "reason", "version", "tier"}
+          "style", "reason", "version", "tier",
+          # Fiche de l'ecole : des reglages, aucun identifiant.
+          "server_version", "mode", "auth", "processing", "gpu", "state"}
 
 
 class CountingTextBackend:
@@ -221,6 +225,15 @@ class MetricsPrometheusTests(unittest.TestCase):
         self.assertIn('nova_licence_info{status="valid",tier="151-250"} 1', rendered)
         self.assertRegex(rendered, r"nova_licence_days_left 4[01]\b")
         self.assertNotIn("IPSA", rendered)
+
+    def test_the_school_sheet_describes_the_server_without_names(self):
+        main.touch_user("fiche@example.com", main.nova_organization_id())
+        rendered = self.scrape().text
+        self.assertRegex(rendered, r'nova_server_info\{[^}]*mode="[a-z_-]+"[^}]*\} 1')
+        self.assertRegex(rendered, r'nova_members\{state="active"\} [1-9]')
+        self.assertIn("nova_groups ", rendered)
+        self.assertIn("nova_disk_free_bytes ", rendered)
+        self.assertNotIn("fiche@example.com", rendered)
 
     def test_no_licence_says_so_without_a_deadline(self):
         with patch.object(main, "NOVA_LICENCE", ""):
