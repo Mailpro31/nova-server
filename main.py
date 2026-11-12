@@ -10867,6 +10867,43 @@ def control_update_member_profile(
     return {"member": member_view(updated), "changed": True}
 
 
+def erase_member_data(conn, organization_id: str, user_id: str, normalized_email: str):
+    """Droit a l'effacement : supprime le compte et TOUTES ses lignes personnelles.
+
+    Liste explicite, dans la transaction de l'appelant. Toute nouvelle table qui
+    porte un `user_id` ou une adresse doit etre ajoutee ici (le test
+    `test_member_erasure` la reclame). Gardes volontairement : le journal
+    d'audit (identifiants seuls, obligation de tracabilite) et les colonnes
+    `created_by_user_id` / `updated_by_user_id` du contenu d'organisation.
+    """
+    for table in ("tokens", "usage", "usage_hourly", "personal_dictionary",
+                  "snippets", "formatting_rules", "federated_identities",
+                  "admin_sessions"):
+        conn.execute(f"DELETE FROM {table} WHERE user_id=?", (user_id,))
+    for table in ("organization_group_memberships",
+                  "organization_member_group_display", "scim_user_management"):
+        conn.execute(f"DELETE FROM {table} WHERE organization_id=? AND user_id=?",
+                     (organization_id, user_id))
+    conn.execute("DELETE FROM sso_flows WHERE expected_user_id=?", (user_id,))
+    for table in ("auth_codes", "learning_progress"):
+        conn.execute(
+            f"DELETE FROM {table} WHERE lower(trim(email))=? AND organization_id=?",
+            (normalized_email, organization_id))
+    # Ces tables sont cles par adresse seule, sans organisation : si la meme
+    # adresse a un compte dans une autre organisation, ces lignes lui servent
+    # encore et ne sont pas touchees.
+    elsewhere = conn.execute(
+        "SELECT 1 FROM users WHERE normalized_email=? AND organization_id<>? LIMIT 1",
+        (normalized_email, organization_id)).fetchone()
+    if elsewhere is None:
+        for table in ("tokens", "usage", "usage_hourly", "usage_monthly",
+                      "personal_dictionary", "snippets", "formatting_rules",
+                      "ai_spend", "survey_answered"):
+            conn.execute(f"DELETE FROM {table} WHERE lower(trim(email))=?",
+                         (normalized_email,))
+    conn.execute("DELETE FROM users WHERE user_id=?", (user_id,))
+
+
 @app.delete("/api/control/organizations/{organization_id}/members/{user_id}")
 def control_delete_member(
     organization_id: str,
@@ -10884,8 +10921,8 @@ def control_delete_member(
 
     ## Ce qui part, ce qui reste
 
-    Partent : le compte, ses sessions, ses compteurs d'usage, ses identites
-    federees. Reste : **le journal d'audit**, qui porte des actes
+    Partent : le compte et toute ligne qui porte son identifiant ou son adresse
+    (voir `erase_member_data`). Reste : **le journal d'audit**, qui porte des actes
     d'administration et non des donnees personnelles de dictee — l'effacer
     reviendrait a effacer la trace de qui a fait quoi.
 
@@ -10896,22 +10933,7 @@ def control_delete_member(
     with db() as conn:
         row = member_or_404(conn, organization_id, user_id)
         guard_last_identity_manager(conn, organization_id, user_id)
-        normalized = row["normalized_email"]
-        for table in ("tokens", "usage", "personal_dictionary", "snippets",
-                      "formatting_rules"):
-            columns = set(conn.columns(table))
-            if "user_id" in columns:
-                conn.execute(f"DELETE FROM {table} WHERE user_id=?", (user_id,))
-        conn.execute(
-            "DELETE FROM federated_identities WHERE user_id=? AND organization_id=?",
-            (user_id, organization_id),
-        )
-        conn.execute(
-            "DELETE FROM auth_codes WHERE lower(trim(email))=? AND organization_id=?",
-            (normalized, organization_id),
-        )
-        conn.execute("DELETE FROM admin_sessions WHERE user_id=?", (user_id,))
-        conn.execute("DELETE FROM users WHERE user_id=?", (user_id,))
+        erase_member_data(conn, organization_id, user_id, row["normalized_email"])
         # L'audit conserve la trace de la suppression elle-meme.
         record_admin_action(
             principal, "member.delete", target_type="user", target_id=user_id,
