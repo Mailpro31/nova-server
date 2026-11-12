@@ -40,9 +40,9 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 # Intégrée au code, jamais lue d'une variable d'environnement : une école qui
 # la remplacerait signerait ses propres licences.
-# shortcut: vide tant que l'éditeur n'a pas créé sa paire de clés (`keygen`) ;
-# toute licence est alors « invalid », sans rien couper.
-PUBLIC_KEY_PEM = ""
+PUBLIC_KEY_PEM = """-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEAp5LFj+9XLkXfbwDcvm6m0Oq0FaBKKLvC5wMe0u95wqQ=
+-----END PUBLIC KEY-----"""
 
 WARNING_DAYS = 30
 GRACE_DAYS = 30

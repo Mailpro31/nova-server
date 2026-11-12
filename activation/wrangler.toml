@@ -5,6 +5,6 @@ compatibility_date = "2025-01-01"
 [[d1_databases]]
 binding = "DB"
 database_name = "nova-activation"
-database_id = "REPLACE_WITH_D1_DATABASE_ID"   # donné par `wrangler d1 create nova-activation`
+database_id = "8c90d9c1-0332-4bf3-b0c5-7eff32370e4d"   # donné par `wrangler d1 create nova-activation`
 
 # Le secret ADMIN_TOKEN n'est jamais écrit ici : `wrangler secret put ADMIN_TOKEN`.
