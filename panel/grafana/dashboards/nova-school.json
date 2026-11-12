@@ -1,7 +1,7 @@
 {
   "uid": "nova-school",
   "title": "Nova — fiche école",
-  "description": "Tout sur une école : réglages, licence, comptes, versions, machine, erreurs. Aucun nom d'élève.",
+  "description": "Tout sur une école : réglages, licence, comptes, versions, machine, moteurs, enveloppe IA, erreurs. Aucun nom d'élève.",
   "tags": [
     "nova"
   ],
@@ -447,6 +447,162 @@
           }
         }
       ]
+    },
+    {
+      "id": 16,
+      "title": "Moteurs (transcription, texte, secours)",
+      "type": "table",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nova-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 27,
+        "w": 24,
+        "h": 5
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "nova_engine_info{school=~\"$school\"}",
+          "legendFormat": "",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nova-prometheus"
+          },
+          "instant": true,
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 17,
+      "title": "Enveloppe IA annuelle",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nova-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 32,
+        "w": 6,
+        "h": 5
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "nova_ai_envelope_eur{school=~\"$school\",kind=\"annual\"}",
+          "legendFormat": "",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nova-prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyEUR"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 18,
+      "title": "Ouverte à ce jour",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nova-prometheus"
+      },
+      "gridPos": {
+        "x": 6,
+        "y": 32,
+        "w": 6,
+        "h": 5
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "nova_ai_envelope_eur{school=~\"$school\",kind=\"allowance\"}",
+          "legendFormat": "",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nova-prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyEUR"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 19,
+      "title": "Dépensé",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nova-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 32,
+        "w": 6,
+        "h": 5
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "nova_ai_envelope_eur{school=~\"$school\",kind=\"spent\"}",
+          "legendFormat": "",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nova-prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyEUR"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 20,
+      "title": "Part consommée",
+      "type": "gauge",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nova-prometheus"
+      },
+      "gridPos": {
+        "x": 18,
+        "y": 32,
+        "w": 6,
+        "h": 5
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "nova_ai_envelope_percent{school=~\"$school\"}",
+          "legendFormat": "",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nova-prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent"
+        },
+        "overrides": []
+      }
     }
   ]
 }

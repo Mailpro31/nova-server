@@ -16944,6 +16944,22 @@ def school_sheet() -> list[tuple[str, str, dict[str, str], float]]:
         series.append(("nova_ram_gb", "Memoire vive du serveur.", {}, hardware.ram_gb))
     if hardware.vram_gb:
         series.append(("nova_vram_gb", "Memoire de la carte graphique.", {}, hardware.vram_gb))
+    # Les moteurs configures (sans sonde reseau : leur etat vit dans la console).
+    router = ORGANIZATION_AI_ROUTER
+    engines = {"text": router.text_backend, "speech": router.speech_backend,
+               "text_fallback": router.fallback_text_backend}
+    series += [("nova_engine_info", "Moteurs de l'ecole : adaptateur et modele (1).",
+                {"task": task,
+                 "adapter": observability.label_value(getattr(backend, "adapter_name", "unknown")),
+                 "model": observability.label_value(getattr(backend, "model", "") or "none")}, 1)
+               for task, backend in engines.items() if backend is not None]
+    envelope = ai_envelope_state()
+    if envelope:
+        series += [("nova_ai_envelope_eur", "Enveloppe d'IA du contrat, en euros.",
+                    {"kind": kind}, envelope[f"{kind}_eur"])
+                   for kind in ("annual", "allowance", "spent", "month")]
+        series.append(("nova_ai_envelope_percent", "Part consommee de l'enveloppe ouverte.",
+                       {}, envelope["percent"]))
     return series
 
 
