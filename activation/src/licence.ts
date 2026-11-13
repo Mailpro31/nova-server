@@ -28,7 +28,7 @@ export function invalid(r: LicenceRequest): string | null {
   if (!KINDS.includes(r.kind)) return "Type inconnu.";
   if (!isDay(r.starts) || !isDay(r.ends)) return "Dates au format AAAA-MM-JJ.";
   if (r.ends < r.starts) return "La fin est avant le début.";
-  if (r.ai_envelope_eur !== undefined && !(r.ai_envelope_eur >= 0)) return "Enveloppe d'IA négative.";
+  if (r.ai_envelope_eur !== undefined && !(Number.isFinite(r.ai_envelope_eur) && r.ai_envelope_eur >= 0)) return "Enveloppe d'IA négative.";
   return null;
 }
 
