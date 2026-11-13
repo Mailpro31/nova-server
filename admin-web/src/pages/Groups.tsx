@@ -333,7 +333,8 @@ function GroupCard({
         ))}
       {failure && <Notice tone="danger">{failure}</Notice>}
 
-      {open && (
+      {/* Les adresses des membres ne sont lues que par qui gère ces groupes. */}
+      {open && mayEditMembers && (
         <GroupMembers
           organizationId={organizationId}
           group={group}

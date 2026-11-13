@@ -7069,7 +7069,8 @@ def control_group_visibility(
 def control_group_members(
     organization_id: str,
     group_id: str,
-    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_ORGANIZATION_READ)),
+    # Des adresses : reservees a qui peut gerer ces groupes, pas a tout lecteur.
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_GROUP_MEMBERS_MANAGE)),
 ):
     require_organization_access(principal, organization_id)
     with db() as conn:
@@ -9888,7 +9889,8 @@ def control_list_members(
     query: str = "",
     status: str = "",
     limit: int = MEMBER_PAGE_DEFAULT,
-    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_IDENTITY_MANAGE)),
+    # La gestion des acces doit retrouver une personne pour l'ajouter a un groupe.
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_GROUP_MEMBERS_MANAGE)),
 ):
     """Recherche et liste paginee des comptes de l'organisation.
 
@@ -9929,8 +9931,14 @@ def control_list_members(
         ).fetchone()["c"]
 
     has_more = len(rows) > limit
+    if principal.can(CAPABILITY_IDENTITY_MANAGE):
+        views = [member_view(row) for row in rows[:limit]]
+    else:
+        # Un role qui ne gere que les groupes voit qui est qui, rien de la fiche
+        # (ni note, ni type, ni fournisseur).
+        views = [{"user_id": row["user_id"], "email": row["email"]} for row in rows[:limit]]
     return {
-        "members": [member_view(row) for row in rows[:limit]],
+        "members": views,
         "has_more": has_more,
         "limit": limit,
         "total": total,
@@ -10351,7 +10359,8 @@ def control_delete_group_rule(
 def control_preview_group_rule(
     organization_id: str,
     body: GroupRuleRequest,
-    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_ORGANIZATION_READ)),
+    # L'apercu nomme des adresses : meme droit que la liste des membres.
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_IDENTITY_MANAGE)),
 ):
     """Qui serait range, sans rien ecrire. Le groupe vise n'est pas exige ici."""
     require_organization_access(principal, organization_id)
