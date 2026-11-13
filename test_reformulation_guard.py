@@ -152,6 +152,24 @@ class ReformulationGuardTests(AdminTestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["text"], "Le budget est de 50 000 euros")
 
+    def test_a_dictation_too_long_for_the_engine_comes_back_as_dictated(self):
+        # API externe en panne, moteur local à 4096 jetons : une dictée de dix
+        # minutes ne tient pas. L'élève recevait une erreur 413, et le poste
+        # collait sa transcription brute, sans la valeur de ses snippets.
+        from ai_runtime import AI_PROMPT_TOO_LONG, AIRuntimeError
+        token = self.sign_in("etudiant@example.com")
+
+        async def generate(*_, **__):
+            raise AIRuntimeError(AI_PROMPT_TOO_LONG)
+
+        with patch.object(main.ORGANIZATION_AI_ROUTER, "generate", generate):
+            response = self.client.post(
+                "/api/reformulate", headers=self.auth(token),
+                json={"text": "le budget est de 50 000 euros", "style_id": "nova_style_messages",
+                      "style_prompt": "Mets la dictee en message court."})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["text"], "Le budget est de 50 000 euros")
+
 
 class RewriteRefusalTests(unittest.TestCase):
     def test_language_is_only_judged_when_it_is_clear(self):

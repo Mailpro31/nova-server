@@ -14908,8 +14908,9 @@ def checked_rewrite(source_text: str, result: str, system_prompt: str, style_id:
 
 
 # Les réponses de `runtime_http_error` qui disent que le moteur ne peut pas
-# répondre maintenant, et non que la requête est fausse.
-ENGINE_FAILURE_STATUSES = frozenset({429, 502, 503, 504})
+# répondre maintenant, et non que la requête est fausse. 413 : la dictée ne tient
+# pas dans la fenêtre du moteur (local, souvent 4096 jetons) ; elle est rendue telle quelle.
+ENGINE_FAILURE_STATUSES = frozenset({413, 429, 502, 503, 504})
 
 
 # --- reformulation (proxy vers LLM, API OpenAI-compatible)
