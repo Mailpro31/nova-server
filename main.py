@@ -10477,8 +10477,10 @@ def _read_csv(content: bytes) -> list[list[str]]:
             text = content.decode("latin-1")
         except UnicodeDecodeError:
             raise auth_error(400, "IMPORT_FILE_UNSUPPORTED") from None
-    sample = text[:4096]
-    delimiter = ";" if sample.count(";") > sample.count(",") else ","
+    # L'en-tete seul decide : les cellules d'un groupe peuvent contenir des « ; »
+    # ou des « , » (« Aero 2; Club; Robotique ») sans changer le separateur.
+    header = text.lstrip().splitlines()[0] if text.strip() else ""
+    delimiter = ";" if header.count(";") > header.count(",") else ","
     return [row for row in csv.reader(io.StringIO(text), delimiter=delimiter)]
 
 

@@ -250,6 +250,18 @@ class ParserTests(unittest.TestCase):
             b"email,groupe\na@example.com,\"Aero 2; Club robotique\"\n", "x.csv")
         self.assertEqual(rows[0]["groups"], ["Aero 2", "Club robotique"])
 
+    def test_groups_separated_by_semicolons_do_not_change_the_column_separator(self):
+        # Avant : trois groupes dans une cellule faisaient lire tout le fichier
+        # comme un CSV a point-virgule, et la colonne d'adresses « disparaissait ».
+        rows = main.read_member_rows(
+            b'email,groupe\na@example.com,"Aero 2;Club;Robotique;Cine"\n', "x.csv")
+        self.assertEqual(rows[0]["groups"], ["Aero 2", "Club", "Robotique", "Cine"])
+
+    def test_a_semicolon_file_keeps_commas_inside_cells(self):
+        rows = main.read_member_rows(
+            "email;groupe\na@example.com;Aero 2, Club, Robotique\n".encode(), "x.csv")
+        self.assertEqual(rows[0]["groups"], ["Aero 2", "Club", "Robotique"])
+
     def test_empty_lines_and_spaces_are_ignored(self):
         rows = main.read_member_rows(
             b"email,groupe\n\n  a@example.com , Aero 2 \n\n", "x.csv")
