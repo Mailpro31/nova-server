@@ -116,19 +116,26 @@ describe("barres", () => {
 
 describe("libellés", () => {
   test("l'heure seule sur un jour, la date au-delà", () => {
-    expect(hourLabel("2026-05-12T14", false)).toBe("14 h");
-    expect(hourLabel("2026-05-12T14", true)).toBe("12/05 14 h");
+    expect(hourLabel("2026-05-12T14", false, "UTC")).toBe("14 h");
+    expect(hourLabel("2026-05-12T14", true, "UTC")).toBe("12/05 14 h");
+  });
+
+  test("l'heure du serveur (UTC) se lit à l'heure de l'administrateur", () => {
+    // Avant : « 14 h » s'affichait pour 14 h UTC, soit 16 h à Paris en mai.
+    expect(hourLabel("2026-05-12T14", false, "Europe/Paris")).toBe("16 h");
+    expect(hourLabel("2026-05-12T23", true, "Europe/Paris")).toBe("13/05 1 h");
+    expect(hourLabel("2026-01-12T14", false, "Europe/Paris")).toBe("15 h");
   });
 
   test("minuit se lit zéro et non vide", () => {
-    expect(hourLabel("2026-05-12T00", false)).toBe("0 h");
+    expect(hourLabel("2026-05-12T00", false, "UTC")).toBe("0 h");
   });
 
   test("au plus six libellés, premier et dernier compris", () => {
     const hours = Array.from({ length: 24 }, (_, i) =>
       `2026-05-12T${String(i).padStart(2, "0")}`,
     );
-    const labels = axisLabels(hours, false);
+    const labels = axisLabels(hours, false, "UTC");
     expect(labels).toHaveLength(6);
     expect(labels[0]).toBe("0 h");
     expect(labels[5]).toBe("23 h");
@@ -139,7 +146,8 @@ describe("libellés", () => {
   });
 
   test("un relevé machine se lit à la minute", () => {
-    expect(sampleLabel("2026-05-12T14:03:00")).toBe("14:03");
+    expect(sampleLabel("2026-05-12T14:03:00", "UTC")).toBe("14:03");
+    expect(sampleLabel("2026-05-12T14:03:00", "Europe/Paris")).toBe("16:03");
   });
 });
 

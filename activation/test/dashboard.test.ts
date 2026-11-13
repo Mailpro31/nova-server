@@ -37,7 +37,7 @@ describe("données de la flotte", () => {
     const [ipsa] = r.fleet.schools;
     expect(ipsa).toMatchObject({ id: "ipsa", online: true, serverVersion: "0.2.0", spendMonth: 50, envelopeAnnual: 1200,
       licence: { status: "valid", tier: "151-250", daysLeft: 120 }, apps: [{ version: "1.0.82", count: 3 }] });
-    expect(ipsa.dictSeries).toEqual([[NOW - 86400, 4], [NOW, 7]]);
+    expect(ipsa.dictSeries).toEqual([[NOW - 86400 - 43200, 4], [NOW - 43200, 7]]); // points à minuit → étiquetés à midi du jour couvert
     expect(r.fleet.reports).toEqual([]);
   });
   it("marque hors ligne un serveur muet depuis plus de 10 minutes", async () => {
@@ -47,6 +47,22 @@ describe("données de la flotte", () => {
         ? new Response(JSON.stringify(vector([[{ school: "ipsa" }, NOW - 7200]]))) : f(url)));
     const r = await loadFleet(env, NOW);
     expect(r.ok && r.fleet.schools[0].online).toBe(false);
+  });
+  it("ne compte comme dictées que les appels servis, pas les refus de quota", async () => {
+    const f = grafana({ result: [] });
+    const asked: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => { asked.push(decodeURIComponent(url)); return f(url); }));
+    await loadFleet(env, NOW);
+    const dict = asked.filter((q) => q.includes("inference_transcribe"));
+    expect(dict).toHaveLength(3); // 24 h, 13 jours finis, aujourd'hui
+    for (const q of dict) expect(q).toContain('outcome="allowed"');
+  });
+  it("garde une école muette dans la liste : la requête remonte plus loin que les 5 min de Prometheus", async () => {
+    const f = grafana({ result: [] });
+    let seen = "";
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => { const q = decodeURIComponent(url); if (q.includes("timestamp(nova_uptime_seconds)")) seen = q; return f(url); }));
+    await loadFleet(env, NOW);
+    expect(seen).toMatch(/max_over_time\(timestamp\(nova_uptime_seconds\)\[\d+d:\d+m\]\)/);
   });
   it("journaux illisibles → reports null, le reste arrive", async () => {
     vi.stubGlobal("fetch", grafana(null));
@@ -73,5 +89,15 @@ describe("barres", () => {
     expect((html.match(/class="col[ "]/g) ?? []).length).toBe(2);
     expect(html.replace(/\s/g, " ")).toContain("1 834 dictées"); // valeur exacte au survol
     expect(bars([[NOW, 1.234]], "s")).toContain("1,23 s");
+  });
+});
+
+describe("bars : valeurs limites", () => {
+  it("axe à 0 quand tout est nul, seuil lisible pour une valeur minuscule, une seule date pour un point", () => {
+    expect(bars([[NOW, 0], [NOW + 86400, 0]], "dictées")).toContain("max 0 dictées");
+    const tiny = bars([[NOW, 0.004]], "s");
+    expect(tiny).toContain("max &#60; 0,01 s");
+    expect(tiny).toContain('style="--n:1"');
+    expect(tiny.match(/<span>/g)).toHaveLength(1);
   });
 });

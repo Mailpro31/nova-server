@@ -7069,7 +7069,8 @@ def control_group_visibility(
 def control_group_members(
     organization_id: str,
     group_id: str,
-    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_ORGANIZATION_READ)),
+    # Des adresses : reservees a qui peut gerer ces groupes, pas a tout lecteur.
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_GROUP_MEMBERS_MANAGE)),
 ):
     require_organization_access(principal, organization_id)
     with db() as conn:
@@ -9888,7 +9889,8 @@ def control_list_members(
     query: str = "",
     status: str = "",
     limit: int = MEMBER_PAGE_DEFAULT,
-    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_IDENTITY_MANAGE)),
+    # La gestion des acces doit retrouver une personne pour l'ajouter a un groupe.
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_GROUP_MEMBERS_MANAGE)),
 ):
     """Recherche et liste paginee des comptes de l'organisation.
 
@@ -9929,8 +9931,14 @@ def control_list_members(
         ).fetchone()["c"]
 
     has_more = len(rows) > limit
+    if principal.can(CAPABILITY_IDENTITY_MANAGE):
+        views = [member_view(row) for row in rows[:limit]]
+    else:
+        # Un role qui ne gere que les groupes voit qui est qui, rien de la fiche
+        # (ni note, ni type, ni fournisseur).
+        views = [{"user_id": row["user_id"], "email": row["email"]} for row in rows[:limit]]
     return {
-        "members": [member_view(row) for row in rows[:limit]],
+        "members": views,
         "has_more": has_more,
         "limit": limit,
         "total": total,
@@ -10351,7 +10359,8 @@ def control_delete_group_rule(
 def control_preview_group_rule(
     organization_id: str,
     body: GroupRuleRequest,
-    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_ORGANIZATION_READ)),
+    # L'apercu nomme des adresses : meme droit que la liste des membres.
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_IDENTITY_MANAGE)),
 ):
     """Qui serait range, sans rien ecrire. Le groupe vise n'est pas exige ici."""
     require_organization_access(principal, organization_id)
@@ -10468,8 +10477,10 @@ def _read_csv(content: bytes) -> list[list[str]]:
             text = content.decode("latin-1")
         except UnicodeDecodeError:
             raise auth_error(400, "IMPORT_FILE_UNSUPPORTED") from None
-    sample = text[:4096]
-    delimiter = ";" if sample.count(";") > sample.count(",") else ","
+    # L'en-tete seul decide : les cellules d'un groupe peuvent contenir des « ; »
+    # ou des « , » (« Aero 2; Club; Robotique ») sans changer le separateur.
+    header = text.lstrip().splitlines()[0] if text.strip() else ""
+    delimiter = ";" if header.count(";") > header.count(",") else ","
     return [row for row in csv.reader(io.StringIO(text), delimiter=delimiter)]
 
 
@@ -10507,6 +10518,7 @@ def plan_member_import(conn, organization_id: str, rows: list[dict], mode: str) 
     wanted: dict[str, set[str]] = {}
     accounts: dict[str, dict] = {}
     to_create: list[str] = []
+    canonical: dict[str, str] = {}
 
     for row in rows:
         email = row["email"]
@@ -10521,18 +10533,28 @@ def plan_member_import(conn, organization_id: str, rows: list[dict], mode: str) 
             invalid.append({"line": row["line"], "code": "MEMBER_ROLE_INVALID"})
             continue
         refused = False
+        names: list[str] = []
         for name in row["groups"]:
+            if len(name) > MAX_GROUP_NAME:
+                invalid.append({"line": row["line"], "code": "GROUP_NAME_INVALID"})
+                refused = True
+                break
             existing = groups.get(name.casefold())
             if existing is not None and existing["source"] != GROUP_SOURCE_CONSOLE:
                 invalid.append({"line": row["line"], "code": "GROUP_MANAGED_BY_DIRECTORY"})
                 refused = True
                 break
+            # « Aero 2 » et « aero 2 » sont un seul groupe, comme a la creation
+            # a la main : la premiere graphie rencontree fait foi.
+            name = existing["display_name"] if existing else canonical.setdefault(
+                name.casefold(), name)
             if existing is None and name not in to_create:
                 to_create.append(name)
+            names.append(name)
         if refused:
             continue
         accounts[normalize_email(email)] = {"email": email, "member_role": role}
-        for name in row["groups"]:
+        for name in names:
             wanted.setdefault(name, set()).add(normalize_email(email))
 
     known = {
@@ -16970,7 +16992,7 @@ def control_read_usage_metrics(
 
 
 # Une version de poste devient une etiquette seulement si elle en a la forme.
-_APP_VERSION = re.compile(r"^\d{1,3}\.\d{1,3}\.\d{1,4}$")
+_APP_VERSION = CLIENT_VERSION  # même forme que celle que /api/me enregistre
 # Une version vue dans les trente derniers jours : un poste parti ne compte plus.
 METRICS_VERSION_WINDOW_SECONDS = 30 * 86400
 
@@ -16990,8 +17012,9 @@ def school_sheet() -> list[tuple[str, str, dict[str, str], float]]:
     with db() as conn:
         members = conn.execute(
             # Les comptes de banc (@nova.invalid) ne sont pas des membres de l'ecole.
-            "SELECT SUM(disabled = 0) AS active, SUM(disabled <> 0) AS disabled FROM users "
-            "WHERE email NOT LIKE '%@nova.invalid'"
+            "SELECT COALESCE(SUM(CASE WHEN disabled IS NULL OR disabled = 0 THEN 1 ELSE 0 END), 0) AS active, "
+            "COALESCE(SUM(CASE WHEN disabled <> 0 THEN 1 ELSE 0 END), 0) AS disabled FROM users "
+            "WHERE LOWER(email) NOT LIKE '%@nova.invalid'"
         ).fetchone()
         groups = conn.execute("SELECT COUNT(*) AS n FROM organization_groups").fetchone()["n"]
     info = {
@@ -17050,11 +17073,12 @@ def business_metrics() -> list[tuple[str, str, dict[str, str], float]]:
             (f"{month}-01T00",)).fetchone()["n"]
         rows = conn.execute(
             "SELECT app_version AS version, COUNT(*) AS n FROM users "
-            "WHERE app_version IS NOT NULL AND last_seen >= ? GROUP BY app_version",
+            "WHERE app_version IS NOT NULL AND last_seen >= ? "
+            "AND LOWER(email) NOT LIKE '%@nova.invalid' GROUP BY app_version",
             (since,)).fetchall()
     versions: dict[str, int] = {}
     for row in rows:
-        version = row["version"] if _APP_VERSION.match(row["version"] or "") else "other"
+        version = row["version"] if _APP_VERSION.fullmatch(row["version"] or "") else "other"
         versions[version] = versions.get(version, 0) + row["n"]
     state = licence.licence_state(NOVA_LICENCE)
     series = [("nova_active_users", "Personnes ayant dicte ou reformule ce mois-ci.",

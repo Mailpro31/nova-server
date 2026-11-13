@@ -28,7 +28,7 @@ async function sameSecret(given: string, expected: string): Promise<boolean> {
   return diff === 0;
 }
 
-export const normalizeCode = (code: string) => code.trim().toUpperCase().replace(/[\s-]+/g, "");
+export const normalizeCode = (code: string) => code.trim().toUpperCase().replace(/[\s\-​‐-―−]+/g, "");
 
 async function tooMany(env: Env, ip: string, now: number): Promise<boolean> {
   const minute = Math.floor(now / 60);
@@ -62,7 +62,7 @@ async function addCode(request: Request, env: Env, now: number): Promise<Respons
   if (
     !b || typeof b.code_hash !== "string" || !/^[0-9a-f]{64}$/.test(b.code_hash) ||
     typeof b.licence !== "string" || !b.licence || typeof b.school !== "string" ||
-    typeof b.expires_at !== "number" || b.expires_at <= now
+    typeof b.expires_at !== "number" || b.expires_at <= now || b.expires_at >= 253402300800 // an 10000 : toISOString() lèverait
   ) return json({ error: "bad_request" }, 400);
   const result = await env.DB.prepare(
     "INSERT OR IGNORE INTO codes (code_hash, licence, school, expires_at) VALUES (?, ?, ?, ?)",

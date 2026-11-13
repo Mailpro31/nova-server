@@ -57,6 +57,40 @@ class AccessManagerRouteTests(ConsoleGroupsTestCase):
             json={"expected_revision": 0, "settings": {"voice_commands_enabled": False}})
         self.assertEqual(response.status_code, 403, response.text)
 
+    def test_it_finds_a_person_to_add_but_sees_nothing_of_the_file(self):
+        # Avant : la recherche exigeait `identity_manage`, donc la gestion des
+        # acces ne pouvait pas retrouver la personne a ajouter (403).
+        self.member_id("etudiant@example.com")
+        response = self.client.get(
+            f"/api/control/organizations/{self.organization}/members"
+            "?query=etudiant&limit=8", headers=self.manager)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual([set(m) for m in response.json()["members"]], [{"user_id", "email"}])
+
+
+class MemberAddressesStayWithTheirOwnersTests(ConsoleGroupsTestCase):
+    """Les adresses ne sortent que vers un role qui gere les personnes ou les groupes."""
+
+    def test_content_editor_and_read_only_cannot_list_group_members(self):
+        group = self.created("Accompagnement")
+        for role in ("content_editor", "read_only", "it_admin"):
+            with self.subTest(role=role):
+                token = grant_admin_session(f"{role}@example.com", role)
+                response = self.client.get(f"{self.base()}/{group['id']}/members", headers=token)
+                self.assertEqual(response.status_code, 403, response.text)
+
+    def test_a_group_rule_preview_does_not_name_members_to_those_roles(self):
+        self.member_id("etudiant@example.com")
+        for role in ("content_editor", "read_only", "it_admin", "access_manager"):
+            with self.subTest(role=role):
+                token = grant_admin_session(f"{role}@example.com", role)
+                response = self.client.post(
+                    f"/api/control/organizations/{self.organization}/group-rules/preview",
+                    headers=token,
+                    json={"group_id": "x", "field": "department", "operator": "contains",
+                          "value": "a"})
+                self.assertEqual(response.status_code, 403, response.text)
+
 
 if __name__ == "__main__":
     unittest.main()

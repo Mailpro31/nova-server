@@ -145,28 +145,47 @@ export function bars(
  * Une clé `2026-05-12T14` est exacte et illisible ; sur une semaine, l'heure
  * seule ne suffit plus à situer le point.
  */
-export function hourLabel(hour: string, withDay: boolean): string {
+export function hourLabel(hour: string, withDay: boolean, timeZone?: string): string {
+  // Le serveur compte en heures UTC ; l'administrateur lit l'heure de chez lui.
   const [date, time] = hour.split("T");
-  const heure = `${Number(time)} h`;
-  if (!withDay) return heure;
-  const [, month, day] = date.split("-");
-  return `${day}/${month} ${heure}`;
+  const [year, month, day] = date.split("-").map(Number);
+  const parts = new Intl.DateTimeFormat("fr-FR", {
+    timeZone,
+    hour: "numeric",
+    day: "2-digit",
+    month: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date(Date.UTC(year, month - 1, day, Number(time))));
+  const part = (type: string) => parts.find((entry) => entry.type === type)?.value ?? "";
+  const heure = `${Number(part("hour"))} h`;
+  return withDay ? `${part("day")}/${part("month")} ${heure}` : heure;
 }
 
 /** Un instant de relevé machine, ramené à l'heure et à la minute. */
-export function sampleLabel(sampledAt: string): string {
-  const time = sampledAt.split("T")[1] ?? "";
-  return time.slice(0, 5);
+export function sampleLabel(sampledAt: string, timeZone?: string): string {
+  // Releve horodate en UTC par le serveur ; affiche a l'heure de l'administrateur.
+  const instant = new Date(`${sampledAt}Z`);
+  if (Number.isNaN(instant.getTime())) return (sampledAt.split("T")[1] ?? "").slice(0, 5);
+  return instant.toLocaleTimeString("fr-FR", {
+    timeZone,
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  });
 }
 
 /** Les libellés à porter sous l'axe : au plus six, répartis régulièrement. */
-export function axisLabels(hours: readonly string[], withDay: boolean): string[] {
+export function axisLabels(
+  hours: readonly string[],
+  withDay: boolean,
+  timeZone?: string,
+): string[] {
   if (hours.length === 0) return [];
   const wanted = Math.min(6, hours.length);
   const step = (hours.length - 1) / Math.max(1, wanted - 1);
   const picked: string[] = [];
   for (let i = 0; i < wanted; i += 1) {
-    picked.push(hourLabel(hours[Math.round(i * step)], withDay));
+    picked.push(hourLabel(hours[Math.round(i * step)], withDay, timeZone));
   }
   return picked;
 }
@@ -203,7 +222,7 @@ function csvCell(value: string | number | null): string {
  */
 export function timelineCsv(timeline: readonly UsageHour[]): string {
   const header = [
-    "heure",
+    "heure_utc",
     "transcriptions",
     "reformulations",
     "secondes_audio",

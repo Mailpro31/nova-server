@@ -17,7 +17,9 @@ let certsCache: { domain: string; keys: JsonWebKey[]; at: number } | null = null
 async function accessKeys(domain: string, now: number): Promise<JsonWebKey[]> {
   if (certsCache && certsCache.domain === domain && now - certsCache.at < 3600) return certsCache.keys;
   const response = await fetch(`https://${domain}/cdn-cgi/access/certs`);
-  const keys = ((await response.json()) as { keys: JsonWebKey[] }).keys;
+  const keys = ((await response.json()) as { keys?: JsonWebKey[] }).keys;
+  // Une réponse d'erreur n'est pas gardée : sinon tout le monde est refusé pendant une heure.
+  if (!response.ok || !Array.isArray(keys)) return [];
   certsCache = { domain, keys, at: now };
   return keys;
 }

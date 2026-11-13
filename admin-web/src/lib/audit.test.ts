@@ -65,3 +65,14 @@ describe("Journal", () => {
     expect(REST).toContain("formatAuditValue(");
   });
 });
+
+describe("Le journal reste lisible quand la lecture échoue ou se répète", () => {
+  test("« Voir plus » dit pourquoi il n'a rien chargé", () => {
+    expect(REST).toContain("setMoreFailure(reportFailure(raised))");
+  });
+
+  test("deux lignes à la même seconde ne partagent pas leur clé", () => {
+    const primitives = readFileSync("src/components/primitives.tsx", "utf8");
+    expect(primitives).toContain("key={`${index}-${label}`}");
+  });
+});
