@@ -1,4 +1,4 @@
-import { ago, escape, loadFleet } from "../dashboard";
+import { ago, escape, loadFleet, plural } from "../dashboard";
 import { pill, type Ctx, type Page } from "../shell";
 
 type Check = { name: string; state: "ok" | "bad" | "off"; detail: string };
@@ -15,15 +15,15 @@ async function render(ctx: Ctx) {
   const checks: Check[] = [];
 
   checks.push(f
-    ? { name: "Grafana Cloud (métriques)", state: "ok", detail: `${f.schools.length} école(s) vue(s)` }
+    ? { name: "Grafana Cloud (métriques)", state: "ok", detail: plural(f.schools.length, "école vue", "écoles vues") }
     : { name: "Grafana Cloud (métriques)", state: noToken ? "off" : "bad", detail: noToken ? "jeton de lecture absent" : "aucune réponse" });
   checks.push(f?.reports
-    ? { name: "Journaux (Loki)", state: "ok", detail: `${f.reports.length} signalement(s) lus` }
+    ? { name: "Journaux (Loki)", state: "ok", detail: plural(f.reports.length, "signalement lu", "signalements lus") }
     : { name: "Journaux (Loki)", state: f ? "bad" : "off", detail: f ? "ajoutez le droit logs:read au jeton" : "dépend de Grafana Cloud" });
 
   try {
     await ctx.env.DB.prepare("SELECT 1").first();
-    checks.push({ name: "Base de données (D1)", state: "ok", detail: `${await count(ctx, "codes")} code(s), ${await count(ctx, "pilot_journal")} ligne(s) de journal` });
+    checks.push({ name: "Base de données (D1)", state: "ok", detail: `${plural(await count(ctx, "codes"), "code", "codes")}, ${plural(await count(ctx, "pilot_journal"), "ligne de journal", "lignes de journal")}` });
   } catch {
     checks.push({ name: "Base de données (D1)", state: "bad", detail: "la requête a échoué" });
   }

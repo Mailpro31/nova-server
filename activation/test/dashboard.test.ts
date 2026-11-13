@@ -37,7 +37,7 @@ describe("données de la flotte", () => {
     const [ipsa] = r.fleet.schools;
     expect(ipsa).toMatchObject({ id: "ipsa", online: true, serverVersion: "0.2.0", spendMonth: 50, envelopeAnnual: 1200,
       licence: { status: "valid", tier: "151-250", daysLeft: 120 }, apps: [{ version: "1.0.82", count: 3 }] });
-    expect(ipsa.dictSeries).toEqual([[NOW - 86400, 4], [NOW, 7]]);
+    expect(ipsa.dictSeries).toEqual([[NOW - 86400 - 43200, 4], [NOW - 43200, 7]]); // points à minuit → étiquetés à midi du jour couvert
     expect(r.fleet.reports).toEqual([]);
   });
   it("marque hors ligne un serveur muet depuis plus de 10 minutes", async () => {
@@ -73,5 +73,15 @@ describe("barres", () => {
     expect((html.match(/class="col[ "]/g) ?? []).length).toBe(2);
     expect(html.replace(/\s/g, " ")).toContain("1 834 dictées"); // valeur exacte au survol
     expect(bars([[NOW, 1.234]], "s")).toContain("1,23 s");
+  });
+});
+
+describe("bars : valeurs limites", () => {
+  it("axe à 0 quand tout est nul, seuil lisible pour une valeur minuscule, une seule date pour un point", () => {
+    expect(bars([[NOW, 0], [NOW + 86400, 0]], "dictées")).toContain("max 0 dictées");
+    const tiny = bars([[NOW, 0.004]], "s");
+    expect(tiny).toContain("max &#60; 0,01 s");
+    expect(tiny).toContain('style="--n:1"');
+    expect(tiny.match(/<span>/g)).toHaveLength(1);
   });
 });

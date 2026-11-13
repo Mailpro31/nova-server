@@ -13,8 +13,10 @@ type Sample = { metric: Record<string, string>; value: [number, string] };
 type Series = { metric: Record<string, string>; values: [number, string][] };
 
 const DAY = 86400;
-export const escape = (text: unknown) =>
-  String(text ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+/** Texte de n'importe quelle valeur JSON : String() lève une TypeError sur {"toString": 1} venu d'un journal. */
+export const text = (v: unknown) => (v !== null && typeof v === "object" ? JSON.stringify(v) : String(v ?? ""));
+export const escape = (v: unknown) =>
+  text(v).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
 async function get<T>(url: string, user: string, token: string): Promise<T | null> {
   try {
@@ -30,21 +32,29 @@ const instant = (env: MetricsEnv, query: string) =>
   get<{ result: Sample[] }>(`${env.PROM_URL}/api/v1/query?query=${encodeURIComponent(query)}`, env.PROM_USER, env.GRAFANA_READ_TOKEN)
     .then((d) => d?.result ?? null);
 
-const range = (env: MetricsEnv, query: string, now: number, days: number) =>
+/** `count` points journaliers qui se terminent à `end`. */
+const range = (env: MetricsEnv, query: string, end: number, count: number) =>
   get<{ result: Series[] }>(
-    `${env.PROM_URL}/api/v1/query_range?query=${encodeURIComponent(query)}&start=${now - days * DAY}&end=${now}&step=${DAY}`,
+    `${env.PROM_URL}/api/v1/query_range?query=${encodeURIComponent(query)}&start=${end - (count - 1) * DAY}&end=${end}&step=${DAY}`,
     env.PROM_USER, env.GRAFANA_READ_TOKEN,
   ).then((d) => d?.result ?? null);
 
 /** { école: valeur } pour une requête groupée par école. */
-const bySchool = (samples: Sample[] | null) =>
-  Object.fromEntries((samples ?? []).map((s) => [s.metric.school, Number(s.value[1])]));
+// Sans prototype : une école nommée « constructor » ne lit pas Object.prototype.constructor ; séries sans école ou non finies ignorées.
+const bySchool = (samples: Sample[] | null): Record<string, number> =>
+  Object.assign(Object.create(null), Object.fromEntries((samples ?? []).filter((s) => s.metric.school && Number.isFinite(Number(s.value[1]))).map((s) => [s.metric.school, Number(s.value[1])])));
 
 const num = (value: number | undefined, digits = 0) =>
-  value === undefined || Number.isNaN(value) ? "—" : value.toLocaleString("fr-FR", { maximumFractionDigits: digits });
+  value === undefined || !Number.isFinite(value) ? "—" : value.toLocaleString("fr-FR", { maximumFractionDigits: digits });
 
-const ago = (seconds: number) =>
-  seconds < 3600 ? `${Math.round(seconds / 60)} min` : seconds < 2 * DAY ? `${Math.round(seconds / 3600)} h` : `${Math.round(seconds / DAY)} j`;
+/** « 5 min », « 3 h », « 2 j » ; l'unité change sur la valeur arrondie (3599 s → « 1 h », pas « 60 min »). */
+const ago = (seconds: number) => {
+  const s = Math.max(0, seconds), min = Math.round(s / 60), h = Math.round(s / 3600);
+  return min < 60 ? `${min} min` : h < 48 ? `${h} h` : `${Math.round(s / DAY)} j`;
+};
+
+/** « 1 élève », « 2 élèves » (0 reste au singulier) ; valeur inconnue → « — » et pluriel. */
+const plural = (n: number | undefined, one: string, many: string) => `${num(n)} ${n !== undefined && n <= 1 ? one : many}`;
 
 const LICENCE_LABEL: Record<string, string> = {
   valid: "Valide", warning: "Bientôt échue", grace: "Délai de grâce", expired: "Échue", none: "Aucune", invalid: "Invalide",
@@ -58,22 +68,41 @@ const dayName = (t: number, long: boolean) => new Date(t * 1000).toLocaleDateStr
 /** Barres journalières en HTML : survol ou toucher d'une barre → jour et valeur exacts (CSS seul, la CSP interdit le JS). */
 export function bars(points: [number, number][], unit: string): string {
   if (!points.length) return `<p class="muted">Pas encore de mesure.</p>`;
-  const max = Math.max(...points.map(([, v]) => v), 0) || 1;
-  const value = (v: number) => `${num(v, unit === "s" ? 2 : 0)} ${unit}`;
+  const top = Math.max(...points.map(([, v]) => v), 0), max = top || 1;
+  const digits = unit === "s" ? 2 : 0, step = 10 ** -digits;
+  // Une valeur positive qui s'arrondirait à 0 reste lisible : « < 0,01 s ».
+  const value = (v: number) => `${v > 0 && v < step / 2 ? `< ${num(step, digits)}` : num(v, digits)} ${unit}`;
   const cols = points.map(([t, v], i) => {
     const side = i < points.length / 4 ? " l" : i >= (points.length * 3) / 4 ? " r" : "";
     const text = `${dayName(t, true)} : ${value(v)}`;
     return `<button type="button" class="col${side}" aria-label="${escape(text)}"><i style="height:${Math.max(v > 0 ? 2 : 0, (v / max) * 100).toFixed(1)}%"></i>`
       + `<span class="tip">${escape(dayName(t, true))}<b>${escape(value(v))}</b></span></button>`;
   }).join("");
-  return `<div class="bars"><div class="axis">max ${escape(value(max))}</div><div class="cols">${cols}</div>
-<div class="axis ends"><span>${escape(dayName(points[0][0], false))}</span><span>${escape(dayName(points[points.length - 1][0], false))}</span></div></div>`;
+  return `<div class="bars" style="--n:${points.length}"><div class="axis">max ${escape(value(top))}</div><div class="cols">${cols}</div>
+<div class="axis ends"><span>${escape(dayName(points[0][0], false))}</span>${points.length > 1 ? `<span>${escape(dayName(points[points.length - 1][0], false))}</span>` : ""}</div></div>`;
 }
 
-const points = (series: Series[] | null, school: string): [number, number][] =>
-  (series?.find((s) => s.metric.school === school)?.values ?? [])
-    .map(([t, v]) => [t, Number(v)] as [number, number])
-    .filter(([, v]) => Number.isFinite(v));
+const finite = (rows: [number, string][]) => rows.map(([t, v]) => [t, Number(v)] as [number, number]).filter(([, v]) => Number.isFinite(v));
+
+// Heure de Paris d'un instant, exprimée comme un horodatage UTC (pour calculer minuit sans table de fuseaux).
+const parisClock = (t: number) => {
+  const p = Object.fromEntries(new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Paris", hourCycle: "h23", year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric", second: "numeric" })
+    .formatToParts(new Date(t * 1000)).map((x) => [x.type, Number(x.value)]));
+  return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second) / 1000;
+};
+/** Dernier minuit de Paris (23 h ou 25 h après le précédent les jours de changement d'heure). */
+const parisMidnight = (now: number) => {
+  const local = Math.floor(parisClock(now) / DAY) * DAY;
+  const guess = local - (parisClock(now) - now);
+  return local - (parisClock(guess) - guess);
+};
+
+/** Une valeur par jour calendaire de Paris : les jours finis (points à minuit, fenêtre 1 j, étiquetés à midi du jour couvert), puis aujourd'hui depuis minuit. */
+const daily = (done: Series[] | null, today: Sample[] | null, school: string, now: number): [number, number][] => {
+  const past = finite(done?.find((s) => s.metric.school === school)?.values ?? []).map(([t, v]) => [t - DAY / 2, v] as [number, number]);
+  const cur = today?.find((s) => s.metric.school === school);
+  return cur && Number.isFinite(Number(cur.value[1])) ? [...past, [now, Number(cur.value[1])]] : past;
+};
 
 // ------------------------------------------------------------ signalements
 
@@ -107,7 +136,7 @@ export type Tone = "ok" | "warn" | "bad" | "neutral";
 export const LICENCE_TONE: Record<string, Tone> = {
   valid: "ok", warning: "warn", grace: "warn", expired: "bad", none: "neutral", invalid: "bad",
 };
-export { ago, num, LICENCE_LABEL, DAY };
+export { ago, num, plural, LICENCE_LABEL, DAY };
 
 /** Un serveur est « en ligne » s'il a envoyé ses mesures depuis moins de 10 minutes. */
 export const ONLINE_SECONDS = 600;
@@ -125,7 +154,7 @@ export interface SchoolData {
   spendMonth?: number;             // € dépensés ce mois
   envelopeAnnual?: number;         // € par an, si la licence en porte une
   tokens30d?: number;
-  dictSeries: [number, number][];  // dictées par jour, 14 jours
+  dictSeries: [number, number][];  // dictées par jour de Paris, 13 jours finis + aujourd'hui
   latencySeries: [number, number][]; // p95 de la transcription (s) par jour, 14 jours
 }
 export interface Fleet { schools: SchoolData[]; reports: Report[] | null }
@@ -134,7 +163,8 @@ export type FleetResult = { ok: true; fleet: Fleet } | { ok: false; reason: "tok
 /** Lit tout Grafana Cloud en une passe (requêtes en parallèle). */
 export async function loadFleet(env: MetricsEnv, now: number): Promise<FleetResult> {
   if (!env.GRAFANA_READ_TOKEN) return { ok: false, reason: "token" };
-  const [seen, server, apps, members, active, dictations, licence, days, spend, envelope, tokens, dictSeries, latency, support] =
+  const midnight = parisMidnight(now), since = now - midnight;
+  const [seen, server, apps, members, active, dictations, licence, days, spend, envelope, tokens, dictSeries, latency, support, dictToday, latencyToday] =
     await Promise.all([
       instant(env, "max by (school) (timestamp(nova_uptime_seconds))"),
       instant(env, "max by (school, server_version) (nova_server_info)"),
@@ -147,9 +177,11 @@ export async function loadFleet(env: MetricsEnv, now: number): Promise<FleetResu
       instant(env, "max by (school) (nova_ai_spend_eur_month)"),
       instant(env, 'max by (school) (nova_ai_envelope_eur{kind="annual"})'),
       instant(env, "sum by (school) (increase(nova_ai_tokens_total[30d]))"),
-      range(env, 'sum by (school) (increase(nova_events_total{event="inference_transcribe"}[1d]))', now, 14),
-      range(env, 'histogram_quantile(0.95, sum by (school, le) (rate(nova_stage_seconds_bucket{stage="transcription"}[1d])))', now, 14),
+      range(env, 'sum by (school) (increase(nova_events_total{event="inference_transcribe"}[1d]))', midnight, 13),
+      range(env, 'histogram_quantile(0.95, sum by (school, le) (rate(nova_stage_seconds_bucket{stage="transcription"}[1d])))', midnight, 13),
       reports(env, now),
+      since >= 300 ? instant(env, `sum by (school) (increase(nova_events_total{event="inference_transcribe"}[${since}s]))`) : null,
+      since >= 300 ? instant(env, `histogram_quantile(0.95, sum by (school, le) (rate(nova_stage_seconds_bucket{stage="transcription"}[${since}s])))`) : null,
     ]);
   if (!seen) return { ok: false, reason: "grafana" };
   const last = bySchool(seen), m = bySchool(members), a = bySchool(active), d = bySchool(dictations), dl = bySchool(days);
@@ -164,7 +196,7 @@ export async function loadFleet(env: MetricsEnv, now: number): Promise<FleetResu
       members: m[id], activeMonth: a[id], dictations24h: d[id],
       licence: lic ? { status: lic.status, tier: lic.tier, daysLeft: dl[id] } : undefined,
       spendMonth: sp[id], envelopeAnnual: en[id], tokens30d: tk[id],
-      dictSeries: points(dictSeries, id), latencySeries: points(latency, id),
+      dictSeries: daily(dictSeries, dictToday, id, now), latencySeries: daily(latency, latencyToday, id, now),
     };
   });
   return { ok: true, fleet: { schools, reports: support } };
