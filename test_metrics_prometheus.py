@@ -238,7 +238,10 @@ class MetricsPrometheusTests(unittest.TestCase):
         with patch.object(main, "NOVA_LICENCE", token),                 patch.object(licence, "licence_state",
                              lambda t, now=None, public_pem=None: real(t, now, public)):
             rendered = self.scrape().text
-        self.assertIn("nova_ai_envelope_eur 1200", rendered)
+        # Une seule famille : l'enveloppe annuelle est kind="annual", jamais une série sans étiquette.
+        self.assertIn('nova_ai_envelope_eur{kind="annual"} 1200', rendered)
+        self.assertNotRegex(rendered, r"(?m)^nova_ai_envelope_eur ")
+        self.assertEqual(rendered.count("# HELP nova_ai_envelope_eur "), 1)
         self.assertIn("nova_ai_spend_eur_month 2.5", rendered)
         self.assertNotIn("eleve@example.com", rendered)
 
@@ -271,6 +274,21 @@ class MetricsPrometheusTests(unittest.TestCase):
             rendered = self.scrape().text
         self.assertIn('nova_ai_envelope_eur{kind="spent"} 42.5', rendered)
         self.assertIn("nova_ai_envelope_percent 14", rendered)
+
+    def test_the_envelope_is_one_family_when_the_licence_and_the_prices_both_have_it(self):
+        # Vu en production le 13/11 : la licence et le bloc des moteurs publiaient chacun l'enveloppe.
+        private, public = licence.new_key_pair()
+        token = licence.issue(private, organization="IPSA", tier="10", kind="pilot",
+                              starts="2026-11-13", ends="2027-11-15", ai_envelope_eur=1)
+        envelope = {"annual_eur": 1, "allowance_eur": 1.0, "spent_eur": 0.1,
+                    "month_eur": 0.1, "percent": 10, "empty": False, "mine_over": False}
+        real = licence.licence_state
+        with patch.object(main, "NOVA_LICENCE", token),                 patch.object(licence, "licence_state",
+                             lambda t, now=None, public_pem=None: real(t, now, public)),                 patch.object(main, "ai_envelope_state", lambda *a, **k: envelope):
+            rendered = self.scrape().text
+        self.assertEqual(rendered.count('nova_ai_envelope_eur{kind="annual"}'), 1)
+        self.assertEqual(rendered.count("# HELP nova_ai_envelope_eur "), 1)
+        self.assertNotRegex(rendered, r"(?m)^nova_ai_envelope_eur ")
 
     def test_no_licence_says_so_without_a_deadline(self):
         with patch.object(main, "NOVA_LICENCE", ""):
