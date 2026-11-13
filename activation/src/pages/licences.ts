@@ -112,13 +112,14 @@ async function create(ctx: Ctx, form: FormData): Promise<Response> {
   const problem = invalid(r);
   if (problem) return show(notice(escape(problem), "bad"));
   if (!ctx.env.SIGNING_KEY) return show(notice("Clé de signature absente (secret SIGNING_KEY).", "bad"));
+  const licence = await signLicence(ctx.env.SIGNING_KEY, r); // avant le jeton : une signature qui échoue ne le brûle pas
   // Recharger la page renvoie le même jeton : aucun second code.
   const nonce = text("nonce").slice(0, 64);
   if (nonce && !(await ctx.env.DB.prepare("INSERT OR IGNORE INTO form_nonces (nonce, at) VALUES (?, ?)").bind(nonce, ctx.now).run()).meta.changes)
     return show(notice("Ce code a déjà été créé ; il n'est pas affiché une seconde fois. S'il est perdu, révoquez-le et créez-en un autre."));
   const code = newCode();
   await ctx.env.DB.prepare("INSERT INTO codes (code_hash, licence, school, expires_at) VALUES (?, ?, ?, ?)")
-    .bind(await sha256Hex(normalizeCode(code)), await signLicence(ctx.env.SIGNING_KEY, r), r.organization.trim(), ctx.now + days * DAY)
+    .bind(await sha256Hex(normalizeCode(code)), licence, r.organization.trim(), ctx.now + days * DAY)
     .run();
   await audit(ctx.env.DB, ctx.user, ctx.now, "Code créé", `${r.organization.trim()} · ${r.kind} · ${r.starts} → ${r.ends}`);
   return show(notice(`Code pour ${escape(r.organization.trim())}, valable ${plural(days, "jour", "jours")}, à donner à la DSI :<br><code class="big">${code}</code><br>Il ne sera plus affiché.`, "ok"));
