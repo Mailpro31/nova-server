@@ -1,6 +1,6 @@
 import { reportKey } from "./signalements";
-import { ago, escape, loadFleet, num, LICENCE_LABEL, type FleetResult, type Report } from "../dashboard";
-import { empty, eventRow, kpi, pill, when, type Ctx, type Page } from "../shell";
+import { ago, escape, loadFleet, num, plural, LICENCE_LABEL, type FleetResult, type Report } from "../dashboard";
+import { auditDetail, empty, eventRow, kpi, pill, when, type Ctx, type Page } from "../shell";
 
 type Tone = "bad" | "warn" | "accent" | "neutral";
 export interface Todo { tone: Tone; title: string; detail: string; href: string }
@@ -16,7 +16,6 @@ export interface TodoInput {
 const DAY = 86400;
 const ORDER: Record<Tone, number> = { bad: 0, warn: 1, accent: 2, neutral: 3 };
 const LABEL: Record<Tone, string> = { bad: "Urgent", warn: "À surveiller", accent: "À trancher", neutral: "Info" };
-const plural = (n: number, one: string, many: string) => `${n} ${n > 1 ? many : one}`;
 const school = (id: string) => `/ecoles/${encodeURIComponent(id)}`;
 const day = (s: number) => new Date(s * 1000).toLocaleDateString("fr-FR", { timeZone: "Europe/Paris", day: "numeric", month: "long", year: "numeric" });
 const parts = (v: string) => v.split(".").map((n) => parseInt(n, 10) || 0);
@@ -107,7 +106,7 @@ ${kpi("Signalements à traiter", f ? num(untreated(f.reports, treated, ctx.now).
     : `<div class="empty">${pill("ok", "OK")} Rien à faire : tout va bien.</div>`;
 
   const events = [
-    ...audits.map((a) => ({ at: a.at, html: `<strong>${escape(a.action)}</strong> <span class="muted">par ${escape(a.by)}${a.detail ? ` · ${escape(a.detail)}` : ""}</span>` })),
+    ...audits.map((a) => ({ at: a.at, html: `<strong>${escape(a.action)}</strong> <span class="muted">par ${escape(a.by)}${a.detail ? ` · ${escape(auditDetail(a.action, a.detail))}` : ""}</span>` })),
     ...journal.map((j) => ({ at: j.at, html: `${pill(j.result === "ok" ? "ok" : j.result === "echec" ? "bad" : "neutral", j.result)} <strong>${escape(j.title)}</strong> <span class="muted">par Claude</span>` })),
   ].sort((a, b) => b.at - a.at).slice(0, 5);
   const activity = events.length

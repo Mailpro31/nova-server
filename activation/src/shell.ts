@@ -77,6 +77,11 @@ export const NAV: { group: string; items: { id: PageId; label: string; href: str
 
 export const pill = (tone: "ok" | "warn" | "bad" | "neutral" | "accent", text: string) => `<span class="pill ${tone}">${escape(text)}</span>`;
 export const when = (s: number) => new Date(s * 1000).toLocaleString("fr-FR", { timeZone: "Europe/Paris", dateStyle: "medium", timeStyle: "short" });
+/** Détail d'une ligne du journal : une clé de signalement « école:horodatage en ms » devient « école · date de Paris ». */
+export const auditDetail = (action: string, detail: string | null): string => {
+  const m = action.startsWith("Signalement") ? /^(.+):(\d{10,})$/.exec(detail ?? "") : null;
+  return m ? `${m[1]} · ${when(Number(m[2]) / 1000)}` : detail ?? "";
+};
 export const kpi = (label: string, value: string, hint = "", href = "") =>
   `<${href ? `a href="${escape(href)}"` : "div"} class="kpi">${`<div class="kpi-label">${escape(label)}</div><div class="kpi-value">${value}</div>${hint ? `<div class="kpi-hint">${hint}</div>` : ""}`}</${href ? "a" : "div"}>`;
 export const stat = (label: string, value: string) => `<div class="stat"><span>${escape(label)}</span><strong>${value}</strong></div>`;

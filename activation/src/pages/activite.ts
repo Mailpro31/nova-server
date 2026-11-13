@@ -1,6 +1,6 @@
 // Activité : un seul fil chronologique, actions faites dans la console (console_audit) et actions de Claude (pilot_journal).
 import { escape } from "../dashboard";
-import { empty, eventRow, pill, type Page } from "../shell";
+import { auditDetail, empty, eventRow, pill, type Page } from "../shell";
 
 const PER_PAGE = 50;
 const TZ = "Europe/Paris";
@@ -27,7 +27,7 @@ export const activite: Page = {
   async render(ctx) {
     const asked = ctx.url.searchParams.get("source") ?? "";
     const source = SOURCES.some(([v]) => v === asked) ? asked : "tout";
-    const page = Math.max(1, Math.floor(Number(ctx.url.searchParams.get("page"))) || 1);
+    const page = Math.min(100000, Math.max(1, Math.floor(Number(ctx.url.searchParams.get("page"))) || 1));
     const { results } = await ctx.env.DB.prepare(
       `SELECT * FROM (
          SELECT 'console' AS src, id, at, by AS who, action AS title, detail, NULL AS result, NULL AS kind FROM console_audit
@@ -46,7 +46,7 @@ export const activite: Page = {
       if (label !== current) { list += `${current ? "</div>" : ""}<h2>${escape(label)}</h2><div class="card flush">`; current = label; }
       const [tone, text] = RESULT[r.result ?? ""] ?? ["neutral", r.result ?? ""];
       const claude = r.src === "claude";
-      list += eventRow(`${claude ? `<span class="chip">${escape(r.kind)}</span> ${pill(tone, text)} ` : ""}<strong>${escape(r.title)}</strong> <span class="muted">par ${escape(r.who)}${r.detail ? ` · ${escape(r.detail)}` : ""}${claude ? ` · <a href="/claude?vue=journal">voir le journal</a>` : ""}</span>`, time(r.at));
+      list += eventRow(`${claude ? `<span class="chip">${escape(r.kind)}</span> ${pill(tone, text)} ` : ""}<strong>${escape(r.title)}</strong> <span class="muted">par ${escape(r.who)}${r.detail ? ` · ${escape(auditDetail(r.title, r.detail))}` : ""}${claude ? ` · <a href="/claude?vue=journal">voir le journal</a>` : ""}</span>`, time(r.at));
     }
     list = rows.length ? `${list}</div>` : empty("Aucune activité.");
 
