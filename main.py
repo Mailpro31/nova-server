@@ -7069,7 +7069,8 @@ def control_group_visibility(
 def control_group_members(
     organization_id: str,
     group_id: str,
-    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_ORGANIZATION_READ)),
+    # Des adresses : reservees a qui peut gerer ces groupes, pas a tout lecteur.
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_GROUP_MEMBERS_MANAGE)),
 ):
     require_organization_access(principal, organization_id)
     with db() as conn:
@@ -9888,7 +9889,8 @@ def control_list_members(
     query: str = "",
     status: str = "",
     limit: int = MEMBER_PAGE_DEFAULT,
-    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_IDENTITY_MANAGE)),
+    # La gestion des acces doit retrouver une personne pour l'ajouter a un groupe.
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_GROUP_MEMBERS_MANAGE)),
 ):
     """Recherche et liste paginee des comptes de l'organisation.
 
@@ -9929,8 +9931,14 @@ def control_list_members(
         ).fetchone()["c"]
 
     has_more = len(rows) > limit
+    if principal.can(CAPABILITY_IDENTITY_MANAGE):
+        views = [member_view(row) for row in rows[:limit]]
+    else:
+        # Un role qui ne gere que les groupes voit qui est qui, rien de la fiche
+        # (ni note, ni type, ni fournisseur).
+        views = [{"user_id": row["user_id"], "email": row["email"]} for row in rows[:limit]]
     return {
-        "members": [member_view(row) for row in rows[:limit]],
+        "members": views,
         "has_more": has_more,
         "limit": limit,
         "total": total,
@@ -10351,7 +10359,8 @@ def control_delete_group_rule(
 def control_preview_group_rule(
     organization_id: str,
     body: GroupRuleRequest,
-    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_ORGANIZATION_READ)),
+    # L'apercu nomme des adresses : meme droit que la liste des membres.
+    principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_IDENTITY_MANAGE)),
 ):
     """Qui serait range, sans rien ecrire. Le groupe vise n'est pas exige ici."""
     require_organization_access(principal, organization_id)
@@ -10468,8 +10477,10 @@ def _read_csv(content: bytes) -> list[list[str]]:
             text = content.decode("latin-1")
         except UnicodeDecodeError:
             raise auth_error(400, "IMPORT_FILE_UNSUPPORTED") from None
-    sample = text[:4096]
-    delimiter = ";" if sample.count(";") > sample.count(",") else ","
+    # L'en-tete seul decide : les cellules d'un groupe peuvent contenir des « ; »
+    # ou des « , » (« Aero 2; Club; Robotique ») sans changer le separateur.
+    header = text.lstrip().splitlines()[0] if text.strip() else ""
+    delimiter = ";" if header.count(";") > header.count(",") else ","
     return [row for row in csv.reader(io.StringIO(text), delimiter=delimiter)]
 
 
@@ -10507,6 +10518,7 @@ def plan_member_import(conn, organization_id: str, rows: list[dict], mode: str) 
     wanted: dict[str, set[str]] = {}
     accounts: dict[str, dict] = {}
     to_create: list[str] = []
+    canonical: dict[str, str] = {}
 
     for row in rows:
         email = row["email"]
@@ -10521,18 +10533,28 @@ def plan_member_import(conn, organization_id: str, rows: list[dict], mode: str) 
             invalid.append({"line": row["line"], "code": "MEMBER_ROLE_INVALID"})
             continue
         refused = False
+        names: list[str] = []
         for name in row["groups"]:
+            if len(name) > MAX_GROUP_NAME:
+                invalid.append({"line": row["line"], "code": "GROUP_NAME_INVALID"})
+                refused = True
+                break
             existing = groups.get(name.casefold())
             if existing is not None and existing["source"] != GROUP_SOURCE_CONSOLE:
                 invalid.append({"line": row["line"], "code": "GROUP_MANAGED_BY_DIRECTORY"})
                 refused = True
                 break
+            # « Aero 2 » et « aero 2 » sont un seul groupe, comme a la creation
+            # a la main : la premiere graphie rencontree fait foi.
+            name = existing["display_name"] if existing else canonical.setdefault(
+                name.casefold(), name)
             if existing is None and name not in to_create:
                 to_create.append(name)
+            names.append(name)
         if refused:
             continue
         accounts[normalize_email(email)] = {"email": email, "member_role": role}
-        for name in row["groups"]:
+        for name in names:
             wanted.setdefault(name, set()).add(normalize_email(email))
 
     known = {
