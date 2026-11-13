@@ -80,3 +80,8 @@ CREATE TABLE IF NOT EXISTS report_status (
   at         INTEGER NOT NULL,
   by         TEXT NOT NULL
 );
+-- Jetons des formulaires de création de code : un rechargement ne recrée rien.
+CREATE TABLE IF NOT EXISTS form_nonces (
+  nonce TEXT PRIMARY KEY,
+  at    INTEGER NOT NULL
+);

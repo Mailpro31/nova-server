@@ -84,7 +84,7 @@ async function view(ctx: Ctx, message = ""): Promise<View | Response> {
     notice: message || renewNotice,
     body: `<div class="kpis">${kpi("Codes en attente", String(count("attente")))}${kpi("Codes activés", String(count("actives")))}${kpi("Codes expirés sans usage", String(count("expires")))}</div>
 <div class="grid"><article class="card" id="nouveau"><header><h3>Nouveau code d'activation</h3></header><p class="muted">À usage unique : la DSI le colle dans NOVA_ACTIVATION_CODE.</p>
-<form method="post" action="/codes">
+<form method="post" action="/codes"><input type="hidden" name="nonce" value="${crypto.randomUUID()}">
 <label>Établissement<input name="organization" required maxlength="100" value="${escape(v.organization)}"></label>
 <label>Offre (tranche)<input name="tier" required maxlength="40" placeholder="151-250" value="${escape(v.tier)}"></label>
 <label>Type<select name="kind"><option value="pilot"${v.kind === "pilot" ? " selected" : ""}>Pilote</option><option value="subscription"${v.kind !== "pilot" ? " selected" : ""}>Abonnement</option></select></label>
@@ -112,6 +112,10 @@ async function create(ctx: Ctx, form: FormData): Promise<Response> {
   const problem = invalid(r);
   if (problem) return show(notice(escape(problem), "bad"));
   if (!ctx.env.SIGNING_KEY) return show(notice("Clé de signature absente (secret SIGNING_KEY).", "bad"));
+  // Recharger la page renvoie le même jeton : aucun second code.
+  const nonce = text("nonce").slice(0, 64);
+  if (nonce && !(await ctx.env.DB.prepare("INSERT OR IGNORE INTO form_nonces (nonce, at) VALUES (?, ?)").bind(nonce, ctx.now).run()).meta.changes)
+    return show(notice("Ce code a déjà été créé ; il n'est pas affiché une seconde fois. S'il est perdu, révoquez-le et créez-en un autre."));
   const code = newCode();
   await ctx.env.DB.prepare("INSERT INTO codes (code_hash, licence, school, expires_at) VALUES (?, ?, ?, ?)")
     .bind(await sha256Hex(normalizeCode(code)), await signLicence(ctx.env.SIGNING_KEY, r), r.organization.trim(), ctx.now + days * DAY)

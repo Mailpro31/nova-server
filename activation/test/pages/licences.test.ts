@@ -199,3 +199,16 @@ describe("signalements", () => {
     expect(await text(g, "/signalements")).toContain("Grafana Cloud ne répond pas");
   });
 });
+
+describe("création de code", () => {
+  it("recharger la page après « Créer le code » ne crée pas de second code", async () => {
+    const h = await harness();
+    const nonce = /name="nonce" value="([^"]+)"/.exec(await text(h, "/licences"))![1];
+    const form = { nonce, organization: "IPSA", tier: "151-250", kind: "pilot", starts: "2026-11-13", ends: "2026-12-13", code_days: "7" };
+    expect(await (await post(h, "/codes", form)).text()).toContain('class="big"');
+    const again = await (await post(h, "/codes", form)).text();
+    expect(again).not.toContain('class="big"');
+    expect(again).toContain("déjà été créé");
+    expect(await h.env.DB.prepare("SELECT COUNT(*) AS n FROM codes").first()).toEqual({ n: 1 });
+  });
+});
