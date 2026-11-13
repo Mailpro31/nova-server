@@ -48,3 +48,13 @@ describe("console in French", () => {
     expect(fr.groups.memberCount(2)).toBe("2 membres");
   });
 });
+
+describe("singulier des durées et des effectifs", () => {
+  test("un jour, une personne, un membre", () => {
+    expect(fr.subscription.alerts.warning(1)).toContain("dans 1 jour.");
+    expect(fr.subscription.alerts.grace(1)).toContain("encore 1 jour ;");
+    expect(fr.subscription.gauge(1, 50)).toStartWith("1 personne sur");
+    expect(fr.members.count(1, 12)).toBe("1 membre sur 12");
+    expect(t.subscription.alerts.warning(1)).not.toContain("1 days");
+  });
+});

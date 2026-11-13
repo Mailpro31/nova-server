@@ -311,7 +311,7 @@ export const fr: Messages = {
     filterActive: "Actifs",
     filterDisabled: "Suspendus",
     none: "Aucun membre ne correspond.",
-    count: (shown: number, total: number) => `${shown} membres sur ${total}`,
+    count: (shown: number, total: number) => `${shown} ${shown <= 1 ? "membre" : "membres"} sur ${total}`,
     more: "Affinez la recherche pour voir les autres.",
     memberType: "Type",
     groups: "Groupes",
@@ -1002,11 +1002,11 @@ export const fr: Messages = {
     daysLeft: "Jours restants",
     activeMonth: "Personnes actives ce mois-ci",
     activeYear: (since: string) => `Personnes actives depuis le ${since}`,
-    gauge: (active: number, seats: number) => `${active} personnes sur ${seats} dans votre palier ce mois-ci`,
+    gauge: (active: number, seats: number) => `${active} ${active <= 1 ? "personne" : "personnes"} sur ${seats} dans votre palier ce mois-ci`,
     alerts: {
-      warning: (days: number) => `La licence se termine dans ${days} jours. Contactez l'éditeur pour la renouveler.`,
+      warning: (days: number) => `La licence se termine dans ${days} ${days <= 1 ? "jour" : "jours"}. Contactez l'éditeur pour la renouveler.`,
       grace: (days: number) =>
-        `La licence est terminée. Tout fonctionne encore ${days} jours ; ensuite, la bulle de sélection, Nova Commands et les AI Skills se mettent en pause. La dictée ne s'arrête jamais.`,
+        `La licence est terminée. Tout fonctionne encore ${days} ${days <= 1 ? "jour" : "jours"} ; ensuite, la bulle de sélection, Nova Commands et les AI Skills se mettent en pause. La dictée ne s'arrête jamais.`,
       expired:
         "La licence est terminée et son délai de grâce est passé : la bulle de sélection, Nova Commands et les AI Skills sont en pause. La dictée et les Styles fonctionnent.",
       invalid:

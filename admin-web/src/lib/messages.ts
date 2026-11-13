@@ -1039,9 +1039,9 @@ const en = {
     activeYear: (since: string) => `Active people since ${since}`,
     gauge: (active: number, seats: number) => `${active} of ${seats} people in your tier this month`,
     alerts: {
-      warning: (days: number) => `The licence ends in ${days} days. Contact your provider to renew it.`,
+      warning: (days: number) => `The licence ends in ${days} ${days === 1 ? "day" : "days"}. Contact your provider to renew it.`,
       grace: (days: number) =>
-        `The licence has ended. Everything keeps working for ${days} more days; after that, the selection bubble, Nova Commands and AI Skills pause. Dictation never stops.`,
+        `The licence has ended. Everything keeps working for ${days} more ${days === 1 ? "day" : "days"}; after that, the selection bubble, Nova Commands and AI Skills pause. Dictation never stops.`,
       expired:
         "The licence has ended and its grace period is over: the selection bubble, Nova Commands and AI Skills are paused. Dictation and Styles keep working.",
       invalid:
