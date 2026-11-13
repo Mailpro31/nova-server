@@ -66,7 +66,7 @@ export function bars(points: [number, number][], unit: string): string {
   const last = new Date(points[points.length - 1][0] * 1000).toISOString().slice(5, 10);
   return `<svg class="chart" viewBox="0 0 ${w} ${h + 16}" role="img" aria-label="${escape(unit)} par jour">
 <text x="0" y="10" class="axis">max ${escape(num(max, 2))} ${escape(unit)}</text>${rects}
-<text x="0" y="${h + 14}" class="axis">${first}</text><text x="${w}" y="${h + 14}" class="axis" text-anchor="end">${last}</text></svg>`;
+<line x1="0" x2="${w}" y1="${h}" y2="${h}" class="base"/><text x="0" y="${h + 14}" class="axis">${first}</text><text x="${w}" y="${h + 14}" class="axis" text-anchor="end">${last}</text></svg>`;
 }
 
 const points = (series: Series[] | null, school: string): [number, number][] =>
@@ -102,9 +102,19 @@ async function reports(env: MetricsEnv, now: number): Promise<Report[] | null> {
 
 // ------------------------------------------------------------ sections
 
+type Tone = "ok" | "warn" | "bad" | "neutral";
+const pill = (tone: Tone, text: string) => `<span class="pill ${tone}">${text}</span>`;
+const LICENCE_TONE: Record<string, Tone> = {
+  valid: "ok", warning: "warn", grace: "warn", expired: "bad", none: "neutral", invalid: "bad",
+};
+const kpi = (label: string, value: string, hint = "") =>
+  `<div class="kpi"><div class="kpi-label">${label}</div><div class="kpi-value">${value}</div>${hint ? `<div class="kpi-hint">${hint}</div>` : ""}</div>`;
+const stat = (label: string, value: string) => `<div class="stat"><span>${label}</span><strong>${value}</strong></div>`;
+const total = (values: Record<string, number>) => Object.values(values).reduce((x, y) => x + y, 0);
+
 export async function dashboard(env: MetricsEnv, now: number): Promise<string> {
   if (!env.GRAFANA_READ_TOKEN) {
-    return `<section><h2>Écoles</h2><p>Jeton de lecture Grafana absent (secret GRAFANA_READ_TOKEN).</p></section>`;
+    return `<section id="ecoles"><h2>Écoles</h2><p class="empty">Jeton de lecture Grafana absent (secret GRAFANA_READ_TOKEN).</p></section>`;
   }
   const [seen, server, apps, members, active, dictations, licence, days, spend, envelope, tokens, dictSeries, latency, support] =
     await Promise.all([
@@ -123,49 +133,71 @@ export async function dashboard(env: MetricsEnv, now: number): Promise<string> {
       range(env, 'histogram_quantile(0.95, sum by (school, le) (rate(nova_stage_seconds_bucket{stage="transcription"}[1d])))', now, 14),
       reports(env, now),
     ]);
-  if (!seen) return `<section><h2>Écoles</h2><p>Grafana Cloud ne répond pas : réessayez dans un instant.</p></section>`;
+  if (!seen) return `<section id="ecoles"><h2>Écoles</h2><p class="empty">Grafana Cloud ne répond pas : réessayez dans un instant.</p></section>`;
 
   const last = bySchool(seen);
   const schools = Object.keys(last).sort();
   const m = bySchool(members), a = bySchool(active), d = bySchool(dictations), dl = bySchool(days);
   const sp = bySchool(spend), en = bySchool(envelope), tk = bySchool(tokens);
+  const online = schools.filter((s) => now - last[s] < 600).length;
+  const week = (support ?? []).filter((r) => now - r.at < 7 * DAY).length;
 
-  const rows = schools.map((school) => {
+  const overview = `<div class="kpis">
+${kpi("Écoles en ligne", `${online}<small> / ${schools.length}</small>`, online < schools.length ? pill("bad", "Une école ne répond plus") : pill("ok", "Tout répond"))}
+${kpi("Élèves actifs ce mois", num(total(a)))}
+${kpi("Dictées sur 24 h", num(total(d)))}
+${kpi("Dépense d'IA du mois", `${num(total(sp), 2)} €`)}
+${kpi("Signalements sur 7 j", support === null ? "—" : num(week), week ? pill("warn", "À lire plus bas") : "")}
+</div>`;
+
+  const cards = schools.map((school) => {
     const silent = now - last[school];
-    const status = silent < 600 ? `<span class="ok">En ligne</span>` : `<span class="bad">Muet depuis ${ago(silent)}</span>`;
+    const status = silent < 600 ? pill("ok", "En ligne") : pill("bad", `Muet depuis ${ago(silent)}`);
     const version = server?.find((s) => s.metric.school === school)?.metric.server_version ?? "—";
     const posts = (apps ?? []).filter((s) => s.metric.school === school && Number(s.value[1]) > 0)
-      .map((s) => `${escape(s.metric.version)} ×${num(Number(s.value[1]))}`).join(", ") || "—";
+      .map((s) => `<span class="chip">${escape(s.metric.version)} ×${num(Number(s.value[1]))}</span>`).join(" ") || "—";
     const lic = licence?.find((s) => s.metric.school === school)?.metric;
-    const licText = lic ? `${LICENCE_LABEL[lic.status] ?? escape(lic.status)}${lic.tier !== "none" ? ` · ${escape(lic.tier)}` : ""}${dl[school] !== undefined ? ` · ${num(dl[school])} j` : ""}` : "—";
-    return `<tr><td>${escape(school)}</td><td>${status}</td><td>${escape(version)}</td><td>${posts}</td><td>${num(m[school])}</td><td>${num(a[school])}</td><td>${num(d[school])}</td><td>${licText}</td></tr>`;
+    const licText = lic
+      ? pill(LICENCE_TONE[lic.status] ?? "neutral", `${LICENCE_LABEL[lic.status] ?? escape(lic.status)}${lic.tier !== "none" ? ` · ${escape(lic.tier)}` : ""}${dl[school] !== undefined ? ` · ${num(dl[school])} j` : ""}`)
+      : "—";
+    return `<article class="card"><header><h3>${escape(school)}</h3>${status}</header>
+<div class="stats">${stat("Comptes actifs", num(m[school]))}${stat("Élèves actifs (mois)", num(a[school]))}${stat("Dictées 24 h", num(d[school]))}</div>
+<dl><dt>Licence</dt><dd>${licText}</dd><dt>Serveur</dt><dd>${escape(version)}</dd><dt>Postes</dt><dd>${posts}</dd></dl></article>`;
   }).join("");
 
-  const usage = schools.map((school) => `<h3>${escape(school)}</h3><div class="charts">
-<figure><figcaption>Dictées par jour (14 j)</figcaption>${bars(points(dictSeries, school), "dictées")}</figure>
-<figure><figcaption>Temps de transcription, 95 % des dictées (s)</figcaption>${bars(points(latency, school), "s")}</figure></div>`).join("");
+  const usage = schools.map((school) => `<article class="card"><header><h3>${escape(school)}</h3></header><div class="charts">
+<figure><figcaption>Dictées par jour</figcaption>${bars(points(dictSeries, school), "dictées")}</figure>
+<figure><figcaption>Temps de transcription (95 % des dictées, en s)</figcaption>${bars(points(latency, school), "s")}</figure></div></article>`).join("");
 
   const ai = schools.map((school) => {
     const month = en[school] !== undefined ? en[school] / 12 : undefined;
-    const share = month ? `${num((100 * (sp[school] ?? 0)) / month)} %` : "—";
-    return `<tr><td>${escape(school)}</td><td>${num(sp[school], 2)} €</td><td>${en[school] !== undefined ? `${num(en[school])} €` : "Non fixée"}</td><td>${month ? `${num(month, 2)} €` : "—"}</td><td>${share}</td><td>${num(tk[school])}</td></tr>`;
+    const ratio = month ? (sp[school] ?? 0) / month : undefined;
+    const tone: Tone = ratio === undefined ? "neutral" : ratio > 1 ? "bad" : ratio > 0.8 ? "warn" : "ok";
+    const meter = ratio === undefined ? `<p class="muted">Pas d'enveloppe dans la licence.</p>`
+      : `<div class="meter ${tone}"><div style="width:${Math.min(100, ratio * 100).toFixed(0)}%"></div></div>`;
+    return `<article class="card"><header><h3>${escape(school)}</h3>${ratio === undefined ? "" : pill(tone, `${num(ratio * 100)} %`)}</header>${meter}
+<div class="stats">${stat("Dépensé ce mois", `${num(sp[school], 2)} €`)}${stat("Part du mois", month ? `${num(month, 2)} €` : "—")}${stat("Enveloppe annuelle", en[school] !== undefined ? `${num(en[school])} €` : "Non fixée")}${stat("Jetons (30 j)", num(tk[school]))}</div></article>`;
   }).join("");
 
-  const supportRows = support === null
-    ? `<p>Les journaux ne sont pas lisibles avec ce jeton : ajoutez le droit <em>logs:read</em> à sa politique d'accès Grafana Cloud.</p>`
+  const supportList = support === null
+    ? `<p class="empty">Les journaux ne sont pas lisibles avec ce jeton : ajoutez le droit <em>logs:read</em> à sa politique d'accès Grafana Cloud.</p>`
     : support.length === 0
-      ? `<p>Aucun signalement depuis 30 jours.</p>`
-      : `<div class="scroll"><table><thead><tr><th>Date</th><th>École</th><th>Version</th><th>Moteurs à surveiller</th><th>Dernière erreur</th><th>Description</th></tr></thead><tbody>${
-        support.map((r) => {
-          const engines = Object.entries((r.line.engines ?? {}) as Record<string, string>)
-            .filter(([, v]) => v !== "ok").map(([k, v]) => `${escape(k)} : ${escape(v)}`).join(", ") || "Tout va bien";
-          return `<tr><td>${new Date(r.at * 1000).toISOString().slice(0, 16).replace("T", " ")}</td><td>${escape(r.school)}</td><td>${escape(r.line.app_version)}</td><td>${engines}</td><td>${escape(r.line.last_error) || "—"}</td><td>${escape(r.line.description) || "—"}</td></tr>`;
-        }).join("")}</tbody></table></div>`;
+      ? `<p class="empty">Aucun signalement depuis 30 jours.</p>`
+      : `<ul class="reports">${support.map((r) => {
+        const engines = Object.entries((r.line.engines ?? {}) as Record<string, string>).filter(([, v]) => v !== "ok");
+        const chips = engines.length
+          ? engines.map(([k, v]) => pill(v === "error" ? "bad" : "warn", `${escape(k)} : ${escape(v)}`)).join(" ")
+          : pill("ok", "Tout va bien");
+        const when = new Date(r.at * 1000).toLocaleString("fr-FR", { timeZone: "Europe/Paris", dateStyle: "medium", timeStyle: "short" });
+        const description = String(r.line.description ?? "").trim();
+        return `<li class="card"><header><strong>${escape(r.school)}</strong><span class="chip">Nova ${escape(r.line.app_version)}</span><time>${escape(when)}</time></header>
+${description ? `<blockquote>${escape(description)}</blockquote>` : `<p class="muted">Sans description.</p>`}
+<div class="chips">${chips}${r.line.last_error ? ` ${pill("bad", `Erreur : ${escape(r.line.last_error)}`)}` : ""}</div></li>`;
+      }).join("")}</ul>`;
 
-  return `<section><h2>Écoles</h2><div class="scroll"><table><thead><tr><th>École</th><th>Serveur</th><th>Version</th><th>Postes</th><th>Comptes actifs</th><th>Élèves actifs (mois)</th><th>Dictées 24 h</th><th>Licence</th></tr></thead>
-<tbody>${rows || `<tr><td colspan="8">Aucune école ne remonte de mesures.</td></tr>`}</tbody></table></div></section>
-<section><h2>Usage</h2>${usage}</section>
-<section><h2>Coûts d'IA</h2><p>Mois en cours, comparé au douzième de l'enveloppe annuelle de la licence.</p><div class="scroll"><table><thead><tr><th>École</th><th>Dépensé ce mois</th><th>Enveloppe annuelle</th><th>Part du mois</th><th>Consommé</th><th>Jetons (30 j)</th></tr></thead>
-<tbody>${ai}</tbody></table></div></section>
-<section><h2>Signalements (30 j)</h2>${supportRows}</section>`;
+  return `<section id="apercu">${overview}</section>
+<section id="ecoles"><h2>Écoles</h2><div class="grid">${cards || `<p class="empty">Aucune école ne remonte de mesures.</p>`}</div></section>
+<section id="usage"><h2>Usage <small>14 derniers jours</small></h2><div class="stack">${usage}</div></section>
+<section id="ia"><h2>Coûts d'IA</h2><p class="lead">Dépense du mois comparée au douzième de l'enveloppe annuelle.</p><div class="grid">${ai}</div></section>
+<section id="signalements"><h2>Signalements <small>30 derniers jours</small></h2>${supportList}</section>`;
 }
