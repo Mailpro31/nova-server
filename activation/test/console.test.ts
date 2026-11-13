@@ -132,7 +132,7 @@ describe("règles", () => {
 describe("pilotage de Claude", () => {
   const send = async (path: string, fields: Record<string, string>, origin = ORIGIN) =>
     call(path, { method: "POST", token: await goodToken(), body: form(fields), headers: { "content-type": "application/x-www-form-urlencoded", origin } });
-  const pageText = async () => (await call("/claude", { token: await goodToken() })).text();
+  const pageText = async (vue = "") => (await call(`/claude${vue}`, { token: await goodToken() })).text();
 
   it("met en pause puis relance, avec l'auteur", async () => {
     expect((await send("/pilot/pause", { paused: "1" })).status).toBe(303);
@@ -152,9 +152,9 @@ describe("pilotage de Claude", () => {
   it("retient puis relâche une PR, refuse un dépôt invalide", async () => {
     await env.DB.prepare("INSERT INTO pilot_prs VALUES ('nova-server', 12, 'feat: x', 'vert', 'https://github.com/x', ?)").bind(NOW).run();
     await send("/pilot/hold", { repo: "nova-server", number: "12", hold: "1", reason: "attend Sash" });
-    expect(await pageText()).toContain("Retenue : attend Sash");
+    expect(await pageText("?vue=pr")).toContain("Retenue : attend Sash");
     await send("/pilot/hold", { repo: "nova-server", number: "12", hold: "0" });
-    expect(await pageText()).toContain("Autorisée si verte");
+    expect(await pageText("?vue=pr")).toContain("Autorisée si verte");
     expect((await send("/pilot/hold", { repo: "../x", number: "1", hold: "1" })).status).toBe(400);
   });
   it("répond une seule fois à une question, et montre le rapport détaillé du journal", async () => {
@@ -163,7 +163,7 @@ describe("pilotage de Claude", () => {
     await send("/pilot/answer", { id: "1", answer: "12 €" });
     await send("/pilot/answer", { id: "1", answer: "autre" });
     expect(await env.DB.prepare("SELECT answer FROM pilot_questions").first()).toEqual({ answer: "12 €" });
-    const html = await pageText();
+    const html = await pageText("?vue=journal");
     expect(html).toContain("Rapport détaillé");
     expect(html).toContain("journal: &#60;err&#62;");
   });
