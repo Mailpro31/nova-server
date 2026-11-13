@@ -168,3 +168,10 @@ describe("pilotage de Claude", () => {
     expect(html).toContain("journal: &#60;err&#62;");
   });
 });
+
+describe("en-têtes", () => {
+  it("garde l'origine des formulaires (Chrome envoie Origin: null avec no-referrer)", async () => {
+    const response = await call("/", { token: await goodToken() });
+    expect(response.headers.get("referrer-policy")).toBe("same-origin");
+  });
+});

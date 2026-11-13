@@ -94,7 +94,8 @@ const HEADERS = {
   "content-type": "text/html; charset=utf-8",
   "cache-control": "no-store",
   "x-frame-options": "DENY",
-  "referrer-policy": "no-referrer",
+  // same-origin et non no-referrer : avec no-referrer, Chrome envoie « Origin: null » sur les formulaires, refusés.
+  "referrer-policy": "same-origin",
   "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; img-src data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
 };
 
