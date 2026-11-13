@@ -77,10 +77,27 @@ export function bars(points: [number, number][], unit: string): string {
 <div class="axis ends"><span>${escape(dayName(points[0][0], false))}</span><span>${escape(dayName(points[points.length - 1][0], false))}</span></div></div>`;
 }
 
-const points = (series: Series[] | null, school: string): [number, number][] =>
-  (series?.find((s) => s.metric.school === school)?.values ?? [])
-    .map(([t, v]) => [t, Number(v)] as [number, number])
-    .filter(([, v]) => Number.isFinite(v));
+const finite = (rows: [number, string][]) => rows.map(([t, v]) => [t, Number(v)] as [number, number]).filter(([, v]) => Number.isFinite(v));
+
+// Heure de Paris d'un instant, exprimée comme un horodatage UTC (pour calculer minuit sans table de fuseaux).
+const parisClock = (t: number) => {
+  const p = Object.fromEntries(new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Paris", hourCycle: "h23", year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric", second: "numeric" })
+    .formatToParts(new Date(t * 1000)).map((x) => [x.type, Number(x.value)]));
+  return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second) / 1000;
+};
+/** Dernier minuit de Paris (23 h ou 25 h après le précédent les jours de changement d'heure). */
+const parisMidnight = (now: number) => {
+  const local = Math.floor(parisClock(now) / DAY) * DAY;
+  const guess = local - (parisClock(now) - now);
+  return local - (parisClock(guess) - guess);
+};
+
+/** Une valeur par jour calendaire de Paris : les jours finis (points à minuit, fenêtre 1 j, étiquetés à midi du jour couvert), puis aujourd'hui depuis minuit. */
+const daily = (done: Series[] | null, today: Sample[] | null, school: string, now: number): [number, number][] => {
+  const past = finite(done?.find((s) => s.metric.school === school)?.values ?? []).map(([t, v]) => [t - DAY / 2, v] as [number, number]);
+  const cur = today?.find((s) => s.metric.school === school);
+  return cur && Number.isFinite(Number(cur.value[1])) ? [...past, [now, Number(cur.value[1])]] : past;
+};
 
 // ------------------------------------------------------------ signalements
 
@@ -132,7 +149,7 @@ export interface SchoolData {
   spendMonth?: number;             // € dépensés ce mois
   envelopeAnnual?: number;         // € par an, si la licence en porte une
   tokens30d?: number;
-  dictSeries: [number, number][];  // dictées par jour, 14 jours
+  dictSeries: [number, number][];  // dictées par jour de Paris, 13 jours finis + aujourd'hui
   latencySeries: [number, number][]; // p95 de la transcription (s) par jour, 14 jours
 }
 export interface Fleet { schools: SchoolData[]; reports: Report[] | null }
@@ -141,7 +158,8 @@ export type FleetResult = { ok: true; fleet: Fleet } | { ok: false; reason: "tok
 /** Lit tout Grafana Cloud en une passe (requêtes en parallèle). */
 export async function loadFleet(env: MetricsEnv, now: number): Promise<FleetResult> {
   if (!env.GRAFANA_READ_TOKEN) return { ok: false, reason: "token" };
-  const [seen, server, apps, members, active, dictations, licence, days, spend, envelope, tokens, dictSeries, latency, support] =
+  const midnight = parisMidnight(now), since = now - midnight;
+  const [seen, server, apps, members, active, dictations, licence, days, spend, envelope, tokens, dictSeries, latency, support, dictToday, latencyToday] =
     await Promise.all([
       instant(env, "max by (school) (timestamp(nova_uptime_seconds))"),
       instant(env, "max by (school, server_version) (nova_server_info)"),
@@ -154,9 +172,11 @@ export async function loadFleet(env: MetricsEnv, now: number): Promise<FleetResu
       instant(env, "max by (school) (nova_ai_spend_eur_month)"),
       instant(env, 'max by (school) (nova_ai_envelope_eur{kind="annual"})'),
       instant(env, "sum by (school) (increase(nova_ai_tokens_total[30d]))"),
-      range(env, 'sum by (school) (increase(nova_events_total{event="inference_transcribe"}[1d]))', now, 14),
-      range(env, 'histogram_quantile(0.95, sum by (school, le) (rate(nova_stage_seconds_bucket{stage="transcription"}[1d])))', now, 14),
+      range(env, 'sum by (school) (increase(nova_events_total{event="inference_transcribe"}[1d]))', midnight, 13),
+      range(env, 'histogram_quantile(0.95, sum by (school, le) (rate(nova_stage_seconds_bucket{stage="transcription"}[1d])))', midnight, 13),
       reports(env, now),
+      since >= 300 ? instant(env, `sum by (school) (increase(nova_events_total{event="inference_transcribe"}[${since}s]))`) : null,
+      since >= 300 ? instant(env, `histogram_quantile(0.95, sum by (school, le) (rate(nova_stage_seconds_bucket{stage="transcription"}[${since}s])))`) : null,
     ]);
   if (!seen) return { ok: false, reason: "grafana" };
   const last = bySchool(seen), m = bySchool(members), a = bySchool(active), d = bySchool(dictations), dl = bySchool(days);
@@ -171,7 +191,7 @@ export async function loadFleet(env: MetricsEnv, now: number): Promise<FleetResu
       members: m[id], activeMonth: a[id], dictations24h: d[id],
       licence: lic ? { status: lic.status, tier: lic.tier, daysLeft: dl[id] } : undefined,
       spendMonth: sp[id], envelopeAnnual: en[id], tokens30d: tk[id],
-      dictSeries: points(dictSeries, id), latencySeries: points(latency, id),
+      dictSeries: daily(dictSeries, dictToday, id, now), latencySeries: daily(latency, latencyToday, id, now),
     };
   });
   return { ok: true, fleet: { schools, reports: support } };

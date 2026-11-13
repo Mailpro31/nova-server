@@ -37,7 +37,7 @@ describe("données de la flotte", () => {
     const [ipsa] = r.fleet.schools;
     expect(ipsa).toMatchObject({ id: "ipsa", online: true, serverVersion: "0.2.0", spendMonth: 50, envelopeAnnual: 1200,
       licence: { status: "valid", tier: "151-250", daysLeft: 120 }, apps: [{ version: "1.0.82", count: 3 }] });
-    expect(ipsa.dictSeries).toEqual([[NOW - 86400, 4], [NOW, 7]]);
+    expect(ipsa.dictSeries).toEqual([[NOW - 86400 - 43200, 4], [NOW - 43200, 7]]); // points à minuit → étiquetés à midi du jour couvert
     expect(r.fleet.reports).toEqual([]);
   });
   it("marque hors ligne un serveur muet depuis plus de 10 minutes", async () => {
