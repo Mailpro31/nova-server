@@ -1,0 +1,19 @@
+# Console de l'éditeur : `npx wrangler deploy -c wrangler.console.toml`.
+name = "nova-console"
+main = "src/console.ts"
+compatibility_date = "2025-01-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "nova-activation"
+database_id = "8c90d9c1-0332-4bf3-b0c5-7eff32370e4d"
+
+[vars]
+GRAFANA_URL = "https://swiftalbatross2048.grafana.net"
+# Remplis une fois Cloudflare Access activé sur nova-console (Zero Trust) :
+# tant qu'ils sont vides, la console refuse tout le monde.
+ACCESS_TEAM_DOMAIN = ""
+ACCESS_AUD = ""
+
+# Secret SIGNING_KEY (clé privée en ligne) : `npx wrangler secret put SIGNING_KEY -c wrangler.console.toml`,
+# jamais écrit ici. Sa clé publique est ONLINE_PUBLIC_KEY_PEM dans licence.py.

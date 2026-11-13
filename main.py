@@ -3169,7 +3169,7 @@ def product_capability(capability: str | tuple[str, ...], feature: str):
 # serveur. Elle n'est pas secrète : elle est signée (`licence.py`).
 NOVA_LICENCE = activation.resolve_licence(
     os.getenv("NOVA_LICENCE", ""), os.getenv("NOVA_ACTIVATION_CODE", ""),
-    os.getenv("NOVA_ACTIVATION_URL", ""), DB_PATH.parent / "licence-activation.txt")
+    os.getenv("NOVA_ACTIVATION_URL") or licence.ACTIVATION_URL, DB_PATH.parent / "licence-activation.txt")
 # Ce qui s'arrête quand la licence est échue depuis plus que le délai de
 # grâce : les fonctions annexes. Jamais la dictée ni ses Styles.
 LICENCE_DEGRADED_CAPABILITIES = frozenset({"commands", "selectionBubble", "aiSkills"})
