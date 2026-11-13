@@ -1,4 +1,4 @@
-import { ago, bars, escape, loadFleet, LICENCE_LABEL, LICENCE_TONE, num, plural, type Fleet, type SchoolData } from "../dashboard";
+import { ago, bars, escape, loadFleet, LICENCE_LABEL, LICENCE_TONE, num, plural, text, type Fleet, type SchoolData } from "../dashboard";
 import { claimsOf } from "../licence";
 import { empty, pill, stat, when, type Ctx, type Page, type View } from "../shell";
 
@@ -54,7 +54,7 @@ async function detail(ctx: Ctx, fleet: Fleet, raw: string): Promise<View> {
   const part = envelope > 0 ? (s.spendMonth ?? 0) / envelope : 0;
   const tone = part <= 0.8 ? "ok" : part <= 1 ? "warn" : "bad";
   const reports = (fleet.reports ?? []).filter((r) => r.school === s.id).map((r) =>
-    `<li><header>${pill("neutral", String(r.line.app_version ?? "?"))}<time>${escape(when(r.at))}</time></header><blockquote>${escape(r.line.description ?? "")}</blockquote></li>`).join("");
+    `<li><header>${pill("neutral", text(r.line.app_version ?? "?"))}<time>${escape(when(r.at))}</time></header><blockquote>${escape(r.line.description ?? "")}</blockquote></li>`).join("");
   const codes = (await ctx.env.DB.prepare("SELECT school, licence, expires_at, used_at FROM codes ORDER BY expires_at DESC")
     .all<{ school: string; licence: string; expires_at: number; used_at: number | null }>()).results
     .filter((c) => c.school.trim().toLowerCase() === s.id.trim().toLowerCase());

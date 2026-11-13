@@ -13,8 +13,10 @@ type Sample = { metric: Record<string, string>; value: [number, string] };
 type Series = { metric: Record<string, string>; values: [number, string][] };
 
 const DAY = 86400;
-export const escape = (text: unknown) =>
-  String(text ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+/** Texte de n'importe quelle valeur JSON : String() lève une TypeError sur {"toString": 1} venu d'un journal. */
+export const text = (v: unknown) => (v !== null && typeof v === "object" ? JSON.stringify(v) : String(v ?? ""));
+export const escape = (v: unknown) =>
+  text(v).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
 async function get<T>(url: string, user: string, token: string): Promise<T | null> {
   try {
@@ -38,8 +40,9 @@ const range = (env: MetricsEnv, query: string, end: number, count: number) =>
   ).then((d) => d?.result ?? null);
 
 /** { école: valeur } pour une requête groupée par école. */
-const bySchool = (samples: Sample[] | null) =>
-  Object.fromEntries((samples ?? []).filter((s) => s.metric.school && Number.isFinite(Number(s.value[1]))).map((s) => [s.metric.school, Number(s.value[1])]));
+// Sans prototype : une école nommée « constructor » ne lit pas Object.prototype.constructor ; séries sans école ou non finies ignorées.
+const bySchool = (samples: Sample[] | null): Record<string, number> =>
+  Object.assign(Object.create(null), Object.fromEntries((samples ?? []).filter((s) => s.metric.school && Number.isFinite(Number(s.value[1]))).map((s) => [s.metric.school, Number(s.value[1])])));
 
 const num = (value: number | undefined, digits = 0) =>
   value === undefined || !Number.isFinite(value) ? "—" : value.toLocaleString("fr-FR", { maximumFractionDigits: digits });
