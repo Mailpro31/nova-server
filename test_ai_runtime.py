@@ -106,6 +106,21 @@ class ExternalApiTests(unittest.TestCase):
         self.assertEqual(router.text_backend.token, "texte")
         self.assertEqual(router.speech_backend.token, "commune")
 
+    def test_a_key_pasted_in_an_engine_url_never_reaches_the_log(self):
+        # « …?key=AIza… », comme l'API Gemini : l'adresse est refusée, mais elle
+        # était journalisée en entier juste avant.
+        env = {"NOVA_AI_ALLOW_PUBLIC_ENDPOINT": "1", "NOVA_AI_TEXT_MODEL": "m",
+               "NOVA_AI_TEXT_BASE_URL": "https://8.8.8.8/v1?key=AIzaSECRET",
+               "NOVA_AI_SPEECH_REFINE_BASE_URL": "https://8.8.8.8/v1?key=AIzaSECRET",
+               "NOVA_AI_SPEECH_REFINE_MODEL": "g"}
+        with patch.dict(os.environ, env), \
+                patch.object(ai_runtime.observability, "log") as log:
+            for build in (ai_runtime.router_from_environment,
+                          ai_runtime.audio_refiner_from_environment):
+                with self.assertRaises(AIRuntimeError):
+                    build()
+        self.assertNotIn("SECRET", repr(log.call_args_list))
+
 
 class AdapterTests(unittest.IsolatedAsyncioTestCase):
     async def test_openai_compatible_adapter_translates_the_stable_contract(self):

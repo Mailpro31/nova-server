@@ -1331,8 +1331,10 @@ def router_from_environment() -> OrganizationAIRouter:
     text_token = vertex_auth.token_from_environment() or text_token
     speech_token = secrets_provider.resolve_value(os.getenv("NOVA_AI_SPEECH_TOKEN", "")) or token
     if public_endpoint_allowed():
+        # L'hôte seul : une clé collée dans l'adresse (`?key=…`) n'est pas encore refusée ici.
         observability.log("ai.public_endpoint_allowed", level="warning",
-                          text_url=text_url, speech_url=speech_url)
+                          text_url=urlparse(text_url).hostname or "",
+                          speech_url=urlparse(speech_url).hostname or "")
     try:
         profile = ModelProfile(os.getenv("NOVA_AI_PROFILE", "standard").lower())
     except ValueError as error:
@@ -1519,7 +1521,8 @@ def audio_refiner_from_environment() -> AudioRefineBackend | None:
 
     token = (vertex_auth.token_from_environment()
              or secrets_provider.resolve_value(os.getenv("NOVA_AI_SPEECH_REFINE_TOKEN", "")) or "")
-    observability.log("ai.speech_refine_enabled", level="warning", url=url, model=model)
+    observability.log("ai.speech_refine_enabled", level="warning",
+                      url=urlparse(url).hostname or "", model=model)
     return AudioRefineBackend(url, model, token=token,
                               reasoning_effort=os.getenv("NOVA_AI_REASONING_OFF_EFFORT", ""))
 
