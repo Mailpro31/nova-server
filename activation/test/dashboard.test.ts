@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { bars, dashboard, type MetricsEnv } from "../src/dashboard";
+import { bars, loadFleet, type MetricsEnv } from "../src/dashboard";
 
 const NOW = 1_800_000_000;
 const env: MetricsEnv = {
@@ -29,40 +29,40 @@ function grafana(loki: unknown | null) {
 }
 afterEach(() => vi.unstubAllGlobals());
 
-describe("tableau de bord", () => {
-  it("montre l'état, la licence et la part d'IA consommée", async () => {
+describe("données de la flotte", () => {
+  it("rassemble état, licence, versions et dépense par école", async () => {
     vi.stubGlobal("fetch", grafana({ result: [] }));
-    const html = await dashboard(env, NOW);
-    expect(html).toContain("En ligne");
-    expect(html).toContain("1.0.82 ×3");
-    expect(html).toContain("Valide · 151-250 · 120 j");
-    expect(html).toContain("50 %"); // 50 € sur 1 200 / 12
-    expect(html).toContain("Aucun signalement depuis 30 jours.");
+    const r = await loadFleet(env, NOW);
+    if (!r.ok) throw new Error(r.reason);
+    const [ipsa] = r.fleet.schools;
+    expect(ipsa).toMatchObject({ id: "ipsa", online: true, serverVersion: "0.2.0", spendMonth: 50, envelopeAnnual: 1200,
+      licence: { status: "valid", tier: "151-250", daysLeft: 120 }, apps: [{ version: "1.0.82", count: 3 }] });
+    expect(ipsa.dictSeries).toEqual([[NOW - 86400, 4], [NOW, 7]]);
+    expect(r.fleet.reports).toEqual([]);
   });
-  it("signale un serveur muet", async () => {
+  it("marque hors ligne un serveur muet depuis plus de 10 minutes", async () => {
     const f = grafana({ result: [] });
     vi.stubGlobal("fetch", vi.fn(async (url: string) =>
       decodeURIComponent(url).includes("timestamp(nova_uptime_seconds)")
         ? new Response(JSON.stringify(vector([[{ school: "ipsa" }, NOW - 7200]]))) : f(url)));
-    expect(await dashboard(env, NOW)).toContain("Muet depuis 2 h");
+    const r = await loadFleet(env, NOW);
+    expect(r.ok && r.fleet.schools[0].online).toBe(false);
   });
-  it("dit quoi faire si les journaux sont illisibles", async () => {
+  it("journaux illisibles → reports null, le reste arrive", async () => {
     vi.stubGlobal("fetch", grafana(null));
-    expect(await dashboard(env, NOW)).toContain("logs:read");
+    const r = await loadFleet(env, NOW);
+    expect(r.ok && r.fleet.reports).toBeNull();
   });
-  it("affiche les signalements, échappés", async () => {
-    const line = { event: "support.report", app_version: "1.0.81", engines: { microphone: "ok", transcription_model: "warning" }, last_error: "", description: "<b>micro</b>" };
+  it("lit les signalements une seule fois, même arrivés par deux flux", async () => {
+    const line = { event: "support.report", app_version: "1.0.81", engines: { transcription_model: "warning" }, description: "<b>micro</b>" };
     vi.stubGlobal("fetch", grafana({ result: [1, 2].map((n) => ({ stream: { school: "ipsa", service_name: `s${n}` }, values: [[String(NOW * 1e9), JSON.stringify(line)]] })) }));
-    const html = await dashboard(env, NOW);
-    expect(html).toContain("transcription_model : warning");
-    expect(html).toContain("&#60;b&#62;micro");
-    expect(html).not.toContain("<b>micro");
-    expect(html.match(/transcription_model : warning/g)).toHaveLength(1);
+    const r = await loadFleet(env, NOW);
+    expect(r.ok && r.fleet.reports).toHaveLength(1);
   });
   it("prévient sans jeton ni réponse", async () => {
-    expect(await dashboard({ ...env, GRAFANA_READ_TOKEN: "" }, NOW)).toContain("GRAFANA_READ_TOKEN");
+    expect(await loadFleet({ ...env, GRAFANA_READ_TOKEN: "" }, NOW)).toEqual({ ok: false, reason: "token" });
     vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 503 })));
-    expect(await dashboard(env, NOW)).toContain("ne répond pas");
+    expect(await loadFleet(env, NOW)).toEqual({ ok: false, reason: "grafana" });
   });
 });
 

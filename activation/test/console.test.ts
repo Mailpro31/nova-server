@@ -132,7 +132,7 @@ describe("règles", () => {
 describe("pilotage de Claude", () => {
   const send = async (path: string, fields: Record<string, string>, origin = ORIGIN) =>
     call(path, { method: "POST", token: await goodToken(), body: form(fields), headers: { "content-type": "application/x-www-form-urlencoded", origin } });
-  const pageText = async () => (await call("/", { token: await goodToken() })).text();
+  const pageText = async () => (await call("/claude", { token: await goodToken() })).text();
 
   it("met en pause puis relance, avec l'auteur", async () => {
     expect((await send("/pilot/pause", { paused: "1" })).status).toBe(303);

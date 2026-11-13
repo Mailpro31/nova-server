@@ -89,5 +89,5 @@ export async function pilotAction(path: string, form: FormData, db: D1Database, 
     else await run("DELETE FROM pilot_holds WHERE repo = ? AND number = ?", repo, number);
   } else return null;
   console.log(JSON.stringify({ event: "console.pilot", action: path, by: user }));
-  return new Response(null, { status: 303, headers: { location: "/#claude" } });
+  return new Response(null, { status: 303, headers: { location: "/claude" } });
 }
