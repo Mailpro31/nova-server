@@ -16989,7 +16989,8 @@ def school_sheet() -> list[tuple[str, str, dict[str, str], float]]:
     with db() as conn:
         members = conn.execute(
             # Les comptes de banc (@nova.invalid) ne sont pas des membres de l'ecole.
-            "SELECT SUM(disabled = 0) AS active, SUM(disabled <> 0) AS disabled FROM users "
+            "SELECT COALESCE(SUM(CASE WHEN disabled IS NULL OR disabled = 0 THEN 1 ELSE 0 END), 0) AS active, "
+            "COALESCE(SUM(CASE WHEN disabled <> 0 THEN 1 ELSE 0 END), 0) AS disabled FROM users "
             "WHERE LOWER(email) NOT LIKE '%@nova.invalid'"
         ).fetchone()
         groups = conn.execute("SELECT COUNT(*) AS n FROM organization_groups").fetchone()["n"]
