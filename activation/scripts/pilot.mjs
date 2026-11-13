@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 // Côté Claude du pilotage de la console (tables pilot_* de la D1 nova-activation).
 //   node scripts/pilot.mjs inbox                              état, PR retenues, consignes non lues (marquées lues), réponses
 //   node scripts/pilot.mjs log <kind> <ok|echec|info> <titre> [lien] < rapport.txt
@@ -11,12 +10,14 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const here = new URL("..", import.meta.url);
 // shell : npx est un .cmd sous Windows ; seules des requêtes fixes passent en ligne de commande, le texte libre passe par fichier.
 const wrangler = (args) => execFileSync("npx", ["wrangler", "d1", "execute", "nova-activation", "--remote", "-c", "wrangler.console.toml", ...args],
   { cwd: here, encoding: "utf8", shell: process.platform === "win32", stdio: ["ignore", "pipe", "pipe"] });
-const lit = (v) => (v === null || v === undefined ? "NULL" : typeof v === "number" ? String(v) : `'${String(v).replace(/'/g, "''")}'`);
+// Texte en hexadécimal : ni apostrophe, ni octet nul, ni « BEGIN TRANSACTION » / « COMMIT; » que wrangler réécrit.
+export const lit = (v) => (v === null || v === undefined ? "NULL" : typeof v === "number" ? String(v) : `CAST(X'${Buffer.from(String(v), "utf8").toString("hex")}' AS TEXT)`);
 const query = (sql) => JSON.parse(wrangler(["--json", "--command", JSON.stringify(sql)]))[0].results;
 function write(sql) { // fichier : le texte long (journaux) ne passe pas par la ligne de commande
   const dir = mkdtempSync(join(tmpdir(), "pilot-"));
@@ -24,7 +25,8 @@ function write(sql) { // fichier : le texte long (journaux) ne passe pas par la 
 }
 const stdin = () => { try { return readFileSync(0, "utf8").trim(); } catch { return ""; } };
 const now = () => Math.floor(Date.now() / 1000);
-const [cmd, ...args] = process.argv.slice(2);
+// Importé par les tests : seul l'appel direct lance une commande.
+const [cmd, ...args] = process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1] ? process.argv.slice(2) : ["--import"];
 
 if (cmd === "inbox") {
   const paused = query("SELECT value, by, at FROM pilot_state WHERE key = 'paused'")[0];
@@ -58,7 +60,7 @@ if (cmd === "inbox") {
   }
   write(`DELETE FROM pilot_prs;${rows.length ? ` INSERT INTO pilot_prs (repo, number, title, ci, url, seen_at) VALUES ${rows.join(", ")};` : ""}`);
   console.log(`${rows.length} PR relevées`);
-} else {
+} else if (cmd !== "--import") {
   console.error("commandes : inbox | log | ask | reply | prs");
   process.exit(2);
 }
