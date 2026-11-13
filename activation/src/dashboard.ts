@@ -30,21 +30,28 @@ const instant = (env: MetricsEnv, query: string) =>
   get<{ result: Sample[] }>(`${env.PROM_URL}/api/v1/query?query=${encodeURIComponent(query)}`, env.PROM_USER, env.GRAFANA_READ_TOKEN)
     .then((d) => d?.result ?? null);
 
-const range = (env: MetricsEnv, query: string, now: number, days: number) =>
+/** `count` points journaliers qui se terminent à `end`. */
+const range = (env: MetricsEnv, query: string, end: number, count: number) =>
   get<{ result: Series[] }>(
-    `${env.PROM_URL}/api/v1/query_range?query=${encodeURIComponent(query)}&start=${now - days * DAY}&end=${now}&step=${DAY}`,
+    `${env.PROM_URL}/api/v1/query_range?query=${encodeURIComponent(query)}&start=${end - (count - 1) * DAY}&end=${end}&step=${DAY}`,
     env.PROM_USER, env.GRAFANA_READ_TOKEN,
   ).then((d) => d?.result ?? null);
 
 /** { école: valeur } pour une requête groupée par école. */
 const bySchool = (samples: Sample[] | null) =>
-  Object.fromEntries((samples ?? []).map((s) => [s.metric.school, Number(s.value[1])]));
+  Object.fromEntries((samples ?? []).filter((s) => s.metric.school && Number.isFinite(Number(s.value[1]))).map((s) => [s.metric.school, Number(s.value[1])]));
 
 const num = (value: number | undefined, digits = 0) =>
-  value === undefined || Number.isNaN(value) ? "—" : value.toLocaleString("fr-FR", { maximumFractionDigits: digits });
+  value === undefined || !Number.isFinite(value) ? "—" : value.toLocaleString("fr-FR", { maximumFractionDigits: digits });
 
-const ago = (seconds: number) =>
-  seconds < 3600 ? `${Math.round(seconds / 60)} min` : seconds < 2 * DAY ? `${Math.round(seconds / 3600)} h` : `${Math.round(seconds / DAY)} j`;
+/** « 5 min », « 3 h », « 2 j » ; l'unité change sur la valeur arrondie (3599 s → « 1 h », pas « 60 min »). */
+const ago = (seconds: number) => {
+  const s = Math.max(0, seconds), min = Math.round(s / 60), h = Math.round(s / 3600);
+  return min < 60 ? `${min} min` : h < 48 ? `${h} h` : `${Math.round(s / DAY)} j`;
+};
+
+/** « 1 élève », « 2 élèves » (0 reste au singulier) ; valeur inconnue → « — » et pluriel. */
+const plural = (n: number | undefined, one: string, many: string) => `${num(n)} ${n !== undefined && n <= 1 ? one : many}`;
 
 const LICENCE_LABEL: Record<string, string> = {
   valid: "Valide", warning: "Bientôt échue", grace: "Délai de grâce", expired: "Échue", none: "Aucune", invalid: "Invalide",
@@ -107,7 +114,7 @@ export type Tone = "ok" | "warn" | "bad" | "neutral";
 export const LICENCE_TONE: Record<string, Tone> = {
   valid: "ok", warning: "warn", grace: "warn", expired: "bad", none: "neutral", invalid: "bad",
 };
-export { ago, num, LICENCE_LABEL, DAY };
+export { ago, num, plural, LICENCE_LABEL, DAY };
 
 /** Un serveur est « en ligne » s'il a envoyé ses mesures depuis moins de 10 minutes. */
 export const ONLINE_SECONDS = 600;
