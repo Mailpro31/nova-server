@@ -12160,8 +12160,13 @@ async def run_command(task_type: TaskType, instruction: str, text: str,
     contrôles. Les routes et le banc de mesure l'appellent tous deux."""
     system_prompt = command_prompt(instruction, vocabulary) + command_language_line(
         instruction, text, app_language)
-    answer = await execute_text(task_type, system_prompt, command_text(text))
-    reason = command_refusal(instruction, text, answer, app_language)
+    try:
+        answer = await execute_text(task_type, system_prompt, command_text(text))
+    except RewriteTruncated:
+        # Coupée, la réponse remplacerait toute la sélection de l'élève.
+        answer, reason = "", "truncated"
+    else:
+        reason = command_refusal(instruction, text, answer, app_language)
     if reason:
         observability.log("command.refused", level="warning", reason=reason,
                           kind=command_kind(instruction))
@@ -13399,7 +13404,10 @@ class RewriteTruncated(Exception):
 
 # Les taches qui rendent la dictee de quelqu'un. Coupee, leur sortie perd la
 # fin de ce qu'il a dit : elle ne doit jamais etre rendue.
-REWRITE_TASKS = frozenset({TaskType.REFORMULATION, TaskType.STYLE_TRANSFORM})
+# Une Commande ou la bulle remplace la sélection de l'élève : coupée, elle aussi
+# en perd la fin (`run_command` la refuse).
+REWRITE_TASKS = frozenset({TaskType.REFORMULATION, TaskType.STYLE_TRANSFORM,
+                           TaskType.VOICE_COMMAND})
 
 
 async def execute_text(task_type: TaskType, instruction: str, text: str) -> str:
