@@ -59,9 +59,14 @@ class ServiceAccountToken:
                 body = response.json()
                 self._token = str(body["access_token"])
                 self._expires_at = now + float(body.get("expires_in", 3600))
-            except (OSError, ValueError, KeyError, jwt.PyJWTError, httpx.HTTPError) as error:
-                # Une clé refusée ou absente : le moteur externe est indisponible,
-                # et le routeur passe au moteur local.
+            except (OSError, ValueError, KeyError, TypeError, AttributeError,
+                    jwt.PyJWTError, httpx.HTTPError) as error:
+                # Renouvelé en avance : une panne passagère de Google laisse
+                # servir le jeton tant qu'il vaut encore.
+                if self._token and now < self._expires_at:
+                    return self._token
+                # Une clé refusée, absente ou mal formée : le moteur externe est
+                # indisponible, et le routeur passe au moteur local.
                 raise AIRuntimeError(AI_RUNTIME_UNAVAILABLE) from error
             return self._token
 
