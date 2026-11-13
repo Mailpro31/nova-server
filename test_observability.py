@@ -225,5 +225,21 @@ class ReadinessTests(unittest.TestCase):
             self.assertNotIn(forbidden, serialized, forbidden)
 
 
+class LabelInjectionTests(unittest.TestCase):
+    """Un saut de ligne en fin de valeur casserait tout le texte d'exposition."""
+
+    def test_a_trailing_newline_never_survives_in_a_label(self):
+        self.assertEqual(observability.label_value("AI_TIMEOUT\n"), "other")
+        self.assertEqual(observability.style_label("nova_style_email\n"), "custom")
+
+    def test_a_client_style_with_a_newline_cannot_split_a_series(self):
+        observability.METRICS.reset()
+        observability.METRICS.count_event(
+            "reformulation.refused", {"style": "nova_style_email\n", "reason": "x\n"})
+        text = observability.METRICS.render(business=[])
+        for line in text.splitlines():
+            self.assertTrue(line.startswith(("#", "nova_")), line)
+
+
 if __name__ == "__main__":
     unittest.main()

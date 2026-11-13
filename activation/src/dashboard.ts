@@ -166,21 +166,22 @@ export async function loadFleet(env: MetricsEnv, now: number): Promise<FleetResu
   const midnight = parisMidnight(now), since = now - midnight;
   const [seen, server, apps, members, active, dictations, licence, days, spend, envelope, tokens, dictSeries, latency, support, dictToday, latencyToday] =
     await Promise.all([
-      instant(env, "max by (school) (timestamp(nova_uptime_seconds))"),
+      // Un instantané ne regarde que 5 min en arrière : sans sous-requête, une école muette disparaît de la liste au lieu d'être « Muet ».
+      instant(env, "max by (school) (max_over_time(timestamp(nova_uptime_seconds)[7d:1m]))"),
       instant(env, "max by (school, server_version) (nova_server_info)"),
       instant(env, "max by (school, version) (nova_app_versions)"),
       instant(env, 'max by (school) (nova_members{state="active"})'),
       instant(env, 'max by (school) (nova_active_users{period="month"})'),
-      instant(env, 'sum by (school) (increase(nova_events_total{event="inference_transcribe"}[1d]))'),
+      instant(env, 'sum by (school) (increase(nova_events_total{event="inference_transcribe",outcome="allowed"}[1d]))'),
       instant(env, "max by (school, status, tier) (nova_licence_info)"),
       instant(env, "max by (school) (nova_licence_days_left)"),
       instant(env, "max by (school) (nova_ai_spend_eur_month)"),
       instant(env, 'max by (school) (nova_ai_envelope_eur{kind="annual"})'),
       instant(env, "sum by (school) (increase(nova_ai_tokens_total[30d]))"),
-      range(env, 'sum by (school) (increase(nova_events_total{event="inference_transcribe"}[1d]))', midnight, 13),
+      range(env, 'sum by (school) (increase(nova_events_total{event="inference_transcribe",outcome="allowed"}[1d]))', midnight, 13),
       range(env, 'histogram_quantile(0.95, sum by (school, le) (rate(nova_stage_seconds_bucket{stage="transcription"}[1d])))', midnight, 13),
       reports(env, now),
-      since >= 300 ? instant(env, `sum by (school) (increase(nova_events_total{event="inference_transcribe"}[${since}s]))`) : null,
+      since >= 300 ? instant(env, `sum by (school) (increase(nova_events_total{event="inference_transcribe",outcome="allowed"}[${since}s]))`) : null,
       since >= 300 ? instant(env, `histogram_quantile(0.95, sum by (school, le) (rate(nova_stage_seconds_bucket{stage="transcription"}[${since}s])))`) : null,
     ]);
   if (!seen) return { ok: false, reason: "grafana" };
