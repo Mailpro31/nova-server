@@ -55,10 +55,9 @@ visible. Tests du service : `cd activation && npm test`.
    signée partent au service. Le code s'affiche une seule fois :
    `NOVA-7K2P-91XQ` (valable 30 jours, `--code-days` pour changer).
 2. Sash transmet le code à la DSI (message ou appel).
-3. La DSI renseigne dans l'environnement du serveur (`.env`) :
+3. La DSI renseigne dans l'environnement du serveur (`.env`) — l'adresse du service est déjà la valeur par défaut :
 
    ```
-   NOVA_ACTIVATION_URL=https://nova-activation.<compte>.workers.dev
    NOVA_ACTIVATION_CODE=NOVA-7K2P-91XQ
    ```
 
@@ -79,3 +78,14 @@ visible. Tests du service : `cd activation && npm test`.
   `licence-activation.txt` pour que le serveur échange le nouveau code.
 - Fuite du jeton d'administration : `wrangler secret put ADMIN_TOKEN` avec une
   nouvelle valeur ; les licences déjà émises ne sont pas touchées.
+
+## Console en ligne (nova-console)
+
+Créer un code depuis le navigateur, sans le PC de l'éditeur : https://nova-console.nova-ecole.workers.dev.
+
+- Signe avec une **seconde clé**, gardée comme secret Cloudflare (`SIGNING_KEY`). Sa clé publique est `ONLINE_PUBLIC_KEY_PEM` dans `licence.py` ; la clé hors ligne reste valable, en secours. Si la clé en ligne fuit : la retirer de `licence.py`, publier le serveur, en créer une autre.
+- Protégée par Cloudflare Access (code envoyé à l'adresse de l'éditeur). Le worker revérifie le jeton d'Access (`ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`) : vides, il refuse tout.
+- Même base D1 que le service d'activation ; la liste montre l'établissement, l'offre, les dates et si le code a servi. Le code n'est affiché qu'une fois, jamais stocké en clair.
+- Déploiement : `cd activation && npx wrangler deploy -c wrangler.console.toml`.
+
+`NOVA_ACTIVATION_URL` a désormais pour valeur par défaut l'adresse du service de l'éditeur : l'école ne pose que `NOVA_ACTIVATION_CODE`.

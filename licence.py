@@ -43,6 +43,13 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 PUBLIC_KEY_PEM = """-----BEGIN PUBLIC KEY-----
 MCowBQYDK2VwAyEAp5LFj+9XLkXfbwDcvm6m0Oq0FaBKKLvC5wMe0u95wqQ=
 -----END PUBLIC KEY-----"""
+# Clé de la console en ligne (nova-console) : sa privée est un secret Cloudflare.
+# La clé ci-dessus reste hors ligne, en secours ; l'une ou l'autre suffit.
+ONLINE_PUBLIC_KEY_PEM = """-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEAG99+KjPDJ36tHmMSIboxIN1LpK2SZxqfcnK9FobETVU=
+-----END PUBLIC KEY-----"""
+# Le service d'activation de l'éditeur : l'école n'a plus qu'à poser son code.
+ACTIVATION_URL = "https://nova-activation.nova-ecole.workers.dev"
 
 WARNING_DAYS = 30
 GRACE_DAYS = 30
@@ -83,6 +90,15 @@ def issue(private_pem: str, *, organization: str, tier: str, kind: str,
     return jwt.encode(claims, private_pem, algorithm="EdDSA")
 
 
+def _decode(token: str, keys: list[str]) -> dict:
+    for key in keys[:-1]:
+        try:
+            return jwt.decode(token, key, algorithms=["EdDSA"])
+        except jwt.InvalidSignatureError:
+            continue
+    return jwt.decode(token, keys[-1], algorithms=["EdDSA"])
+
+
 def licence_state(token: str, now: float | None = None,
                   public_pem: str | None = None) -> dict:
     """`none`, `invalid`, `valid`, `warning`, `grace` ou `expired`.
@@ -95,7 +111,7 @@ def licence_state(token: str, now: float | None = None,
     if not token:
         return {"status": "none", "degraded": False}
     try:
-        claims = jwt.decode(token, public_pem or PUBLIC_KEY_PEM, algorithms=["EdDSA"])
+        claims = _decode(token, [public_pem] if public_pem else [PUBLIC_KEY_PEM, ONLINE_PUBLIC_KEY_PEM])
         fields = {name: str(claims[name]) for name in FIELDS}
         end = day_stamp(fields["ends"]) + DAY  # la licence couvre son dernier jour
         # L'enveloppe d'IA (2.3), en euros ; absente, aucune enveloppe ne s'applique.
@@ -164,7 +180,7 @@ def _cli(argv: list[str]) -> int:
         make.add_argument("--kind", required=True, choices=KINDS)
         make.add_argument("--ai-envelope-eur", type=float, help="enveloppe d'IA du contrat, en euros")
         if name == "activation-code":
-            make.add_argument("--url", default=os.getenv("NOVA_ACTIVATION_URL", ""),
+            make.add_argument("--url", default=os.getenv("NOVA_ACTIVATION_URL") or ACTIVATION_URL,
                               help="adresse du service d'activation (sinon NOVA_ACTIVATION_URL)")
             make.add_argument("--code-days", type=int, default=CODE_VALID_DAYS,
                               help="durée de validité du code, en jours")

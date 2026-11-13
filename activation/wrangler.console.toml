@@ -1,0 +1,24 @@
+# Console de l'éditeur : `npx wrangler deploy -c wrangler.console.toml`.
+name = "nova-console"
+main = "src/console.ts"
+compatibility_date = "2025-01-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "nova-activation"
+database_id = "8c90d9c1-0332-4bf3-b0c5-7eff32370e4d"
+
+[vars]
+GRAFANA_URL = "https://swiftalbatross2048.grafana.net"
+# Lecture de Grafana Cloud ; le jeton est le secret GRAFANA_READ_TOKEN.
+PROM_URL = "https://prometheus-prod-68-prod-eu-west-6.grafana.net/api/prom"
+PROM_USER = "3761874"
+LOKI_URL = "https://logs-prod-043.grafana.net"
+LOKI_USER = "1876605"
+# Remplis une fois Cloudflare Access activé sur nova-console (Zero Trust) :
+# tant qu'ils sont vides, la console refuse tout le monde.
+ACCESS_TEAM_DOMAIN = "divine-silence-3602.cloudflareaccess.com"
+ACCESS_AUD = "800bf84b2f443fed1e5d80c858be6f8073397f418b65acfd9b8d7f4016435638"
+
+# Secret SIGNING_KEY (clé privée en ligne) : `npx wrangler secret put SIGNING_KEY -c wrangler.console.toml`,
+# jamais écrit ici. Sa clé publique est ONLINE_PUBLIC_KEY_PEM dans licence.py.

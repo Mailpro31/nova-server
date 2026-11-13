@@ -1,26 +1,6 @@
-import { createRequire } from "node:module";
-import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it } from "vitest";
 import worker, { sha256Hex, type Env } from "../src/index";
-
-// D1 factice sur le SQLite intégré à Node : exécute le vrai schema.sql, sans réseau.
-const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite");
-
-function fakeD1() {
-  const db = new DatabaseSync(":memory:");
-  db.exec(readFileSync(new URL("../schema.sql", import.meta.url), "utf8"));
-  return {
-    prepare(sql: string) {
-      let args: unknown[] = [];
-      const statement = {
-        bind(...a: unknown[]) { args = a; return statement; },
-        async first() { return db.prepare(sql).get(...args) ?? null; },
-        async run() { return { meta: { changes: db.prepare(sql).run(...args).changes } }; },
-      };
-      return statement;
-    },
-  } as unknown as D1Database;
-}
+import { fakeD1 } from "./fakeD1";
 
 const NOW = Math.floor(Date.now() / 1000);
 const call = (env: Env, path: string, body: unknown, headers: Record<string, string> = {}) =>

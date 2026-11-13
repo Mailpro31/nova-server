@@ -72,6 +72,15 @@ class LicenceTests(unittest.TestCase):
                 licence.licence_state(token, licence.day_stamp("2026-10-01"))["status"],
                 "valid")
 
+    def test_the_online_console_key_is_accepted_too(self):
+        online_private, online_public = licence.new_key_pair()
+        stranger_private, _ = licence.new_key_pair()
+        at = licence.day_stamp("2026-10-01")
+        with mock.patch.object(licence, "PUBLIC_KEY_PEM", self.public_pem),                 mock.patch.object(licence, "ONLINE_PUBLIC_KEY_PEM", online_public):
+            self.assertEqual(licence.licence_state(issued(online_private), at)["status"], "valid")
+            self.assertEqual(licence.licence_state(issued(self.private_pem), at)["status"], "valid")
+            self.assertEqual(licence.licence_state(issued(stranger_private), at)["status"], "invalid")
+
 
 class DegradedModeTests(unittest.TestCase):
     """Licence échue depuis plus que le délai de grâce : la bulle et les

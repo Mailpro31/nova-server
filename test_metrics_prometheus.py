@@ -227,6 +227,21 @@ class MetricsPrometheusTests(unittest.TestCase):
         self.assertRegex(rendered, r"nova_licence_days_left 4[01]\b")
         self.assertNotIn("IPSA", rendered)
 
+    def test_the_ai_spend_of_the_month_and_the_envelope_are_exposed(self):
+        private, public = licence.new_key_pair()
+        token = licence.issue(private, organization="IPSA", tier="151-250", kind="subscription",
+                              starts="2026-09-01", ends="2027-08-31", ai_envelope_eur=1200)
+        with main.db() as conn:
+            conn.execute("INSERT INTO ai_spend(month, email, eur) VALUES (?,?,?)",
+                         (main.ai_envelope.month_of(time.time()), "eleve@example.com", 2.5))
+        real = licence.licence_state
+        with patch.object(main, "NOVA_LICENCE", token),                 patch.object(licence, "licence_state",
+                             lambda t, now=None, public_pem=None: real(t, now, public)):
+            rendered = self.scrape().text
+        self.assertIn("nova_ai_envelope_eur 1200", rendered)
+        self.assertIn("nova_ai_spend_eur_month 2.5", rendered)
+        self.assertNotIn("eleve@example.com", rendered)
+
     def test_the_school_sheet_describes_the_server_without_names(self):
         main.touch_user("fiche@example.com", main.nova_organization_id())
         rendered = self.scrape().text
