@@ -52,21 +52,22 @@ const LICENCE_LABEL: Record<string, string> = {
 
 // ------------------------------------------------------------ graphiques
 
-/** Barres journalières en SVG, avec la valeur du dernier jour et le maximum. */
+const dayName = (t: number, long: boolean) => new Date(t * 1000).toLocaleDateString("fr-FR",
+  long ? { timeZone: "Europe/Paris", weekday: "long", day: "numeric", month: "long" } : { timeZone: "Europe/Paris", day: "numeric", month: "short" });
+
+/** Barres journalières en HTML : survol ou toucher d'une barre → jour et valeur exacts (CSS seul, la CSP interdit le JS). */
 export function bars(points: [number, number][], unit: string): string {
   if (!points.length) return `<p class="muted">Pas encore de mesure.</p>`;
-  const w = 560, h = 120, gap = 4, max = Math.max(...points.map(([, v]) => v), 0) || 1;
-  const bw = (w - gap * (points.length - 1)) / points.length;
-  const rects = points.map(([t, v], i) => {
-    const bh = Math.max(v > 0 ? 2 : 0, (v / max) * (h - 18));
-    const label = `${new Date(t * 1000).toISOString().slice(5, 10)} : ${num(v, 2)} ${unit}`;
-    return `<rect x="${(i * (bw + gap)).toFixed(1)}" y="${(h - bh).toFixed(1)}" width="${bw.toFixed(1)}" height="${bh.toFixed(1)}" rx="2"><title>${escape(label)}</title></rect>`;
+  const max = Math.max(...points.map(([, v]) => v), 0) || 1;
+  const value = (v: number) => `${num(v, unit === "s" ? 2 : 0)} ${unit}`;
+  const cols = points.map(([t, v], i) => {
+    const side = i < points.length / 4 ? " l" : i >= (points.length * 3) / 4 ? " r" : "";
+    const text = `${dayName(t, true)} : ${value(v)}`;
+    return `<button type="button" class="col${side}" aria-label="${escape(text)}"><i style="height:${Math.max(v > 0 ? 2 : 0, (v / max) * 100).toFixed(1)}%"></i>`
+      + `<span class="tip">${escape(dayName(t, true))}<b>${escape(value(v))}</b></span></button>`;
   }).join("");
-  const first = new Date(points[0][0] * 1000).toISOString().slice(5, 10);
-  const last = new Date(points[points.length - 1][0] * 1000).toISOString().slice(5, 10);
-  return `<svg class="chart" viewBox="0 0 ${w} ${h + 16}" role="img" aria-label="${escape(unit)} par jour">
-<text x="0" y="10" class="axis">max ${escape(num(max, 2))} ${escape(unit)}</text>${rects}
-<line x1="0" x2="${w}" y1="${h}" y2="${h}" class="base"/><text x="0" y="${h + 14}" class="axis">${first}</text><text x="${w}" y="${h + 14}" class="axis" text-anchor="end">${last}</text></svg>`;
+  return `<div class="bars"><div class="axis">max ${escape(value(max))}</div><div class="cols">${cols}</div>
+<div class="axis ends"><span>${escape(dayName(points[0][0], false))}</span><span>${escape(dayName(points[points.length - 1][0], false))}</span></div></div>`;
 }
 
 const points = (series: Series[] | null, school: string): [number, number][] =>

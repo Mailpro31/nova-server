@@ -162,7 +162,16 @@ dl{display:grid;grid-template-columns:auto 1fr;gap:8px 14px;margin:0;font-size:1
 .chip{display:inline-block;padding:1px 8px;border-radius:6px;background:var(--neutral-soft);font-size:12.5px;color:var(--muted)}
 .charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:20px}
 figure{margin:0}figcaption{font-size:13px;color:var(--muted);margin-bottom:6px}
-.chart{width:100%;height:auto;display:block}.chart rect{fill:var(--accent);opacity:.55}.chart rect:last-of-type{opacity:1}.chart .base{stroke:var(--line)}.axis{font-size:11px;fill:var(--muted)}
+.axis{font-size:12px;color:var(--muted)}.ends{display:flex;justify-content:space-between;margin-top:6px}
+.cols{position:relative;display:flex;align-items:flex-end;gap:4px;height:130px;margin-top:30px;border-bottom:1px solid var(--line)}
+.col{all:unset;position:relative;flex:1;height:100%;display:flex;align-items:flex-end;cursor:pointer;border-radius:4px}
+.col i{display:block;width:100%;background:var(--accent);opacity:.5;border-radius:4px 4px 0 0;transition:opacity .12s}
+.col:last-child i{opacity:.85}.cols:hover .col i{opacity:.25}.cols .col:hover i,.col:focus i{opacity:1}
+.col:hover,.col:focus{background:var(--neutral-soft)}.col:focus-visible{outline:2px solid var(--accent)}
+.tip{display:none;position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);z-index:3;white-space:nowrap;pointer-events:none;
+background:var(--text);color:var(--card);font-size:12px;line-height:1.3;padding:6px 10px;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.18)}
+.tip b{display:block;font-size:15px}.col.l .tip{left:0;transform:none}.col.r .tip{left:auto;right:0;transform:none}
+.col:hover .tip,.col:focus .tip{display:block}
 .meter{height:10px;border-radius:999px;background:var(--neutral-soft);overflow:hidden;margin-bottom:14px}.meter div{height:100%;border-radius:999px;background:var(--ok)}
 .meter.warn div{background:var(--warn)}.meter.bad div{background:var(--bad)}
 .reports{list-style:none;padding:0;margin:0;display:grid;gap:12px}.reports header{justify-content:flex-start!important;margin-bottom:8px!important}

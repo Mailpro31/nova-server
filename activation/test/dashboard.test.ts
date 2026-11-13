@@ -69,6 +69,9 @@ describe("tableau de bord", () => {
 describe("barres", () => {
   it("une barre par jour, sans mesure → message", () => {
     expect(bars([], "x")).toContain("Pas encore de mesure");
-    expect((bars([[NOW, 1], [NOW + 86400, 2]], "x").match(/<rect/g) ?? []).length).toBe(2);
+    const html = bars([[NOW, 1], [NOW + 86400, 1834]], "dictées");
+    expect((html.match(/class="col[ "]/g) ?? []).length).toBe(2);
+    expect(html.replace(/\s/g, " ")).toContain("1 834 dictées"); // valeur exacte au survol
+    expect(bars([[NOW, 1.234]], "s")).toContain("1,23 s");
   });
 });
