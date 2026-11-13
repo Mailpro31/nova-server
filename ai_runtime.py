@@ -1473,9 +1473,14 @@ class AudioRefineBackend:
             raise AIRuntimeError(AI_RUNTIME_FAILED)
         try:
             body = response.json()
-            text = body["choices"][0]["message"]["content"]
+            choice = body["choices"][0]
+            text = choice["message"]["content"]
         except (ValueError, KeyError, IndexError, TypeError) as error:
             raise AIRuntimeError(AI_RUNTIME_FAILED) from error
+        # Coupée, la relue perd la fin de la dictée ; vide, elle est refusée et
+        # Whisper reste. L'appel a été facturé : il est rendu, donc compté.
+        if not isinstance(text, str) or choice.get("finish_reason") == "length":
+            text = ""
         observability.METRICS.observe_stage("relecture", time.monotonic() - started)
         # Le coût réel d'une dictée (11/11) : des comptes, jamais le texte.
         usage = body.get("usage") if isinstance(body.get("usage"), dict) else {}
@@ -1484,7 +1489,7 @@ class AudioRefineBackend:
                           prompt_tokens=usage.get("prompt_tokens"),
                           completion_tokens=usage.get("completion_tokens"),
                           reasoning_tokens=(usage.get("completion_tokens_details") or {}).get("reasoning_tokens"))
-        return (text or "").strip()
+        return text.strip()
 
 
 def relue_and_final(answer: str) -> tuple[str, str | None]:
