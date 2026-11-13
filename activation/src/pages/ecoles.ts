@@ -55,7 +55,7 @@ async function detail(ctx: Ctx, fleet: Fleet, raw: string): Promise<View> {
   const tone = part <= 0.8 ? "ok" : part <= 1 ? "warn" : "bad";
   const reports = (fleet.reports ?? []).filter((r) => r.school === s.id).map((r) =>
     `<li><header>${pill("neutral", String(r.line.app_version ?? "?"))}<time>${escape(when(r.at))}</time></header><blockquote>${escape(r.line.description ?? "")}</blockquote></li>`).join("");
-  const codes = (await ctx.env.DB.prepare("SELECT school, licence, expires_at, used_at FROM codes ORDER BY expires_at DESC LIMIT 200")
+  const codes = (await ctx.env.DB.prepare("SELECT school, licence, expires_at, used_at FROM codes ORDER BY expires_at DESC")
     .all<{ school: string; licence: string; expires_at: number; used_at: number | null }>()).results
     .filter((c) => c.school.trim().toLowerCase() === s.id.trim().toLowerCase());
   const day = (t: number) => new Date(t * 1000).toISOString().slice(0, 10);

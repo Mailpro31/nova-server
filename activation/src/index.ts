@@ -28,7 +28,7 @@ async function sameSecret(given: string, expected: string): Promise<boolean> {
   return diff === 0;
 }
 
-export const normalizeCode = (code: string) => code.trim().toUpperCase().replace(/[\s-]+/g, "");
+export const normalizeCode = (code: string) => code.trim().toUpperCase().replace(/[\s\-​‐-―−]+/g, "");
 
 async function tooMany(env: Env, ip: string, now: number): Promise<boolean> {
   const minute = Math.floor(now / 60);

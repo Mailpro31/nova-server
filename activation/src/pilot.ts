@@ -120,7 +120,7 @@ ${j.link ? `<p>${link(j.link)}</p>` : ""}${j.details ? `<details><summary>Rappor
 
 /** Actions des formulaires ; chacune écrit une ligne console_audit puis redirige. null si ce n'est pas une action de pilotage. */
 export async function pilotAction(path: string, form: FormData, db: D1Database, user: string, now: number): Promise<Response | null> {
-  const text = (name: string) => String(form.get(name) ?? "").trim().slice(0, MAX);
+  const text = (name: string) => String(form.get(name) ?? "").replace(/\r\n/g, "\n").trim().slice(0, MAX);
   const run = (sql: string, ...args: unknown[]) => db.prepare(sql).bind(...args).run();
   let target = "/claude";
   if (path === "/pilot/pause") {

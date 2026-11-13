@@ -27,7 +27,7 @@ export const activite: Page = {
   async render(ctx) {
     const asked = ctx.url.searchParams.get("source") ?? "";
     const source = SOURCES.some(([v]) => v === asked) ? asked : "tout";
-    const page = Math.max(1, Math.floor(Number(ctx.url.searchParams.get("page"))) || 1);
+    const page = Math.min(100000, Math.max(1, Math.floor(Number(ctx.url.searchParams.get("page"))) || 1));
     const { results } = await ctx.env.DB.prepare(
       `SELECT * FROM (
          SELECT 'console' AS src, id, at, by AS who, action AS title, detail, NULL AS result, NULL AS kind FROM console_audit
