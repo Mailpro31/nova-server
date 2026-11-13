@@ -48,6 +48,22 @@ describe("données de la flotte", () => {
     const r = await loadFleet(env, NOW);
     expect(r.ok && r.fleet.schools[0].online).toBe(false);
   });
+  it("ne compte comme dictées que les appels servis, pas les refus de quota", async () => {
+    const f = grafana({ result: [] });
+    const asked: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => { asked.push(decodeURIComponent(url)); return f(url); }));
+    await loadFleet(env, NOW);
+    const dict = asked.filter((q) => q.includes("inference_transcribe"));
+    expect(dict).toHaveLength(2); // 24 h et série de 14 jours
+    for (const q of dict) expect(q).toContain('outcome="allowed"');
+  });
+  it("garde une école muette dans la liste : la requête remonte plus loin que les 5 min de Prometheus", async () => {
+    const f = grafana({ result: [] });
+    let seen = "";
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => { const q = decodeURIComponent(url); if (q.includes("timestamp(nova_uptime_seconds)")) seen = q; return f(url); }));
+    await loadFleet(env, NOW);
+    expect(seen).toMatch(/max_over_time\(timestamp\(nova_uptime_seconds\)\[\d+d:\d+m\]\)/);
+  });
   it("journaux illisibles → reports null, le reste arrive", async () => {
     vi.stubGlobal("fetch", grafana(null));
     const r = await loadFleet(env, NOW);
