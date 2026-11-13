@@ -128,7 +128,7 @@ export async function dashboard(env: MetricsEnv, now: number): Promise<string> {
       instant(env, "max by (school, status, tier) (nova_licence_info)"),
       instant(env, "max by (school) (nova_licence_days_left)"),
       instant(env, "max by (school) (nova_ai_spend_eur_month)"),
-      instant(env, "max by (school) (nova_ai_envelope_eur)"),
+      instant(env, 'max by (school) (nova_ai_envelope_eur{kind="annual"})'),
       instant(env, "sum by (school) (increase(nova_ai_tokens_total[30d]))"),
       range(env, 'sum by (school) (increase(nova_events_total{event="inference_transcribe"}[1d]))', now, 14),
       range(env, 'histogram_quantile(0.95, sum by (school, le) (rate(nova_stage_seconds_bucket{stage="transcription"}[1d])))', now, 14),
