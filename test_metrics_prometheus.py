@@ -256,6 +256,29 @@ class MetricsPrometheusTests(unittest.TestCase):
         self.assertRegex(rendered, r'nova_engine_info\{[^}]*task="text"[^}]*\} 1')
         self.assertRegex(rendered, r'nova_engine_info\{[^}]*task="speech"[^}]*\} 1')
 
+    def test_bench_accounts_and_four_digit_versions_in_the_version_count(self):
+        now = time.time()
+        for email, version in (("banc2@nova.invalid", "1.0.70"), ("Banc3@NOVA.INVALID", "1.0.70"),
+                               ("vrai@example.com", "2026.1.0")):
+            main.touch_user(email, main.nova_organization_id())
+            with main.db() as conn:
+                conn.execute("UPDATE users SET app_version=?, last_seen=? WHERE email=?",
+                             (version, now, email))
+        rendered = self.scrape().text
+        self.assertNotIn('nova_app_versions{version="1.0.70"}', rendered)
+        self.assertIn('nova_app_versions{version="2026.1.0"} 1', rendered)
+
+    def test_a_member_whose_disabled_flag_is_null_counts_as_active(self):
+        def active():
+            return int(re.search(r'nova_members\{state="active"\} (\d+)', self.scrape().text).group(1))
+        before = active()
+        main.touch_user("sans-drapeau@example.com", main.nova_organization_id())
+        with main.db() as conn:
+            conn.execute("UPDATE users SET disabled=NULL WHERE email=?", ("sans-drapeau@example.com",))
+        self.assertEqual(active(), before + 1)
+        with main.db() as conn:  # la base du fichier est partagée entre les tests
+            conn.execute("DELETE FROM users WHERE email=?", ("sans-drapeau@example.com",))
+
     def test_bench_accounts_are_not_members_and_models_are_named(self):
         with main.db() as conn:
             before = conn.execute("SELECT COUNT(*) FROM users WHERE disabled = 0 AND "

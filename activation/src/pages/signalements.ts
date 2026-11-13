@@ -1,4 +1,4 @@
-import { escape, loadFleet, type Report } from "../dashboard";
+import { escape, loadFleet, text, type Report } from "../dashboard";
 import { audit, empty, kpi, pill, redirect, when, type Ctx, type Page } from "../shell";
 
 /** Clé d'un signalement dans report_status : école + horodatage en millisecondes. */
@@ -33,13 +33,13 @@ async function render(ctx: Ctx) {
     const key = reportKey(r), st = status.get(key);
     const l = r.line;
     const engines = Object.entries((l.engines ?? {}) as Record<string, unknown>).filter(([, s]) => s !== "ok")
-      .map(([name, s]) => pill(s === "error" ? "bad" : "warn", `${name} : ${s}`));
+      .map(([name, s]) => pill(s === "error" ? "bad" : "warn", `${name} : ${text(s)}`));
     const closed = st
       ? `<p>${pill(st.status === "traite" ? "ok" : "neutral", `${LABEL[st.status] ?? st.status} par ${st.by} le ${when(st.at)}`)}${st.note ? ` <span class="muted">${escape(st.note)}</span>` : ""}</p>`
       : "";
     return `<li><article class="card"><header><strong><a href="/ecoles/${encodeURIComponent(r.school)}">${escape(r.school)}</a></strong>${l.app_version ? `<span class="chip">Nova ${escape(l.app_version)}</span>` : ""}<time>${when(r.at)}</time></header>
 <blockquote>${l.description ? escape(l.description) : "Sans description."}</blockquote>
-<div class="chips">${engines.length ? engines.join("") : pill("ok", "Tout va bien")}${l.last_error ? pill("bad", String(l.last_error)) : ""}</div>
+<div class="chips">${engines.length ? engines.join("") : pill("ok", "Tout va bien")}${l.last_error ? pill("bad", text(l.last_error)) : ""}</div>
 ${closed}
 <form method="post" action="/signalements/statut" class="inline"><input type="hidden" name="report_key" value="${escape(key)}"><input type="hidden" name="vue" value="${escape(vue)}"><input type="hidden" name="ecole" value="${escape(ecole)}">
 <input name="note" maxlength="300" placeholder="Note (facultatif)">${st ? button("rouvrir", "Rouvrir", "ghost") : button("traite", "Traité") + button("ignore", "Ignorer", "ghost")}</form></article></li>`;

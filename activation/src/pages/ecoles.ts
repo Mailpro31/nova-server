@@ -1,4 +1,4 @@
-import { ago, bars, escape, loadFleet, LICENCE_LABEL, LICENCE_TONE, num, type Fleet, type SchoolData } from "../dashboard";
+import { ago, bars, escape, loadFleet, LICENCE_LABEL, LICENCE_TONE, num, plural, text, type Fleet, type SchoolData } from "../dashboard";
 import { claimsOf } from "../licence";
 import { empty, pill, stat, when, type Ctx, type Page, type View } from "../shell";
 
@@ -26,7 +26,7 @@ function list(ctx: Ctx, fleet: Fleet): View {
   const tab = (key: string, label: string, on: boolean) => `<a href="/ecoles${key ? `?vue=${key}` : ""}"${on ? ' class="on"' : ""}>${label}</a>`;
   const rows = fleet.schools.filter(filter).map((s) =>
     `<a class="row-link" href="${href(s.id)}"><div class="grow"><strong>${escape(s.id)}</strong><div class="chips" style="margin-top:4px;align-items:center">${state(s, ctx.now)} ${licencePill(s)}`
-    + `<span class="muted">${num(s.activeMonth)} élèves actifs</span>${s.serverVersion ? `<span class="chip">${escape(s.serverVersion)}</span>` : ""}</div></div><span class="chev">›</span></a>`).join("");
+    + `<span class="muted">${plural(s.activeMonth, "élève actif", "élèves actifs")}</span>${s.serverVersion ? `<span class="chip">${escape(s.serverVersion)}</span>` : ""}</div></div><span class="chev">›</span></a>`).join("");
   return {
     title: "Écoles",
     body: `<div class="toolbar"><div class="seg">${tab("", "Toutes", vue !== "en-ligne" && vue !== "muettes")}${tab("en-ligne", "En ligne", vue === "en-ligne")}${tab("muettes", "Muettes", vue === "muettes")}</div></div>`
@@ -54,8 +54,8 @@ async function detail(ctx: Ctx, fleet: Fleet, raw: string): Promise<View> {
   const part = envelope > 0 ? (s.spendMonth ?? 0) / envelope : 0;
   const tone = part <= 0.8 ? "ok" : part <= 1 ? "warn" : "bad";
   const reports = (fleet.reports ?? []).filter((r) => r.school === s.id).map((r) =>
-    `<li><header>${pill("neutral", String(r.line.app_version ?? "?"))}<time>${escape(when(r.at))}</time></header><blockquote>${escape(r.line.description ?? "")}</blockquote></li>`).join("");
-  const codes = (await ctx.env.DB.prepare("SELECT school, licence, expires_at, used_at FROM codes ORDER BY expires_at DESC LIMIT 200")
+    `<li><header>${pill("neutral", text(r.line.app_version ?? "?"))}<time>${escape(when(r.at))}</time></header><blockquote>${escape(r.line.description ?? "")}</blockquote></li>`).join("");
+  const codes = (await ctx.env.DB.prepare("SELECT school, licence, expires_at, used_at FROM codes ORDER BY expires_at DESC")
     .all<{ school: string; licence: string; expires_at: number; used_at: number | null }>()).results
     .filter((c) => c.school.trim().toLowerCase() === s.id.trim().toLowerCase());
   const day = (t: number) => new Date(t * 1000).toISOString().slice(0, 10);
