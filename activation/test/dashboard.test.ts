@@ -52,11 +52,12 @@ describe("tableau de bord", () => {
   });
   it("affiche les signalements, échappés", async () => {
     const line = { event: "support.report", app_version: "1.0.81", engines: { microphone: "ok", transcription_model: "warning" }, last_error: "", description: "<b>micro</b>" };
-    vi.stubGlobal("fetch", grafana({ result: [{ stream: { school: "ipsa" }, values: [[String(NOW * 1e9), JSON.stringify(line)]] }] }));
+    vi.stubGlobal("fetch", grafana({ result: [1, 2].map((n) => ({ stream: { school: "ipsa", service_name: `s${n}` }, values: [[String(NOW * 1e9), JSON.stringify(line)]] })) }));
     const html = await dashboard(env, NOW);
     expect(html).toContain("transcription_model : warning");
     expect(html).toContain("&#60;b&#62;micro");
     expect(html).not.toContain("<b>micro");
+    expect(html.match(/transcription_model : warning/g)).toHaveLength(1);
   });
   it("prévient sans jeton ni réponse", async () => {
     expect(await dashboard({ ...env, GRAFANA_READ_TOKEN: "" }, NOW)).toContain("GRAFANA_READ_TOKEN");

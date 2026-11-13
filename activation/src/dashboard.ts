@@ -86,8 +86,11 @@ async function reports(env: MetricsEnv, now: number): Promise<Report[] | null> {
   );
   if (!data) return null;
   const out: Report[] = [];
+  const seen = new Set<string>(); // la même ligne arrive parfois par deux flux
   for (const stream of data.result) {
     for (const [ns, raw] of stream.values) {
+      if (seen.has(ns + raw)) continue;
+      seen.add(ns + raw);
       try {
         const line = JSON.parse(raw) as Record<string, unknown>;
         if (line.event === "support.report") out.push({ at: Number(ns) / 1e9, school: stream.stream.school, line });
