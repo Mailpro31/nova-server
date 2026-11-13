@@ -94,6 +94,25 @@ class CommandLanguageLineTests(unittest.TestCase):
 class RefusedOutputsTests(unittest.TestCase):
     """Les sorties fautives du RTX, refusées."""
 
+    def test_a_truncated_answer_is_refused(self):
+        # Une traduction coupée par `max_tokens` remplaçait la sélection
+        # entière : la fin du texte de l'élève disparaissait.
+        import asyncio
+        from ai_runtime import TaskType, TextInferenceResult
+
+        async def generate(task_type, input_text, instruction, **_):
+            return TextInferenceResult(
+                text="I couldn't finish my mechanical engineering homework yesterday because",
+                finish_reason="length", latency_ms=1, usage={}, backend={"adapter": "test"})
+
+        with patch.object(main.ORGANIZATION_AI_ROUTER, "generate", generate), \
+                self.assertRaises(main.HTTPException) as refused:
+            asyncio.run(main.run_command(TaskType.VOICE_COMMAND, TRANSLATE.format("English"),
+                                         MESSAGE, ""))
+        self.assertEqual(refused.exception.status_code, 422)
+        self.assertEqual(refused.exception.detail, {"code": "COMMAND_REFUSED",
+                                                    "reason": "truncated"})
+
     def test_an_answer_in_another_language_is_refused(self):
         for instruction, text in ((EXPLAIN, COURS), (SUMMARIZE, MESSAGE), (IMPROVE, MESSAGE)):
             with self.subTest(instruction=instruction[:20]):

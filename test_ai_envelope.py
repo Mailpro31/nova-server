@@ -116,6 +116,18 @@ class EnvelopeTests(unittest.TestCase):
                   if call.args and call.args[0] == "ai.envelope_alert"]
         self.assertEqual(alerts, [80, 100])
 
+    def test_the_80_percent_alert_is_not_lost_to_rounding(self):
+        # 80 % de 30 € = 24 €. 23,993 € s'affichent 23,99 € puis 24,00 € :
+        # un seuil lu sur le chiffre arrondi n'était jamais franchi.
+        spent("a@example.com", 23.993)
+        with mock.patch.object(main.observability, "log") as log, \
+                mock.patch.object(time, "time", return_value=NOW):
+            main.record_ai_spend("b@example.com", {"completion_tokens": 750}, {"adapter": "x"})
+            main.record_ai_spend("b@example.com", {"completion_tokens": 1250}, {"adapter": "x"})
+        alerts = [call.kwargs["percent"] for call in log.call_args_list
+                  if call.args and call.args[0] == "ai.envelope_alert"]
+        self.assertEqual(alerts, [80])
+
     def test_the_bubble_pauses_when_the_envelope_is_empty(self):
         spent("a@example.com", 30)
         with mock.patch.object(time, "time", return_value=NOW):

@@ -1331,8 +1331,10 @@ def router_from_environment() -> OrganizationAIRouter:
     text_token = vertex_auth.token_from_environment() or text_token
     speech_token = secrets_provider.resolve_value(os.getenv("NOVA_AI_SPEECH_TOKEN", "")) or token
     if public_endpoint_allowed():
+        # L'hôte seul : une clé collée dans l'adresse (`?key=…`) n'est pas encore refusée ici.
         observability.log("ai.public_endpoint_allowed", level="warning",
-                          text_url=text_url, speech_url=speech_url)
+                          text_url=urlparse(text_url).hostname or "",
+                          speech_url=urlparse(speech_url).hostname or "")
     try:
         profile = ModelProfile(os.getenv("NOVA_AI_PROFILE", "standard").lower())
     except ValueError as error:
@@ -1473,9 +1475,14 @@ class AudioRefineBackend:
             raise AIRuntimeError(AI_RUNTIME_FAILED)
         try:
             body = response.json()
-            text = body["choices"][0]["message"]["content"]
+            choice = body["choices"][0]
+            text = choice["message"]["content"]
         except (ValueError, KeyError, IndexError, TypeError) as error:
             raise AIRuntimeError(AI_RUNTIME_FAILED) from error
+        # Coupée, la relue perd la fin de la dictée ; vide, elle est refusée et
+        # Whisper reste. L'appel a été facturé : il est rendu, donc compté.
+        if not isinstance(text, str) or choice.get("finish_reason") == "length":
+            text = ""
         observability.METRICS.observe_stage("relecture", time.monotonic() - started)
         # Le coût réel d'une dictée (11/11) : des comptes, jamais le texte.
         usage = body.get("usage") if isinstance(body.get("usage"), dict) else {}
@@ -1484,7 +1491,7 @@ class AudioRefineBackend:
                           prompt_tokens=usage.get("prompt_tokens"),
                           completion_tokens=usage.get("completion_tokens"),
                           reasoning_tokens=(usage.get("completion_tokens_details") or {}).get("reasoning_tokens"))
-        return (text or "").strip()
+        return text.strip()
 
 
 def relue_and_final(answer: str) -> tuple[str, str | None]:
@@ -1514,7 +1521,8 @@ def audio_refiner_from_environment() -> AudioRefineBackend | None:
 
     token = (vertex_auth.token_from_environment()
              or secrets_provider.resolve_value(os.getenv("NOVA_AI_SPEECH_REFINE_TOKEN", "")) or "")
-    observability.log("ai.speech_refine_enabled", level="warning", url=url, model=model)
+    observability.log("ai.speech_refine_enabled", level="warning",
+                      url=urlparse(url).hostname or "", model=model)
     return AudioRefineBackend(url, model, token=token,
                               reasoning_effort=os.getenv("NOVA_AI_REASONING_OFF_EFFORT", ""))
 

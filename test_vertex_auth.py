@@ -71,6 +71,28 @@ class VertexTokenTests(unittest.TestCase):
             asyncio.run(token.bearer())
         self.assertEqual(raised.exception.code, ai_runtime.AI_RUNTIME_UNAVAILABLE)
 
+    def test_a_key_file_that_is_not_an_object_is_an_unavailable_engine(self):
+        # Un fichier collé de travers (une liste, un nombre) : la dictée passe
+        # au moteur local au lieu d'une erreur 500.
+        for content in ("[]", "42", '{"client_email": "x", "private_key": 7}'):
+            self.path.write_text(content)
+            token = vertex_auth.ServiceAccountToken(self.path, transport=self.transport)
+            with self.assertRaises(ai_runtime.AIRuntimeError) as raised:
+                asyncio.run(token.bearer())
+            self.assertEqual(raised.exception.code, ai_runtime.AI_RUNTIME_UNAVAILABLE)
+
+    def test_a_failed_early_renewal_keeps_the_token_still_valid(self):
+        answers = iter([httpx.Response(200, json={"access_token": "ya29.1", "expires_in": 3600}),
+                        httpx.Response(503)])
+        flaky = httpx.MockTransport(lambda request: next(answers))
+        token = vertex_auth.ServiceAccountToken(self.path, transport=flaky)
+        with mock.patch.object(vertex_auth.time, "time", return_value=1000.0):
+            asyncio.run(token.bearer())
+        # Google en panne passagère cinq minutes avant l'heure : le jeton vaut
+        # encore 200 s, la dictée ne doit pas basculer sur le moteur local.
+        with mock.patch.object(vertex_auth.time, "time", return_value=1000.0 + 3600 - 200):
+            self.assertEqual(asyncio.run(token.bearer()), "ya29.1")
+
     def test_the_text_engine_sends_the_vertex_token(self):
         token = vertex_auth.ServiceAccountToken(self.path, transport=self.transport)
         seen = []

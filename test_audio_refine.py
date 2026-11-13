@@ -81,6 +81,19 @@ class AudioRefineBackendTests(unittest.TestCase):
             asyncio.run(backend(lambda request: httpx.Response(500)).refine(b"x", "wav", "t", []))
         self.assertEqual(raised.exception.code, AI_RUNTIME_FAILED)
 
+    def test_a_cut_or_malformed_reading_is_empty_so_whisper_stays(self):
+        # Coupée par `max_tokens` (la réflexion de Gemini les consomme aussi),
+        # la relue garde plus du quart des mots et passait le contrôle : la fin
+        # de la dictée était perdue. Un contenu qui n'est pas du texte faisait
+        # une AttributeError, soit une erreur 500 à la place de Whisper.
+        for choice in ({"message": {"content": "Le nombre de"}, "finish_reason": "length"},
+                       {"message": {"content": [{"type": "text", "text": "x"}]}}):
+            with self.subTest(choice=choice):
+                text = asyncio.run(backend(lambda request: httpx.Response(
+                    200, json={"choices": [choice]})).refine(b"x", "wav", "t", []))
+                self.assertEqual(text, "")
+                self.assertFalse(main.refine_plausible("le nombre de Mach", text, []))
+
     def test_it_is_off_unless_the_deployment_configures_it(self):
         with patch.dict("os.environ", {"NOVA_AI_SPEECH_REFINE_BASE_URL": "",
                                        "NOVA_AI_SPEECH_REFINE_MODEL": ""}):
@@ -174,6 +187,11 @@ class DoubtfulWordsTests(AdminTestCase):
                          ["Mach"])
         self.assertEqual(main.changed_words("la portance augmente", "La portance augmente."), [])
         self.assertEqual(main.changed_words("", "Bonjour."), ["Bonjour"])
+
+    def test_a_typographic_apostrophe_is_not_a_doubtful_word(self):
+        # Whisper écrit « l'école », Gemini « l’école » : le même mot.
+        self.assertEqual(main.changed_words("l'école c'est aujourd'hui",
+                                            "L’école, c’est aujourd’hui."), [])
 
     def test_the_dictation_route_returns_them(self):
         from test_dictation_language import engine_saying

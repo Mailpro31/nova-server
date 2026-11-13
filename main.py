@@ -3245,15 +3245,22 @@ def record_ai_spend(email: str | None, usage: dict, backend: dict, eur: float | 
     cost = ai_envelope.call_cost(usage) if eur is None else eur
     if cost <= 0:
         return
-    before = ai_envelope_state()
+    now = time.time()
+    state = licence.licence_state(NOVA_LICENCE, now)
     with db() as conn:
         conn.execute(
             """INSERT INTO ai_spend(month, email, eur) VALUES (?,?,?)
                ON CONFLICT(month, email) DO UPDATE SET eur = ai_spend.eur + excluded.eur""",
-            (ai_envelope.month_of(time.time()), email or "", cost))
-    if before:
-        for percent in ai_envelope.crossed(before["spent_eur"], before["spent_eur"] + cost,
-                                           before["allowance_eur"]):
+            (ai_envelope.month_of(now), email or "", cost))
+        # Le total lu après l'écriture, dans la même transaction et sans arrondi :
+        # un total arrondi (23,996 → 24,00) sautait le seuil, et deux appels
+        # simultanés qui lisaient le même total avant d'écrire alertaient deux fois.
+        after = conn.execute("SELECT COALESCE(SUM(eur), 0) FROM ai_spend WHERE month >= ?",
+                             (str(state.get("starts", ""))[:7],)).fetchone()[0]
+    if state.get("ai_envelope_eur") is not None:
+        allowance = ai_envelope.allowance(
+            state["ai_envelope_eur"], state["starts"], state["ends"], now)
+        for percent in ai_envelope.crossed(after - cost, after, allowance):
             observability.log("ai.envelope_alert", level="warning", percent=percent)
 
 
@@ -12175,8 +12182,13 @@ async def run_command(task_type: TaskType, instruction: str, text: str,
     contrôles. Les routes et le banc de mesure l'appellent tous deux."""
     system_prompt = command_prompt(instruction, vocabulary) + command_language_line(
         instruction, text, app_language)
-    answer = await execute_text(task_type, system_prompt, command_text(text))
-    reason = command_refusal(instruction, text, answer, app_language)
+    try:
+        answer = await execute_text(task_type, system_prompt, command_text(text))
+    except RewriteTruncated:
+        # Coupée, la réponse remplacerait toute la sélection de l'élève.
+        answer, reason = "", "truncated"
+    else:
+        reason = command_refusal(instruction, text, answer, app_language)
     if reason:
         observability.log("command.refused", level="warning", reason=reason,
                           kind=command_kind(instruction))
@@ -13214,7 +13226,8 @@ def changed_words(heard: str, read: str) -> list[str]:
     change étaient vraiment faux, et ils couvrent 54,6 % des erreurs ; mieux que la
     confiance de faster-whisper (62,5 %). Le mot renvoyé est celui de la relecture.
     """
-    key = lambda word: word.strip(_WORD_EDGES).casefold()  # noqa: E731
+    # « l’école » de Gemini et « l'école » de Whisper sont le même mot.
+    key = lambda word: word.replace("’", "'").strip(_WORD_EDGES).casefold()  # noqa: E731
     before, after = [key(w) for w in heard.split()], read.split()
     found: list[str] = []
     matcher = difflib.SequenceMatcher(None, before, [key(w) for w in after], autojunk=False)
@@ -13413,7 +13426,11 @@ class RewriteTruncated(Exception):
 
 # Les taches qui rendent la dictee de quelqu'un. Coupee, leur sortie perd la
 # fin de ce qu'il a dit : elle ne doit jamais etre rendue.
-REWRITE_TASKS = frozenset({TaskType.REFORMULATION, TaskType.STYLE_TRANSFORM})
+# Une Commande ou la bulle remplace la sélection de l'élève : coupée, elle aussi
+# en perd la fin (`run_command` la refuse). Des notes structurées coupées aussi :
+# le morceau revient brut.
+REWRITE_TASKS = frozenset({TaskType.REFORMULATION, TaskType.STYLE_TRANSFORM,
+                           TaskType.VOICE_COMMAND, TaskType.ENGINEERING_NOTES})
 
 
 async def execute_text(task_type: TaskType, instruction: str, text: str) -> str:
@@ -14914,8 +14931,9 @@ def checked_rewrite(source_text: str, result: str, system_prompt: str, style_id:
 
 
 # Les réponses de `runtime_http_error` qui disent que le moteur ne peut pas
-# répondre maintenant, et non que la requête est fausse.
-ENGINE_FAILURE_STATUSES = frozenset({429, 502, 503, 504})
+# répondre maintenant, et non que la requête est fausse. 413 : la dictée ne tient
+# pas dans la fenêtre du moteur (local, souvent 4096 jetons) ; elle est rendue telle quelle.
+ENGINE_FAILURE_STATUSES = frozenset({413, 429, 502, 503, 504})
 
 
 # --- reformulation (proxy vers LLM, API OpenAI-compatible)
@@ -15172,7 +15190,11 @@ async def engineering_notes(body: CommandRequest, user: str = Depends(current_us
         prompt += f"\nAdditional instruction: {body.instruction.strip()}"
     if context:
         prompt += f"\n\n{context}"
-    return {"text": await execute_text(TaskType.ENGINEERING_NOTES, prompt, source_text)}
+    try:
+        return {"text": await execute_text(TaskType.ENGINEERING_NOTES, prompt, source_text)}
+    except RewriteTruncated:
+        # Coupées, les notes perdraient leur fin : elles reviennent brutes.
+        return {"text": source_text}
 
 
 # Un morceau de notes que le modèle peut lire ET restituer dans sa fenêtre. Le
@@ -15235,7 +15257,13 @@ async def structured_notes(body: StructuredNotesRequest, user: str = Depends(cur
     # Un texte long est structuré morceau par morceau, dans l'ordre : chaque
     # morceau tient dans la fenêtre du modèle, rien n'est laissé de côté.
     pieces = split_for_structuring(source_text, STRUCTURED_NOTES_CHUNK_CHARS) or [source_text]
-    parts = [await execute_text(TaskType.ENGINEERING_NOTES, prompt, piece) for piece in pieces]
+    parts = []
+    for piece in pieces:
+        try:
+            parts.append(await execute_text(TaskType.ENGINEERING_NOTES, prompt, piece))
+        except RewriteTruncated:
+            # Coupé, le morceau perdrait sa fin : il revient tel quel.
+            parts.append(piece)
     return {"text": "\n\n".join(part.strip() for part in parts), "note_type": body.note_type}
 
 # ================================================================ LEARN
