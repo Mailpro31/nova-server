@@ -49,7 +49,7 @@ export async function pilotView(ctx: Ctx): Promise<View> {
 
   const counts: Record<Tab, number> = { questions: openQ, consignes: unread, pr: prCount, journal: journalTotal };
   const labels: Record<Tab, string> = { questions: "Questions", consignes: "Consignes", pr: "PR", journal: "Journal" };
-  const tabs = `<div class="toolbar"><nav class="seg" aria-label="Vues">${TABS.map((t) => `<a href="${tabLink(t)}" class="${t === tab ? "on" : ""}"${t === tab ? ' aria-current="page"' : ""}>${labels[t]} (${counts[t]})</a>`).join("")}</nav></div>`;
+  const tabs = `<div class="toolbar"><nav class="seg" aria-label="Vues">${TABS.map((t) => `<a href="${tabLink(t)}" class="${t === tab ? "on" : ""}"${t === tab ? ' aria-current="true"' : ""}>${labels[t]} (${counts[t]})</a>`).join("")}</nav></div>`;
 
   const body = tab === "questions" ? await questionsTab(db) : tab === "consignes" ? await messagesTab(db) : tab === "pr" ? await prTab(db) : await journalTab(db, ctx.url);
   return { title: "Claude", subtitle: "Pause, consignes, questions, PR retenues et journal de la session autonome.", body: `<div class="top">${card}${kpis}</div>${tabs}${body}` };
