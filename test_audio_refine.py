@@ -188,6 +188,11 @@ class DoubtfulWordsTests(AdminTestCase):
         self.assertEqual(main.changed_words("la portance augmente", "La portance augmente."), [])
         self.assertEqual(main.changed_words("", "Bonjour."), ["Bonjour"])
 
+    def test_a_typographic_apostrophe_is_not_a_doubtful_word(self):
+        # Whisper écrit « l'école », Gemini « l’école » : le même mot.
+        self.assertEqual(main.changed_words("l'école c'est aujourd'hui",
+                                            "L’école, c’est aujourd’hui."), [])
+
     def test_the_dictation_route_returns_them(self):
         from test_dictation_language import engine_saying
         token = self.sign_in("etudiant@example.com")

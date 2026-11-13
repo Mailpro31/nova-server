@@ -13199,7 +13199,8 @@ def changed_words(heard: str, read: str) -> list[str]:
     change étaient vraiment faux, et ils couvrent 54,6 % des erreurs ; mieux que la
     confiance de faster-whisper (62,5 %). Le mot renvoyé est celui de la relecture.
     """
-    key = lambda word: word.strip(_WORD_EDGES).casefold()  # noqa: E731
+    # « l’école » de Gemini et « l'école » de Whisper sont le même mot.
+    key = lambda word: word.replace("’", "'").strip(_WORD_EDGES).casefold()  # noqa: E731
     before, after = [key(w) for w in heard.split()], read.split()
     found: list[str] = []
     matcher = difflib.SequenceMatcher(None, before, [key(w) for w in after], autojunk=False)
