@@ -210,6 +210,29 @@ class RefusalTests(ImportTestCase):
         self.assertEqual(count, 0)
 
 
+class GroupNameTests(ImportTestCase):
+    def test_two_spellings_of_one_group_make_one_group(self):
+        # Avant : « Aero 2 » et « aero 2 » creaient deux groupes, puis la
+        # meme personne y etait inscrite deux fois (erreur 500).
+        response = self.send(
+            "email,groupe\na@example.com,Aero 2\na@example.com,aero 2\nb@example.com,AERO 2\n",
+            apply=True)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["preview"]["groups_to_create"], ["Aero 2"])
+        self.assertEqual(self.group_members("Aero 2"), {"a@example.com", "b@example.com"})
+
+    def test_the_same_group_twice_in_one_cell_is_not_a_crash(self):
+        response = self.send('email,groupe\na@example.com,"Aero 2;aero 2"\n', apply=True)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(self.group_members("Aero 2"), {"a@example.com"})
+
+    def test_a_group_name_too_long_is_refused_like_on_creation(self):
+        response = self.send("email,groupe\na@example.com," + "x" * 121 + "\n", apply=True)
+        preview = response.json()["preview"]
+        self.assertEqual(preview["invalid"], [{"line": 2, "code": "GROUP_NAME_INVALID"}])
+        self.assertEqual(preview["groups_to_create"], [])
+
+
 class ParserTests(unittest.TestCase):
     def test_columns_are_recognised_in_french_and_english(self):
         for header in ("email,groupe,type", "Adresse,Groupe,Type",

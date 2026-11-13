@@ -10507,6 +10507,7 @@ def plan_member_import(conn, organization_id: str, rows: list[dict], mode: str) 
     wanted: dict[str, set[str]] = {}
     accounts: dict[str, dict] = {}
     to_create: list[str] = []
+    canonical: dict[str, str] = {}
 
     for row in rows:
         email = row["email"]
@@ -10521,18 +10522,28 @@ def plan_member_import(conn, organization_id: str, rows: list[dict], mode: str) 
             invalid.append({"line": row["line"], "code": "MEMBER_ROLE_INVALID"})
             continue
         refused = False
+        names: list[str] = []
         for name in row["groups"]:
+            if len(name) > MAX_GROUP_NAME:
+                invalid.append({"line": row["line"], "code": "GROUP_NAME_INVALID"})
+                refused = True
+                break
             existing = groups.get(name.casefold())
             if existing is not None and existing["source"] != GROUP_SOURCE_CONSOLE:
                 invalid.append({"line": row["line"], "code": "GROUP_MANAGED_BY_DIRECTORY"})
                 refused = True
                 break
+            # « Aero 2 » et « aero 2 » sont un seul groupe, comme a la creation
+            # a la main : la premiere graphie rencontree fait foi.
+            name = existing["display_name"] if existing else canonical.setdefault(
+                name.casefold(), name)
             if existing is None and name not in to_create:
                 to_create.append(name)
+            names.append(name)
         if refused:
             continue
         accounts[normalize_email(email)] = {"email": email, "member_role": role}
-        for name in row["groups"]:
+        for name in names:
             wanted.setdefault(name, set()).add(normalize_email(email))
 
     known = {
