@@ -538,9 +538,10 @@ export function Security() {
  * sachant qu'il y etait.
  */
 export function AuditLog() {
-  const { control, session } = useSession();
+  const { control, session, reportFailure } = useSession();
   const organizationId = session.admin?.organizationId ?? "";
   const mayRead = can(session, CAPABILITY.securityManage);
+  const [moreFailure, setMoreFailure] = useState<string | null>(null);
   const [pages, setPages] = useState<AuditEntry[][]>([]);
   const [cursor, setCursor] = useState<number | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -559,6 +560,7 @@ export function AuditLog() {
   async function loadMore() {
     if (!nextBefore) return;
     setLoadingMore(true);
+    setMoreFailure(null);
     try {
       const page = await control!.audit(organizationId, {
         limit: 25,
@@ -566,6 +568,9 @@ export function AuditLog() {
       });
       setPages((current) => [...current, page.entries]);
       setCursor(page.next_before);
+    } catch (raised) {
+      // Sans ce message, « Voir plus » ne produisait rien et ne disait pas pourquoi.
+      setMoreFailure(reportFailure(raised));
     } finally {
       setLoadingMore(false);
     }
@@ -628,6 +633,7 @@ export function AuditLog() {
                   </button>
                 </div>
               )}
+              {moreFailure && <Notice tone="danger">{moreFailure}</Notice>}
             </>
           )
         }

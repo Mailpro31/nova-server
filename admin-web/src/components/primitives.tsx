@@ -33,8 +33,10 @@ export function Panel({
 export function Facts({ entries }: { entries: [string, ReactNode][] }) {
   return (
     <dl className="facts">
-      {entries.map(([label, value]) => (
-        <div key={label} style={{ display: "contents" }}>
+      {entries.map(([label, value], index) => (
+        // Deux lignes peuvent porter le meme libelle (deux actes a la meme
+        // seconde, dans le journal) : le rang les distingue.
+        <div key={`${index}-${label}`} style={{ display: "contents" }}>
           <dt>{label}</dt>
           <dd>{value}</dd>
         </div>
