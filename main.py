@@ -3245,15 +3245,22 @@ def record_ai_spend(email: str | None, usage: dict, backend: dict, eur: float | 
     cost = ai_envelope.call_cost(usage) if eur is None else eur
     if cost <= 0:
         return
-    before = ai_envelope_state()
+    now = time.time()
+    state = licence.licence_state(NOVA_LICENCE, now)
     with db() as conn:
         conn.execute(
             """INSERT INTO ai_spend(month, email, eur) VALUES (?,?,?)
                ON CONFLICT(month, email) DO UPDATE SET eur = ai_spend.eur + excluded.eur""",
-            (ai_envelope.month_of(time.time()), email or "", cost))
-    if before:
-        for percent in ai_envelope.crossed(before["spent_eur"], before["spent_eur"] + cost,
-                                           before["allowance_eur"]):
+            (ai_envelope.month_of(now), email or "", cost))
+        # Le total lu après l'écriture, dans la même transaction et sans arrondi :
+        # un total arrondi (23,996 → 24,00) sautait le seuil, et deux appels
+        # simultanés qui lisaient le même total avant d'écrire alertaient deux fois.
+        after = conn.execute("SELECT COALESCE(SUM(eur), 0) FROM ai_spend WHERE month >= ?",
+                             (str(state.get("starts", ""))[:7],)).fetchone()[0]
+    if state.get("ai_envelope_eur") is not None:
+        allowance = ai_envelope.allowance(
+            state["ai_envelope_eur"], state["starts"], state["ends"], now)
+        for percent in ai_envelope.crossed(after - cost, after, allowance):
             observability.log("ai.envelope_alert", level="warning", percent=percent)
 
 
