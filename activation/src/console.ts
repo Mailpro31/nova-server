@@ -4,6 +4,7 @@
 
 import { dashboard, escape, type MetricsEnv } from "./dashboard";
 import { normalizeCode, sha256Hex } from "./index";
+import { pilotAction, pilotSection } from "./pilot";
 
 export interface ConsoleEnv extends MetricsEnv {
   DB: D1Database;
@@ -121,9 +122,9 @@ const claimsOf = (licence: string): Record<string, unknown> => {
 const day = (seconds: number | null) => (seconds ? new Date(seconds * 1000).toISOString().slice(0, 10) : "");
 
 async function page(env: ConsoleEnv, user: string, now: number, notice = ""): Promise<Response> {
-  const [{ results }, board] = await Promise.all([env.DB.prepare(
+  const [{ results }, board, claude] = await Promise.all([env.DB.prepare(
     "SELECT school, licence, expires_at, used_at FROM codes ORDER BY expires_at DESC LIMIT 200",
-  ).all<{ school: string; licence: string; expires_at: number; used_at: number | null }>(), dashboard(env, now)]);
+  ).all<{ school: string; licence: string; expires_at: number; used_at: number | null }>(), dashboard(env, now), pilotSection(env.DB, now)]);
   const rows = results.map((row) => {
     const c = claimsOf(row.licence);
     const state = row.used_at
@@ -180,8 +181,13 @@ blockquote{margin:0 0 10px;padding:10px 12px;background:var(--accent-soft);borde
 .chips{display:flex;gap:6px;flex-wrap:wrap}
 form{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px}
 label{display:flex;flex-direction:column;gap:6px;font-size:13px;color:var(--muted);font-weight:500}
-input,select{font:inherit;padding:9px 11px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--text)}
-input:focus,select:focus{outline:2px solid var(--accent);outline-offset:1px}
+input,select,textarea{font:inherit;padding:9px 11px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--text)}
+textarea{resize:vertical;width:100%}form.stacked{grid-template-columns:1fr}form.inline{display:flex;gap:8px;align-items:center;flex-wrap:wrap}form.inline input{flex:1;min-width:120px}
+.reports form{grid-template-columns:1fr;margin-top:8px}button.danger{background:var(--bad)}button.ghost{background:var(--neutral-soft);color:var(--text)}
+h3.sub{margin:24px 0 10px}details summary{cursor:pointer;color:var(--accent);font-weight:600;font-size:14px}
+pre{margin:8px 0 0;padding:12px;background:var(--bg);border:1px solid var(--line);border-radius:10px;font-size:12.5px;line-height:1.45;white-space:pre-wrap;word-break:break-word;max-height:480px;overflow:auto}
+.reports header{gap:8px}
+input:focus,select:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:1px}
 button{font:inherit;font-weight:600;padding:10px 18px;border:0;border-radius:10px;background:var(--accent);color:#fff;cursor:pointer;align-self:end}
 table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;padding:10px 8px;border-bottom:1px solid var(--line)}
 th{color:var(--muted);font-weight:500;font-size:13px}tr:last-child td{border-bottom:0}.scroll{overflow-x:auto}
@@ -195,18 +201,19 @@ nav a{white-space:nowrap;background:var(--neutral-soft)}
 main{padding:16px max(16px,env(safe-area-inset-left)) calc(32px + env(safe-area-inset-bottom))}section{scroll-margin-top:120px;margin-bottom:28px}
 .kpis{grid-template-columns:1fr 1fr;gap:10px}.kpi{padding:12px}.kpi-value{font-size:24px}.kpi:first-child{grid-column:1/-1}
 .grid{grid-template-columns:1fr}.card{padding:14px}.stats{grid-template-columns:1fr 1fr}
-input,select,button{font-size:16px}button{width:100%}
+input,select,textarea,button{font-size:16px}button{width:100%}form.inline input{min-width:100%}
 table,tbody,tr,td{display:block}thead{display:none}tr{padding:10px 0;border-bottom:1px solid var(--line)}tr:last-child{border-bottom:0}
 td{border:0;padding:3px 0;display:flex;justify-content:space-between;gap:12px;text-align:right}td::before{content:attr(data-label);color:var(--muted);text-align:left}
 td[colspan]{justify-content:center}td[colspan]::before{content:none}
 code{font-size:20px}}
 </style></head><body>
 <div class="top"><div class="top-in"><div class="brand"><i></i>Console Nova</div>
-<nav><a href="#apercu">Aperçu</a><a href="#ecoles">Écoles</a><a href="#usage">Usage</a><a href="#ia">Coûts d'IA</a><a href="#signalements">Signalements</a><a href="#licences">Licences</a></nav>
+<nav><a href="#apercu">Aperçu</a><a href="#claude">Claude</a><a href="#ecoles">Écoles</a><a href="#usage">Usage</a><a href="#ia">Coûts d'IA</a><a href="#signalements">Signalements</a><a href="#licences">Licences</a></nav>
 <div class="who">${escape(user)} · <a href="${escape(env.GRAFANA_URL)}/dashboards" target="_blank" rel="noopener">Grafana</a></div></div></div>
 <main>
 ${notice}
 ${board}
+${claude}
 <section id="licences"><h2>Licences</h2><div class="grid">
 <article class="card"><header><h3>Nouveau code d'activation</h3></header><p class="muted">À usage unique : la DSI le colle dans NOVA_ACTIVATION_CODE.</p>
 <form method="post" action="/codes">
@@ -257,6 +264,10 @@ export default {
     const { pathname } = new URL(request.url);
     if (request.method === "GET" && pathname === "/") return page(env, user, now);
     if (request.method === "POST" && pathname === "/codes") return create(request, env, user, now);
+    if (request.method === "POST" && pathname.startsWith("/pilot/")) {
+      if (request.headers.get("origin") !== new URL(request.url).origin) return new Response("Origine refusée", { status: 403 });
+      return (await pilotAction(pathname, await request.formData(), env.DB, user, now)) ?? new Response("Introuvable", { status: 404 });
+    }
     return new Response("Introuvable", { status: 404 });
   },
 };

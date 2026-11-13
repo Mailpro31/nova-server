@@ -128,3 +128,43 @@ describe("règles", () => {
     expect(JSON.parse(Buffer.from(token.split(".")[0], "base64url").toString())).toEqual({ alg: "EdDSA", typ: "JWT" });
   });
 });
+
+describe("pilotage de Claude", () => {
+  const send = async (path: string, fields: Record<string, string>, origin = ORIGIN) =>
+    call(path, { method: "POST", token: await goodToken(), body: form(fields), headers: { "content-type": "application/x-www-form-urlencoded", origin } });
+  const pageText = async () => (await call("/", { token: await goodToken() })).text();
+
+  it("met en pause puis relance, avec l'auteur", async () => {
+    expect((await send("/pilot/pause", { paused: "1" })).status).toBe(303);
+    expect(await pageText()).toContain("En pause");
+    expect(await env.DB.prepare("SELECT value, by FROM pilot_state").first()).toEqual({ value: "1", by: "sash@example.org" });
+    await send("/pilot/pause", { paused: "0" });
+    expect(await pageText()).toContain("Mettre Claude en pause");
+  });
+  it("enregistre une consigne, échappée, et refuse une autre origine", async () => {
+    expect((await send("/pilot/message", { body: "<img src=x>" }, "https://ailleurs.test")).status).toBe(403);
+    expect(await env.DB.prepare("SELECT * FROM pilot_messages").first()).toBeNull();
+    await send("/pilot/message", { body: "<img src=x>" });
+    const html = await pageText();
+    expect(html).not.toContain("<img src=x>");
+    expect(html).toContain("Pas encore lu");
+  });
+  it("retient puis relâche une PR, refuse un dépôt invalide", async () => {
+    await env.DB.prepare("INSERT INTO pilot_prs VALUES ('nova-server', 12, 'feat: x', 'vert', 'https://github.com/x', ?)").bind(NOW).run();
+    await send("/pilot/hold", { repo: "nova-server", number: "12", hold: "1", reason: "attend Sash" });
+    expect(await pageText()).toContain("Retenue : attend Sash");
+    await send("/pilot/hold", { repo: "nova-server", number: "12", hold: "0" });
+    expect(await pageText()).toContain("Autorisée si verte");
+    expect((await send("/pilot/hold", { repo: "../x", number: "1", hold: "1" })).status).toBe(400);
+  });
+  it("répond une seule fois à une question, et montre le rapport détaillé du journal", async () => {
+    await env.DB.prepare("INSERT INTO pilot_questions (at, title) VALUES (?, 'Prix ?')").bind(NOW).run();
+    await env.DB.prepare("INSERT INTO pilot_journal (at, kind, result, title, details) VALUES (?, 'bug', 'ok', 'Bulle', 'journal: <err>')").bind(NOW).run();
+    await send("/pilot/answer", { id: "1", answer: "12 €" });
+    await send("/pilot/answer", { id: "1", answer: "autre" });
+    expect(await env.DB.prepare("SELECT answer FROM pilot_questions").first()).toEqual({ answer: "12 €" });
+    const html = await pageText();
+    expect(html).toContain("Rapport détaillé");
+    expect(html).toContain("journal: &#60;err&#62;");
+  });
+});
