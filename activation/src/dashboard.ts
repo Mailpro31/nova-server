@@ -101,22 +101,39 @@ async function reports(env: MetricsEnv, now: number): Promise<Report[] | null> {
   return out.sort((a, b) => b.at - a.at);
 }
 
-// ------------------------------------------------------------ sections
+// ------------------------------------------------------------ données de la flotte
 
-type Tone = "ok" | "warn" | "bad" | "neutral";
-const pill = (tone: Tone, text: string) => `<span class="pill ${tone}">${text}</span>`;
-const LICENCE_TONE: Record<string, Tone> = {
+export type Tone = "ok" | "warn" | "bad" | "neutral";
+export const LICENCE_TONE: Record<string, Tone> = {
   valid: "ok", warning: "warn", grace: "warn", expired: "bad", none: "neutral", invalid: "bad",
 };
-const kpi = (label: string, value: string, hint = "") =>
-  `<div class="kpi"><div class="kpi-label">${label}</div><div class="kpi-value">${value}</div>${hint ? `<div class="kpi-hint">${hint}</div>` : ""}</div>`;
-const stat = (label: string, value: string) => `<div class="stat"><span>${label}</span><strong>${value}</strong></div>`;
-const total = (values: Record<string, number>) => Object.values(values).reduce((x, y) => x + y, 0);
+export { ago, num, LICENCE_LABEL, DAY };
 
-export async function dashboard(env: MetricsEnv, now: number): Promise<string> {
-  if (!env.GRAFANA_READ_TOKEN) {
-    return `<section id="ecoles"><h2>Écoles</h2><p class="empty">Jeton de lecture Grafana absent (secret GRAFANA_READ_TOKEN).</p></section>`;
-  }
+/** Un serveur est « en ligne » s'il a envoyé ses mesures depuis moins de 10 minutes. */
+export const ONLINE_SECONDS = 600;
+
+export interface SchoolData {
+  id: string;                      // étiquette « school » de Grafana
+  lastSeen: number;                // secondes Unix du dernier envoi
+  online: boolean;
+  serverVersion?: string;
+  apps: { version: string; count: number }[];   // versions de Nova sur les postes
+  members?: number;                // comptes actifs
+  activeMonth?: number;            // élèves ayant dicté ce mois
+  dictations24h?: number;
+  licence?: { status: string; tier: string; daysLeft?: number };
+  spendMonth?: number;             // € dépensés ce mois
+  envelopeAnnual?: number;         // € par an, si la licence en porte une
+  tokens30d?: number;
+  dictSeries: [number, number][];  // dictées par jour, 14 jours
+  latencySeries: [number, number][]; // p95 de la transcription (s) par jour, 14 jours
+}
+export interface Fleet { schools: SchoolData[]; reports: Report[] | null }
+export type FleetResult = { ok: true; fleet: Fleet } | { ok: false; reason: "token" | "grafana" };
+
+/** Lit tout Grafana Cloud en une passe (requêtes en parallèle). */
+export async function loadFleet(env: MetricsEnv, now: number): Promise<FleetResult> {
+  if (!env.GRAFANA_READ_TOKEN) return { ok: false, reason: "token" };
   const [seen, server, apps, members, active, dictations, licence, days, spend, envelope, tokens, dictSeries, latency, support] =
     await Promise.all([
       instant(env, "max by (school) (timestamp(nova_uptime_seconds))"),
@@ -134,71 +151,21 @@ export async function dashboard(env: MetricsEnv, now: number): Promise<string> {
       range(env, 'histogram_quantile(0.95, sum by (school, le) (rate(nova_stage_seconds_bucket{stage="transcription"}[1d])))', now, 14),
       reports(env, now),
     ]);
-  if (!seen) return `<section id="ecoles"><h2>Écoles</h2><p class="empty">Grafana Cloud ne répond pas : réessayez dans un instant.</p></section>`;
-
-  const last = bySchool(seen);
-  const schools = Object.keys(last).sort();
-  const m = bySchool(members), a = bySchool(active), d = bySchool(dictations), dl = bySchool(days);
+  if (!seen) return { ok: false, reason: "grafana" };
+  const last = bySchool(seen), m = bySchool(members), a = bySchool(active), d = bySchool(dictations), dl = bySchool(days);
   const sp = bySchool(spend), en = bySchool(envelope), tk = bySchool(tokens);
-  const online = schools.filter((s) => now - last[s] < 600).length;
-  const week = (support ?? []).filter((r) => now - r.at < 7 * DAY).length;
-
-  const overview = `<div class="kpis">
-${kpi("Écoles en ligne", `${online}<small> / ${schools.length}</small>`, online < schools.length ? pill("bad", "Une école ne répond plus") : pill("ok", "Tout répond"))}
-${kpi("Élèves actifs ce mois", num(total(a)))}
-${kpi("Dictées sur 24 h", num(total(d)))}
-${kpi("Dépense d'IA du mois", `${num(total(sp), 2)} €`)}
-${kpi("Signalements sur 7 j", support === null ? "—" : num(week), week ? pill("warn", "À lire plus bas") : "")}
-</div>`;
-
-  const cards = schools.map((school) => {
-    const silent = now - last[school];
-    const status = silent < 600 ? pill("ok", "En ligne") : pill("bad", `Muet depuis ${ago(silent)}`);
-    const version = server?.find((s) => s.metric.school === school)?.metric.server_version ?? "—";
-    const posts = (apps ?? []).filter((s) => s.metric.school === school && Number(s.value[1]) > 0)
-      .map((s) => `<span class="chip">${escape(s.metric.version)} ×${num(Number(s.value[1]))}</span>`).join(" ") || "—";
-    const lic = licence?.find((s) => s.metric.school === school)?.metric;
-    const licText = lic
-      ? pill(LICENCE_TONE[lic.status] ?? "neutral", `${LICENCE_LABEL[lic.status] ?? escape(lic.status)}${lic.tier !== "none" ? ` · ${escape(lic.tier)}` : ""}${dl[school] !== undefined ? ` · ${num(dl[school])} j` : ""}`)
-      : "—";
-    return `<article class="card"><header><h3>${escape(school)}</h3>${status}</header>
-<div class="stats">${stat("Comptes actifs", num(m[school]))}${stat("Élèves actifs (mois)", num(a[school]))}${stat("Dictées 24 h", num(d[school]))}</div>
-<dl><dt>Licence</dt><dd>${licText}</dd><dt>Serveur</dt><dd>${escape(version)}</dd><dt>Postes</dt><dd>${posts}</dd></dl></article>`;
-  }).join("");
-
-  const usage = schools.map((school) => `<article class="card"><header><h3>${escape(school)}</h3></header><div class="charts">
-<figure><figcaption>Dictées par jour</figcaption>${bars(points(dictSeries, school), "dictées")}</figure>
-<figure><figcaption>Temps de transcription (95 % des dictées, en s)</figcaption>${bars(points(latency, school), "s")}</figure></div></article>`).join("");
-
-  const ai = schools.map((school) => {
-    const month = en[school] !== undefined ? en[school] / 12 : undefined;
-    const ratio = month ? (sp[school] ?? 0) / month : undefined;
-    const tone: Tone = ratio === undefined ? "neutral" : ratio > 1 ? "bad" : ratio > 0.8 ? "warn" : "ok";
-    const meter = ratio === undefined ? `<p class="muted">Pas d'enveloppe dans la licence.</p>`
-      : `<div class="meter ${tone}"><div style="width:${Math.min(100, ratio * 100).toFixed(0)}%"></div></div>`;
-    return `<article class="card"><header><h3>${escape(school)}</h3>${ratio === undefined ? "" : pill(tone, `${num(ratio * 100)} %`)}</header>${meter}
-<div class="stats">${stat("Dépensé ce mois", `${num(sp[school], 2)} €`)}${stat("Part du mois", month ? `${num(month, 2)} €` : "—")}${stat("Enveloppe annuelle", en[school] !== undefined ? `${num(en[school])} €` : "Non fixée")}${stat("Jetons (30 j)", num(tk[school]))}</div></article>`;
-  }).join("");
-
-  const supportList = support === null
-    ? `<p class="empty">Les journaux ne sont pas lisibles avec ce jeton : ajoutez le droit <em>logs:read</em> à sa politique d'accès Grafana Cloud.</p>`
-    : support.length === 0
-      ? `<p class="empty">Aucun signalement depuis 30 jours.</p>`
-      : `<ul class="reports">${support.map((r) => {
-        const engines = Object.entries((r.line.engines ?? {}) as Record<string, string>).filter(([, v]) => v !== "ok");
-        const chips = engines.length
-          ? engines.map(([k, v]) => pill(v === "error" ? "bad" : "warn", `${escape(k)} : ${escape(v)}`)).join(" ")
-          : pill("ok", "Tout va bien");
-        const when = new Date(r.at * 1000).toLocaleString("fr-FR", { timeZone: "Europe/Paris", dateStyle: "medium", timeStyle: "short" });
-        const description = String(r.line.description ?? "").trim();
-        return `<li class="card"><header><strong>${escape(r.school)}</strong><span class="chip">Nova ${escape(r.line.app_version)}</span><time>${escape(when)}</time></header>
-${description ? `<blockquote>${escape(description)}</blockquote>` : `<p class="muted">Sans description.</p>`}
-<div class="chips">${chips}${r.line.last_error ? ` ${pill("bad", `Erreur : ${escape(r.line.last_error)}`)}` : ""}</div></li>`;
-      }).join("")}</ul>`;
-
-  return `<section id="apercu">${overview}</section>
-<section id="ecoles"><h2>Écoles</h2><div class="grid">${cards || `<p class="empty">Aucune école ne remonte de mesures.</p>`}</div></section>
-<section id="usage"><h2>Usage <small>14 derniers jours</small></h2><div class="stack">${usage}</div></section>
-<section id="ia"><h2>Coûts d'IA</h2><p class="lead">Dépense du mois comparée au douzième de l'enveloppe annuelle.</p><div class="grid">${ai}</div></section>
-<section id="signalements"><h2>Signalements <small>30 derniers jours</small></h2>${supportList}</section>`;
+  const schools = Object.keys(last).sort().map((id): SchoolData => {
+    const lic = licence?.find((s) => s.metric.school === id)?.metric;
+    return {
+      id, lastSeen: last[id], online: now - last[id] < ONLINE_SECONDS,
+      serverVersion: server?.find((s) => s.metric.school === id)?.metric.server_version,
+      apps: (apps ?? []).filter((s) => s.metric.school === id && Number(s.value[1]) > 0)
+        .map((s) => ({ version: s.metric.version, count: Number(s.value[1]) })),
+      members: m[id], activeMonth: a[id], dictations24h: d[id],
+      licence: lic ? { status: lic.status, tier: lic.tier, daysLeft: dl[id] } : undefined,
+      spendMonth: sp[id], envelopeAnnual: en[id], tokens30d: tk[id],
+      dictSeries: points(dictSeries, id), latencySeries: points(latency, id),
+    };
+  });
+  return { ok: true, fleet: { schools, reports: support } };
 }

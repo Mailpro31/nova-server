@@ -64,3 +64,19 @@ CREATE TABLE IF NOT EXISTS pilot_messages (
   reply      TEXT,
   replied_at INTEGER
 );
+-- Journal d'activité de la console : qui a fait quoi (jamais de code en clair ni de secret).
+CREATE TABLE IF NOT EXISTS console_audit (
+  id     INTEGER PRIMARY KEY AUTOINCREMENT,
+  at     INTEGER NOT NULL,
+  by     TEXT NOT NULL,
+  action TEXT NOT NULL,
+  detail TEXT
+);
+-- Suivi des signalements reçus par Loki : clé = école + horodatage (ns) de la ligne.
+CREATE TABLE IF NOT EXISTS report_status (
+  report_key TEXT PRIMARY KEY,
+  status     TEXT NOT NULL,          -- traite, ignore
+  note       TEXT,
+  at         INTEGER NOT NULL,
+  by         TEXT NOT NULL
+);

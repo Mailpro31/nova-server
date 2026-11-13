@@ -2,27 +2,13 @@
 // navigateur et liste ceux déjà donnés. Protégée par Cloudflare Access ; le
 // jeton d'Access est revérifié ici, pour qu'une erreur de réglage n'ouvre rien.
 
-import { dashboard, escape, type MetricsEnv } from "./dashboard";
-import { normalizeCode, sha256Hex } from "./index";
-import { pilotAction, pilotSection } from "./pilot";
+import { layout, type Ctx, type ConsoleEnv, type Page, type PageId } from "./shell";
+import { PAGES } from "./pages";
 
-export interface ConsoleEnv extends MetricsEnv {
-  DB: D1Database;
-  SIGNING_KEY: string; // clé privée Ed25519 (PKCS8, PEM), secret Cloudflare
-  ACCESS_TEAM_DOMAIN: string; // ex. « nova-ecole.cloudflareaccess.com »
-  ACCESS_AUD: string; // « Application Audience (AUD) Tag » de l'application Access
-  GRAFANA_URL: string;
-}
+export type { ConsoleEnv } from "./shell";
 
-const CODE_ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ";
-const DAY = 86400;
-const KINDS = ["pilot", "subscription"];
-const encoder = new TextEncoder();
-
-const b64url = (bytes: Uint8Array) =>
-  btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-const fromB64url = (text: string) =>
-  Uint8Array.from(atob(text.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
+import { encoder, fromB64url } from "./b64";
+export { claimsOf, invalid, newCode, signLicence, type LicenceRequest } from "./licence";
 
 // ------------------------------------------------------------ Access
 
@@ -57,203 +43,18 @@ export async function accessUser(request: Request, env: ConsoleEnv, now: number)
   }
 }
 
-// ------------------------------------------------------------ licence
+// ------------------------------------------------------------ routage
 
-export interface LicenceRequest {
-  organization: string;
-  tier: string;
-  kind: string;
-  starts: string;
-  ends: string;
-  ai_envelope_eur?: number;
-}
+const pageFor = (pathname: string): Page | undefined =>
+  PAGES.find((p) => p.path === pathname || (p.path !== "/" && pathname.startsWith(`${p.path}/`)) || pathname === `${p.path}.csv`);
 
-// Refuse aussi le 31 février, que Date ferait glisser au 3 mars.
-const isDay = (day: string) => {
-  const parsed = new Date(`${day}T00:00:00Z`);
-  return /^\d{4}-\d{2}-\d{2}$/.test(day) && !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === day;
-};
-
-/** Mêmes règles que licence.issue() côté serveur ; null si tout va bien. */
-export function invalid(r: LicenceRequest): string | null {
-  if (!r.organization.trim() || r.organization.length > 100) return "Nom de l'établissement manquant.";
-  if (!r.tier.trim() || r.tier.length > 40) return "Offre manquante.";
-  if (!KINDS.includes(r.kind)) return "Type inconnu.";
-  if (!isDay(r.starts) || !isDay(r.ends)) return "Dates au format AAAA-MM-JJ.";
-  if (r.ends < r.starts) return "La fin est avant le début.";
-  if (r.ai_envelope_eur !== undefined && !(r.ai_envelope_eur >= 0)) return "Enveloppe d'IA négative.";
-  return null;
-}
-
-/** Jeton EdDSA lisible par PyJWT (licence.licence_state). */
-export async function signLicence(pem: string, r: LicenceRequest): Promise<string> {
-  const der = fromB64url(pem.replace(/-----[^-]+-----/g, "").replace(/\s+/g, ""));
-  const key = await crypto.subtle.importKey("pkcs8", der, { name: "Ed25519" }, false, ["sign"]);
-  const claims: Record<string, unknown> = {
-    organization: r.organization.trim(), tier: r.tier.trim(), kind: r.kind, starts: r.starts, ends: r.ends,
-  };
-  if (r.ai_envelope_eur !== undefined) claims.ai_envelope_eur = r.ai_envelope_eur;
-  const input = `${b64url(encoder.encode(JSON.stringify({ alg: "EdDSA", typ: "JWT" })))}.${b64url(encoder.encode(JSON.stringify(claims)))}`;
-  const signature = new Uint8Array(await crypto.subtle.sign("Ed25519", key, encoder.encode(input)));
-  return `${input}.${b64url(signature)}`;
-}
-
-/** « NOVA-7K2P-91XQ », tiré sans biais (rejet des octets ≥ 248). */
-export function newCode(): string {
-  let chars = "";
-  while (chars.length < 8) {
-    for (const byte of crypto.getRandomValues(new Uint8Array(16))) {
-      if (byte < 248 && chars.length < 8) chars += CODE_ALPHABET[byte % CODE_ALPHABET.length];
-    }
-  }
-  return `NOVA-${chars.slice(0, 4)}-${chars.slice(4)}`;
-}
-
-const claimsOf = (licence: string): Record<string, unknown> => {
+async function badges(env: ConsoleEnv): Promise<Partial<Record<PageId, number>>> {
   try {
-    return JSON.parse(new TextDecoder().decode(fromB64url(licence.split(".")[1])));
+    const q = await env.DB.prepare("SELECT COUNT(*) AS n FROM pilot_questions WHERE answer IS NULL").first<{ n: number }>();
+    return { claude: q?.n ?? 0 };
   } catch {
     return {};
   }
-};
-
-// ------------------------------------------------------------ page
-
-const day = (seconds: number | null) => (seconds ? new Date(seconds * 1000).toISOString().slice(0, 10) : "");
-
-async function page(env: ConsoleEnv, user: string, now: number, notice = ""): Promise<Response> {
-  const [{ results }, board, claude] = await Promise.all([env.DB.prepare(
-    "SELECT school, licence, expires_at, used_at FROM codes ORDER BY expires_at DESC LIMIT 200",
-  ).all<{ school: string; licence: string; expires_at: number; used_at: number | null }>(), dashboard(env, now), pilotSection(env.DB, now)]);
-  const rows = results.map((row) => {
-    const c = claimsOf(row.licence);
-    const state = row.used_at
-      ? `<span class="pill ok">Activé le ${day(row.used_at)}</span>`
-      : row.expires_at > now ? `<span class="pill warn">En attente · jusqu'au ${day(row.expires_at)}</span>` : `<span class="pill neutral">Code expiré</span>`;
-    return `<tr><td data-label="Établissement"><strong>${escape(row.school)}</strong></td><td data-label="Offre">${escape(c.tier)}</td><td data-label="Type">${escape(c.kind === "pilot" ? "Pilote" : "Abonnement")}</td><td data-label="Licence">${escape(c.starts)} → ${escape(c.ends)}</td><td data-label="État">${state}</td></tr>`;
-  }).join("");
-  const html = `<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#f4f5f7" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#181b21" media="(prefers-color-scheme: dark)">
-<title>Console Nova</title><style>
-:root{--bg:#f4f5f7;--card:#fff;--text:#16181d;--muted:#667085;--line:#e4e7ec;--accent:#4f6bed;--accent-soft:#eef1fe;
---ok:#12805c;--ok-soft:#e6f6ef;--warn:#b54708;--warn-soft:#fef4e6;--bad:#c4320a;--bad-soft:#fdeceb;--neutral-soft:#f0f1f4;--shadow:0 1px 2px rgba(16,24,40,.06)}
-@media (prefers-color-scheme:dark){:root{--bg:#0f1115;--card:#181b21;--text:#eef0f4;--muted:#98a2b3;--line:#262a33;--accent:#8ea2ff;--accent-soft:#1d2440;
---ok:#4ad295;--ok-soft:#10291f;--warn:#f7b267;--warn-soft:#2d2112;--bad:#ff8a73;--bad-soft:#331a16;--neutral-soft:#22262e;--shadow:none}}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
-.top{position:sticky;top:0;z-index:2;background:var(--card);border-bottom:1px solid var(--line)}
-.top-in{max-width:1120px;margin:0 auto;padding:12px 16px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
-.brand{font-weight:700;font-size:17px;display:flex;align-items:center;gap:8px}.brand i{width:22px;height:22px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#c9d4ff,var(--accent));display:inline-block}
-nav{display:flex;gap:4px;flex-wrap:wrap;flex:1}nav a{color:var(--muted);text-decoration:none;padding:6px 10px;border-radius:8px;font-size:14px}nav a:hover{background:var(--accent-soft);color:var(--accent)}
-.who{color:var(--muted);font-size:13px}.who a{color:var(--accent)}
-main{max-width:1120px;margin:0 auto;padding:24px 16px 48px}
-section{margin-bottom:36px;scroll-margin-top:72px}
-h2{font-size:18px;margin:0 0 14px}h2 small{color:var(--muted);font-weight:400;font-size:13px;margin-left:6px}
-h3{font-size:15px;margin:0}.lead{color:var(--muted);margin:-8px 0 14px}.muted,.empty{color:var(--muted)}
-.empty{background:var(--card);border:1px dashed var(--line);border-radius:12px;padding:18px;margin:0}
-.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
-.kpi,.card{background:var(--card);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow)}
-.kpi{padding:16px}.kpi-label{color:var(--muted);font-size:13px}.kpi-value{font-size:30px;font-weight:700;letter-spacing:-.02em;line-height:1.2;margin-top:4px}
-.kpi-value small{font-size:16px;color:var(--muted);font-weight:500}.kpi-hint{margin-top:8px}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}.stack{display:grid;gap:14px}
-.card{padding:18px}.card>header{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:14px;flex-wrap:wrap}
-.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px;margin-bottom:14px}
-.stat{background:var(--bg);border-radius:10px;padding:10px 12px}.stat span{display:block;color:var(--muted);font-size:12px}.stat strong{font-size:20px}
-dl{display:grid;grid-template-columns:auto 1fr;gap:8px 14px;margin:0;font-size:14px}dt{color:var(--muted)}dd{margin:0}
-.pill{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12.5px;font-weight:600;white-space:nowrap}
-.pill.ok{background:var(--ok-soft);color:var(--ok)}.pill.warn{background:var(--warn-soft);color:var(--warn)}.pill.bad{background:var(--bad-soft);color:var(--bad)}.pill.neutral{background:var(--neutral-soft);color:var(--muted)}
-.chip{display:inline-block;padding:1px 8px;border-radius:6px;background:var(--neutral-soft);font-size:12.5px;color:var(--muted)}
-.charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:20px}
-figure{margin:0}figcaption{font-size:13px;color:var(--muted);margin-bottom:6px}
-.axis{font-size:12px;color:var(--muted)}.ends{display:flex;justify-content:space-between;margin-top:6px}
-.cols{position:relative;display:flex;align-items:flex-end;gap:4px;height:130px;margin-top:30px;border-bottom:1px solid var(--line)}
-.col{all:unset;position:relative;flex:1;height:100%;display:flex;align-items:flex-end;cursor:pointer;border-radius:4px}
-.col i{display:block;width:100%;background:var(--accent);opacity:.5;border-radius:4px 4px 0 0;transition:opacity .12s}
-.col:last-child i{opacity:.85}.cols:hover .col i{opacity:.25}.cols .col:hover i,.col:focus i{opacity:1}
-.col:hover,.col:focus{background:var(--neutral-soft)}.col:focus-visible{outline:2px solid var(--accent)}
-.tip{display:none;position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);z-index:3;white-space:nowrap;pointer-events:none;
-background:var(--text);color:var(--card);font-size:12px;line-height:1.3;padding:6px 10px;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.18)}
-.tip b{display:block;font-size:15px}.col.l .tip{left:0;transform:none}.col.r .tip{left:auto;right:0;transform:none}
-.col:hover .tip,.col:focus .tip{display:block}
-.meter{height:10px;border-radius:999px;background:var(--neutral-soft);overflow:hidden;margin-bottom:14px}.meter div{height:100%;border-radius:999px;background:var(--ok)}
-.meter.warn div{background:var(--warn)}.meter.bad div{background:var(--bad)}
-.reports{list-style:none;padding:0;margin:0;display:grid;gap:12px}.reports header{justify-content:flex-start!important;margin-bottom:8px!important}
-.reports time{margin-left:auto;color:var(--muted);font-size:13px}
-blockquote{margin:0 0 10px;padding:10px 12px;background:var(--accent-soft);border-radius:10px}
-.chips{display:flex;gap:6px;flex-wrap:wrap}
-form{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px}
-label{display:flex;flex-direction:column;gap:6px;font-size:13px;color:var(--muted);font-weight:500}
-input,select,textarea{font:inherit;padding:9px 11px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--text)}
-textarea{resize:vertical;width:100%}form.stacked{grid-template-columns:1fr}form.inline{display:flex;gap:8px;align-items:center;flex-wrap:wrap}form.inline input{flex:1;min-width:120px}
-.reports form{grid-template-columns:1fr;margin-top:8px}button.danger{background:var(--bad)}button.ghost{background:var(--neutral-soft);color:var(--text)}
-h3.sub{margin:24px 0 10px}details summary{cursor:pointer;color:var(--accent);font-weight:600;font-size:14px}
-pre{margin:8px 0 0;padding:12px;background:var(--bg);border:1px solid var(--line);border-radius:10px;font-size:12.5px;line-height:1.45;white-space:pre-wrap;word-break:break-word;max-height:480px;overflow:auto}
-.reports header{gap:8px}
-input:focus,select:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:1px}
-button{font:inherit;font-weight:600;padding:10px 18px;border:0;border-radius:10px;background:var(--accent);color:#fff;cursor:pointer;align-self:end}
-table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;padding:10px 8px;border-bottom:1px solid var(--line)}
-th{color:var(--muted);font-weight:500;font-size:13px}tr:last-child td{border-bottom:0}.scroll{overflow-x:auto}
-.notice{background:var(--accent-soft);border:1px solid var(--accent);border-radius:14px;padding:16px;margin-bottom:24px}
-code{font-size:24px;font-weight:700;letter-spacing:2px;display:inline-block;margin:6px 0;user-select:all}
-/* Téléphone (iPhone 14 Pro : 393 px) : barre défilante, tuiles par deux, tableau en fiches, champs à 16 px (pas de zoom iOS). */
-@media (max-width:640px){
-.top-in{padding:10px max(16px,env(safe-area-inset-left)) 0;gap:6px}.who{order:2;width:100%;font-size:12px}
-nav{order:3;flex:0 0 calc(100% + 32px);flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;margin:0 -16px;padding:4px 16px 8px}nav::-webkit-scrollbar{display:none}
-nav a{white-space:nowrap;background:var(--neutral-soft)}
-main{padding:16px max(16px,env(safe-area-inset-left)) calc(32px + env(safe-area-inset-bottom))}section{scroll-margin-top:120px;margin-bottom:28px}
-.kpis{grid-template-columns:1fr 1fr;gap:10px}.kpi{padding:12px}.kpi-value{font-size:24px}.kpi:first-child{grid-column:1/-1}
-.grid{grid-template-columns:1fr}.card{padding:14px}.stats{grid-template-columns:1fr 1fr}
-input,select,textarea,button{font-size:16px}button{width:100%}form.inline input{min-width:100%}
-table,tbody,tr,td{display:block}thead{display:none}tr{padding:10px 0;border-bottom:1px solid var(--line)}tr:last-child{border-bottom:0}
-td{border:0;padding:3px 0;display:flex;justify-content:space-between;gap:12px;text-align:right}td::before{content:attr(data-label);color:var(--muted);text-align:left}
-td[colspan]{justify-content:center}td[colspan]::before{content:none}
-code{font-size:20px}}
-</style></head><body>
-<div class="top"><div class="top-in"><div class="brand"><i></i>Console Nova</div>
-<nav><a href="#apercu">Aperçu</a><a href="#claude">Claude</a><a href="#ecoles">Écoles</a><a href="#usage">Usage</a><a href="#ia">Coûts d'IA</a><a href="#signalements">Signalements</a><a href="#licences">Licences</a></nav>
-<div class="who">${escape(user)} · <a href="${escape(env.GRAFANA_URL)}/dashboards" target="_blank" rel="noopener">Grafana</a></div></div></div>
-<main>
-${notice}
-${board}
-${claude}
-<section id="licences"><h2>Licences</h2><div class="grid">
-<article class="card"><header><h3>Nouveau code d'activation</h3></header><p class="muted">À usage unique : la DSI le colle dans NOVA_ACTIVATION_CODE.</p>
-<form method="post" action="/codes">
-<label>Établissement<input name="organization" required maxlength="100"></label>
-<label>Offre (tranche)<input name="tier" required maxlength="40" placeholder="151-250"></label>
-<label>Type<select name="kind"><option value="pilot">Pilote</option><option value="subscription">Abonnement</option></select></label>
-<label>Début<input name="starts" type="date" required></label>
-<label>Fin<input name="ends" type="date" required></label>
-<label>Enveloppe d'IA (€, facultatif)<input name="ai_envelope_eur" type="number" min="0" step="1"></label>
-<label>Code valable (jours)<input name="code_days" type="number" min="1" max="90" value="30"></label>
-<button type="submit">Créer le code</button></form></article>
-<article class="card"><header><h3>Codes donnés</h3></header><div class="scroll"><table><thead><tr><th>Établissement</th><th>Offre</th><th>Type</th><th>Licence</th><th>État</th></tr></thead>
-<tbody>${rows || `<tr><td colspan="5" class="muted">Aucun code pour l'instant.</td></tr>`}</tbody></table></div></article>
-</div></section>
-</main></body></html>`;
-  return new Response(html, {
-    headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-frame-options": "DENY", "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'" },
-  });
-}
-
-async function create(request: Request, env: ConsoleEnv, user: string, now: number): Promise<Response> {
-  // Un formulaire posté depuis un autre site porterait le cookie d'Access : refusé.
-  if (request.headers.get("origin") !== new URL(request.url).origin) return new Response("Origine refusée", { status: 403 });
-  const form = await request.formData();
-  const text = (name: string) => String(form.get(name) ?? "");
-  const envelope = text("ai_envelope_eur").trim();
-  const r: LicenceRequest = {
-    organization: text("organization"), tier: text("tier"), kind: text("kind"), starts: text("starts"), ends: text("ends"),
-    ...(envelope ? { ai_envelope_eur: Number(envelope) } : {}),
-  };
-  const days = Math.min(90, Math.max(1, Math.floor(Number(text("code_days")) || 30)));
-  const problem = invalid(r);
-  if (problem) return page(env, user, now, `<div class="notice">${escape(problem)}</div>`);
-  if (!env.SIGNING_KEY) return page(env, user, now, `<div class="notice">Clé de signature absente (secret SIGNING_KEY).</div>`);
-  const code = newCode();
-  await env.DB.prepare("INSERT INTO codes (code_hash, licence, school, expires_at) VALUES (?, ?, ?, ?)")
-    .bind(await sha256Hex(normalizeCode(code)), await signLicence(env.SIGNING_KEY, r), r.organization.trim(), now + days * DAY)
-    .run();
-  console.log(JSON.stringify({ event: "console.code_created", by: user, school: r.organization.trim() }));
-  return page(env, user, now, `<div class="notice">Code pour ${escape(r.organization.trim())}, valable ${days} jours, à donner à la DSI :<br><code>${code}</code><br>Il ne sera plus affiché.</div>`);
 }
 
 export default {
@@ -261,13 +62,17 @@ export default {
     const now = Math.floor(Date.now() / 1000);
     const user = await accessUser(request, env, now);
     if (!user) return new Response("Accès refusé", { status: 403 });
-    const { pathname } = new URL(request.url);
-    if (request.method === "GET" && pathname === "/") return page(env, user, now);
-    if (request.method === "POST" && pathname === "/codes") return create(request, env, user, now);
-    if (request.method === "POST" && pathname.startsWith("/pilot/")) {
-      if (request.headers.get("origin") !== new URL(request.url).origin) return new Response("Origine refusée", { status: 403 });
-      return (await pilotAction(pathname, await request.formData(), env.DB, user, now)) ?? new Response("Introuvable", { status: 404 });
+    const url = new URL(request.url);
+    const ctx: Ctx = { env, user, now, url };
+    if (request.method === "POST") {
+      // Un formulaire posté depuis un autre site porterait le cookie d'Access : refusé.
+      if (request.headers.get("origin") !== url.origin) return new Response("Origine refusée", { status: 403 });
+      const action = PAGES.map((p) => p.actions?.[url.pathname]).find(Boolean);
+      return action ? action(ctx, await request.formData()) : new Response("Introuvable", { status: 404 });
     }
-    return new Response("Introuvable", { status: 404 });
+    const page = request.method === "GET" ? pageFor(url.pathname) : undefined;
+    if (!page) return new Response("Introuvable", { status: 404 });
+    const [view, counts] = await Promise.all([page.render(ctx), badges(env)]);
+    return view instanceof Response ? view : layout(ctx, page.id, view, counts, page.css);
   },
 };
