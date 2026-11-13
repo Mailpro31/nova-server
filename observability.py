@@ -199,12 +199,12 @@ STAGES = ("transcription", "relecture", "mise_en_forme", "commande", "autre")
 
 def label_value(value: Any) -> str:
     text = str(value or "")
-    return text if _LABEL_VALUE.match(text) else "other"
+    return text if _LABEL_VALUE.fullmatch(text) else "other"
 
 
 def style_label(value: Any) -> str:
     text = str(value or "")
-    return text if _BUILTIN_STYLE.match(text) else "custom"
+    return text if _BUILTIN_STYLE.fullmatch(text) else "custom"
 
 
 def _labels(pairs: dict[str, str]) -> str:
