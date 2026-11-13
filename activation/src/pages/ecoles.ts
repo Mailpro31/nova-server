@@ -1,4 +1,4 @@
-import { ago, bars, escape, loadFleet, LICENCE_LABEL, LICENCE_TONE, num, type Fleet, type SchoolData } from "../dashboard";
+import { ago, bars, escape, loadFleet, LICENCE_LABEL, LICENCE_TONE, num, plural, type Fleet, type SchoolData } from "../dashboard";
 import { claimsOf } from "../licence";
 import { empty, pill, stat, when, type Ctx, type Page, type View } from "../shell";
 
@@ -26,7 +26,7 @@ function list(ctx: Ctx, fleet: Fleet): View {
   const tab = (key: string, label: string, on: boolean) => `<a href="/ecoles${key ? `?vue=${key}` : ""}"${on ? ' class="on"' : ""}>${label}</a>`;
   const rows = fleet.schools.filter(filter).map((s) =>
     `<a class="row-link" href="${href(s.id)}"><div class="grow"><strong>${escape(s.id)}</strong><div class="chips" style="margin-top:4px;align-items:center">${state(s, ctx.now)} ${licencePill(s)}`
-    + `<span class="muted">${num(s.activeMonth)} élèves actifs</span>${s.serverVersion ? `<span class="chip">${escape(s.serverVersion)}</span>` : ""}</div></div><span class="chev">›</span></a>`).join("");
+    + `<span class="muted">${plural(s.activeMonth, "élève actif", "élèves actifs")}</span>${s.serverVersion ? `<span class="chip">${escape(s.serverVersion)}</span>` : ""}</div></div><span class="chev">›</span></a>`).join("");
   return {
     title: "Écoles",
     body: `<div class="toolbar"><div class="seg">${tab("", "Toutes", vue !== "en-ligne" && vue !== "muettes")}${tab("en-ligne", "En ligne", vue === "en-ligne")}${tab("muettes", "Muettes", vue === "muettes")}</div></div>`

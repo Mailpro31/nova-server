@@ -2,7 +2,7 @@
 // Claude lit et écrit ces tables à chaque réveil avec scripts/pilot.mjs (wrangler d1, compte Cloudflare).
 // Règle : ce qui freine Claude (pause, PR retenue) s'applique tel quel ; ce qui l'autorise
 // à une action sensible est reconfirmé par Sash dans le chat.
-import { escape } from "./dashboard";
+import { escape, plural } from "./dashboard";
 import { audit, empty, kpi, pill, redirect, when, type Ctx, type View } from "./shell";
 
 const MAX = 4000;
@@ -45,7 +45,7 @@ export async function pilotView(ctx: Ctx): Promise<View> {
 <form method="post" action="/pilot/pause" class="inline"><input type="hidden" name="paused" value="${paused ? "0" : "1"}">
 <button type="submit" class="${paused ? "" : "danger"}">${paused ? "Relancer Claude" : "Mettre Claude en pause"}</button></form></article>`;
   const kpis = `<div class="kpis">${kpi("Questions à trancher", String(openQ), "", tabLink("questions"))}${kpi("Consignes non lues", String(unread), "", tabLink("consignes"))}`
-    + `${kpi("PR ouvertes / retenues", `${prCount} / ${heldCount}`, "", tabLink("pr"))}${kpi("Actions sur 7 jours", String(week), weekFail ? pill("bad", `dont ${weekFail} échec${weekFail > 1 ? "s" : ""}`) : pill("ok", "aucun échec"), tabLink("journal"))}</div>`;
+    + `${kpi("PR ouvertes / retenues", `${prCount} / ${heldCount}`, "", tabLink("pr"))}${kpi("Actions sur 7 jours", String(week), weekFail ? pill("bad", `dont ${plural(weekFail, "échec", "échecs")}`) : pill("ok", "aucun échec"), tabLink("journal"))}</div>`;
 
   const counts: Record<Tab, number> = { questions: openQ, consignes: unread, pr: prCount, journal: journalTotal };
   const labels: Record<Tab, string> = { questions: "Questions", consignes: "Consignes", pr: "PR", journal: "Journal" };
@@ -130,7 +130,7 @@ export async function pilotAction(path: string, form: FormData, db: D1Database, 
   } else if (path === "/pilot/message") {
     if (!text("body")) return new Response("Message vide", { status: 400 });
     await run("INSERT INTO pilot_messages (at, by, body) VALUES (?, ?, ?)", now, user, text("body"));
-    await audit(db, user, now, "Consigne envoyée", `${text("body").length} caractères`); // jamais le texte : il pourrait contenir un secret
+    await audit(db, user, now, "Consigne envoyée", plural(text("body").length, "caractère", "caractères")); // jamais le texte : il pourrait contenir un secret
     target = tabLink("consignes");
   } else if (path === "/pilot/answer") {
     if (!text("answer")) return new Response("Réponse vide", { status: 400 });

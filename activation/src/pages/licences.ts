@@ -1,5 +1,5 @@
 import { claimsOf, invalid, newCode, signLicence, type LicenceRequest } from "../licence";
-import { escape } from "../dashboard";
+import { escape, plural } from "../dashboard";
 import { normalizeCode, sha256Hex } from "../index";
 import { audit, empty, kpi, layout, notice, pill, redirect, type Ctx, type Page, type View } from "../shell";
 
@@ -121,7 +121,7 @@ async function create(ctx: Ctx, form: FormData): Promise<Response> {
     .bind(await sha256Hex(normalizeCode(code)), await signLicence(ctx.env.SIGNING_KEY, r), r.organization.trim(), ctx.now + days * DAY)
     .run();
   await audit(ctx.env.DB, ctx.user, ctx.now, "Code créé", `${r.organization.trim()} · ${r.kind} · ${r.starts} → ${r.ends}`);
-  return show(notice(`Code pour ${escape(r.organization.trim())}, valable ${days} jours, à donner à la DSI :<br><code class="big">${code}</code><br>Il ne sera plus affiché.`, "ok"));
+  return show(notice(`Code pour ${escape(r.organization.trim())}, valable ${plural(days, "jour", "jours")}, à donner à la DSI :<br><code class="big">${code}</code><br>Il ne sera plus affiché.`, "ok"));
 }
 
 async function revoke(ctx: Ctx, form: FormData): Promise<Response> {

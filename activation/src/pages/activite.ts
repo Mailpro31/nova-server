@@ -1,6 +1,6 @@
 // Activité : un seul fil chronologique, actions faites dans la console (console_audit) et actions de Claude (pilot_journal).
 import { escape } from "../dashboard";
-import { empty, pill, type Page } from "../shell";
+import { auditDetail, empty, pill, type Page } from "../shell";
 
 const PER_PAGE = 50;
 const TZ = "Europe/Paris";
@@ -47,7 +47,7 @@ export const activite: Page = {
       const [tone, text] = RESULT[r.result ?? ""] ?? ["neutral", r.result ?? ""];
       const claude = r.src === "claude";
       list += `<li class="card"><header>${claude ? `<span class="chip">${escape(r.kind)}</span>${pill(tone, text)}` : ""}<strong>${escape(r.title)}</strong><time>${escape(time(r.at))}</time></header>
-<p class="muted">par ${escape(r.who)}${r.detail ? ` · ${escape(r.detail)}` : ""}${claude ? ` · <a href="/claude?vue=journal">voir le journal</a>` : ""}</p></li>`;
+<p class="muted">par ${escape(r.who)}${r.detail ? ` · ${escape(auditDetail(r.title, r.detail))}` : ""}${claude ? ` · <a href="/claude?vue=journal">voir le journal</a>` : ""}</p></li>`;
     }
     list = rows.length ? `${list}</ul>` : empty("Aucune activité.");
 
