@@ -106,11 +106,11 @@ describe("Activité", () => {
     const h = await harness();
     for (let i = 0; i < 60; i++) await sql(h, "INSERT INTO console_audit (at, by, action) VALUES (?, 'a@b.c', ?)", NOW - i, `Action ${i}`);
     const first = await text(h, "/activite");
-    expect(first.match(/<li class="card">/g)).toHaveLength(50);
+    expect(first.match(/<div class="row-link">/g)).toHaveLength(50);
     expect(first).toContain("Plus ancien");
     expect(first).not.toContain("Plus récent");
     const second = await text(h, "/activite?page=2");
-    expect(second.match(/<li class="card">/g)).toHaveLength(10);
+    expect(second.match(/<div class="row-link">/g)).toHaveLength(10);
     expect(second).toContain("Plus récent");
     expect(second).not.toContain("Plus ancien");
   });

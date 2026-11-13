@@ -22,7 +22,7 @@ export const usage: Page = {
       title: "Usage",
       body: `<div class="toolbar"><div class="seg">${tab(7)}${tab(14)}</div></div>
 <div class="kpis">${kpi("Élèves actifs ce mois", num(sum(schools.map((s) => s.activeMonth))))}${kpi("Dictées sur 24 h", num(sum(schools.map((s) => s.dictations24h))))}`
-        + `${kpi("Dictées sur la période", num(sum(schools.flatMap((s) => s.dict.map(([, v]) => v)))))}${kpi("Temps de transcription médian", `${num(median, 2)} <small>s</small>`)}</div>`
+        + `${kpi("Dictées sur la période", num(sum(schools.flatMap((s) => s.dict.map(([, v]) => v)))))}${kpi("Temps de transcription, 95 % (médiane des écoles)", `${num(median, 2)} <small>s</small>`)}</div>`
         + `<div class="stack">${cards || `<p class="empty">Aucune école.</p>`}</div>`,
     };
   },

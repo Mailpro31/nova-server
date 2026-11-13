@@ -16997,7 +16997,7 @@ def control_read_usage_metrics(
 
 
 # Une version de poste devient une etiquette seulement si elle en a la forme.
-_APP_VERSION = re.compile(r"^\d{1,3}\.\d{1,3}\.\d{1,4}$")
+_APP_VERSION = CLIENT_VERSION  # même forme que celle que /api/me enregistre
 # Une version vue dans les trente derniers jours : un poste parti ne compte plus.
 METRICS_VERSION_WINDOW_SECONDS = 30 * 86400
 
@@ -17017,8 +17017,9 @@ def school_sheet() -> list[tuple[str, str, dict[str, str], float]]:
     with db() as conn:
         members = conn.execute(
             # Les comptes de banc (@nova.invalid) ne sont pas des membres de l'ecole.
-            "SELECT SUM(disabled = 0) AS active, SUM(disabled <> 0) AS disabled FROM users "
-            "WHERE email NOT LIKE '%@nova.invalid'"
+            "SELECT COALESCE(SUM(CASE WHEN disabled IS NULL OR disabled = 0 THEN 1 ELSE 0 END), 0) AS active, "
+            "COALESCE(SUM(CASE WHEN disabled <> 0 THEN 1 ELSE 0 END), 0) AS disabled FROM users "
+            "WHERE LOWER(email) NOT LIKE '%@nova.invalid'"
         ).fetchone()
         groups = conn.execute("SELECT COUNT(*) AS n FROM organization_groups").fetchone()["n"]
     info = {
@@ -17077,11 +17078,12 @@ def business_metrics() -> list[tuple[str, str, dict[str, str], float]]:
             (f"{month}-01T00",)).fetchone()["n"]
         rows = conn.execute(
             "SELECT app_version AS version, COUNT(*) AS n FROM users "
-            "WHERE app_version IS NOT NULL AND last_seen >= ? GROUP BY app_version",
+            "WHERE app_version IS NOT NULL AND last_seen >= ? "
+            "AND LOWER(email) NOT LIKE '%@nova.invalid' GROUP BY app_version",
             (since,)).fetchall()
     versions: dict[str, int] = {}
     for row in rows:
-        version = row["version"] if _APP_VERSION.match(row["version"] or "") else "other"
+        version = row["version"] if _APP_VERSION.fullmatch(row["version"] or "") else "other"
         versions[version] = versions.get(version, 0) + row["n"]
     state = licence.licence_state(NOVA_LICENCE)
     series = [("nova_active_users", "Personnes ayant dicte ou reformule ce mois-ci.",
