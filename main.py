@@ -13405,9 +13405,10 @@ class RewriteTruncated(Exception):
 # Les taches qui rendent la dictee de quelqu'un. Coupee, leur sortie perd la
 # fin de ce qu'il a dit : elle ne doit jamais etre rendue.
 # Une Commande ou la bulle remplace la sélection de l'élève : coupée, elle aussi
-# en perd la fin (`run_command` la refuse).
+# en perd la fin (`run_command` la refuse). Des notes structurées coupées aussi :
+# le morceau revient brut.
 REWRITE_TASKS = frozenset({TaskType.REFORMULATION, TaskType.STYLE_TRANSFORM,
-                           TaskType.VOICE_COMMAND})
+                           TaskType.VOICE_COMMAND, TaskType.ENGINEERING_NOTES})
 
 
 async def execute_text(task_type: TaskType, instruction: str, text: str) -> str:
@@ -15167,7 +15168,11 @@ async def engineering_notes(body: CommandRequest, user: str = Depends(current_us
         prompt += f"\nAdditional instruction: {body.instruction.strip()}"
     if context:
         prompt += f"\n\n{context}"
-    return {"text": await execute_text(TaskType.ENGINEERING_NOTES, prompt, source_text)}
+    try:
+        return {"text": await execute_text(TaskType.ENGINEERING_NOTES, prompt, source_text)}
+    except RewriteTruncated:
+        # Coupées, les notes perdraient leur fin : elles reviennent brutes.
+        return {"text": source_text}
 
 
 # Un morceau de notes que le modèle peut lire ET restituer dans sa fenêtre. Le
@@ -15230,7 +15235,13 @@ async def structured_notes(body: StructuredNotesRequest, user: str = Depends(cur
     # Un texte long est structuré morceau par morceau, dans l'ordre : chaque
     # morceau tient dans la fenêtre du modèle, rien n'est laissé de côté.
     pieces = split_for_structuring(source_text, STRUCTURED_NOTES_CHUNK_CHARS) or [source_text]
-    parts = [await execute_text(TaskType.ENGINEERING_NOTES, prompt, piece) for piece in pieces]
+    parts = []
+    for piece in pieces:
+        try:
+            parts.append(await execute_text(TaskType.ENGINEERING_NOTES, prompt, piece))
+        except RewriteTruncated:
+            # Coupé, le morceau perdrait sa fin : il revient tel quel.
+            parts.append(piece)
     return {"text": "\n\n".join(part.strip() for part in parts), "note_type": body.note_type}
 
 # ================================================================ LEARN

@@ -160,6 +160,29 @@ class LongStructuredNotesTests(StructuredNotesTests):
             self.assertIn(sentence, sent)
         self.assertEqual(response.json()["text"].count("fake:engineering_notes"), len(requests))
 
+    def test_a_piece_cut_by_the_model_comes_back_raw(self):
+        # Coupé par `max_tokens` (la réflexion les consomme aussi), un morceau
+        # perdait sa fin sans que rien ne le dise. Il revient tel quel.
+        from ai_runtime import TextInferenceResult
+
+        async def generate(task_type, input_text, instruction, **_):
+            return TextInferenceResult(text="## Key concepts\n- Phrase numéro 0",
+                                       finish_reason="length", latency_ms=1, usage={},
+                                       backend={"adapter": "test"})
+
+        text = " ".join(self.sentences[:3])
+        main.reset_rate_limiter()
+        self.addCleanup(main.reset_rate_limiter)
+        token = self.sign_in("member@example.com")
+        with patch.object(main.ORGANIZATION_AI_ROUTER, "generate", generate):
+            for route in ("/api/structured-notes", "/api/engineering-notes"):
+                payload = ({"note_type": "lecture", "text": text} if "structured" in route
+                           else {"instruction": "", "text": text})
+                with self.subTest(route=route):
+                    response = self.client.post(route, headers=self.auth(token), json=payload)
+                    self.assertEqual(response.status_code, 200, response.text)
+                    self.assertEqual(response.json()["text"], text)
+
     def test_a_short_text_stays_a_single_request(self):
         response, requests = self.post({"note_type": "lecture", "text": self.sentences[0]})
         self.assertEqual(response.status_code, 200, response.text)
