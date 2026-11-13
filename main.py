@@ -17066,9 +17066,11 @@ def business_metrics() -> list[tuple[str, str, dict[str, str], float]]:
     if "days_left" in state:
         series.append(("nova_licence_days_left", "Jours avant l'echeance de la licence.",
                        {}, state["days_left"]))
-    if state.get("ai_envelope_eur") is not None:
-        series.append(("nova_ai_envelope_eur", "Enveloppe d'IA annuelle de la licence, en euros.",
-                       {}, state["ai_envelope_eur"]))
+    # Sans prix renseignés, le bloc des moteurs ne publie pas l'enveloppe : on en garde
+    # le montant annuel, dans la même famille (kind="annual"), jamais en double.
+    if state.get("ai_envelope_eur") is not None and ai_envelope_state() is None:
+        series.append(("nova_ai_envelope_eur", "Enveloppe d'IA du contrat, en euros.",
+                       {"kind": "annual"}, state["ai_envelope_eur"]))
     with db() as conn:
         spent = conn.execute("SELECT COALESCE(SUM(eur), 0) FROM ai_spend WHERE month = ?",
                              (ai_envelope.month_of(time.time()),)).fetchone()[0]
