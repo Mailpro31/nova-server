@@ -11333,13 +11333,14 @@ def organization_shared_terms(conn, organization_id: str) -> list[dict]:
     merged: dict[str, dict] = {}
     for row in legacy_shared_vocabulary(conn):
         merged[row["term"].casefold()] = {
-            "id": row["id"] if "id" in row.keys() else None,
+            "id": row["id"],
             "term": row["term"],
             "replacement": row["replacement"],
         }
-    for entry in organization_vocabulary(organization_id):
+    for index, entry in enumerate(organization_vocabulary(organization_id)):
         merged[entry["term"].casefold()] = {
-            "id": "package:" + entry["term"].casefold(),
+            # Le poste lit un entier (`i64`) : negatif, il ne designe aucune ligne.
+            "id": -(index + 1),
             "term": entry["term"],
             "replacement": entry.get("replacement"),
         }
@@ -11365,7 +11366,7 @@ def legacy_shared_vocabulary(conn) -> list:
     if NOVA_SERVER_MODE != SERVER_MODE_DEDICATED:
         return []
     return conn.execute(
-        "SELECT term,replacement FROM shared_dictionary ORDER BY term LIMIT 200"
+        "SELECT id,term,replacement FROM shared_dictionary ORDER BY term LIMIT 200"
     ).fetchall()
 
 

@@ -656,6 +656,21 @@ class VocabularyRuntimeTests(AdminTestCase):
     def context(self, user="etudiant@example.com"):
         return main.writing_context(user)[0]
 
+    def test_the_member_vocabulary_keeps_integer_ids(self):
+        """Le poste lit `shared[].id` en entier (`i64`). Un identifiant texte
+        (`package:…`) ou nul faisait echouer toute la reponse : ecran
+        Dictionnaire vide, snippets et vocabulaire perdus hors ligne."""
+        self.publish_vocabulary([{"term": "SSO", "replacement": "single sign-on"}])
+        with main.db() as conn:
+            conn.execute("INSERT INTO shared_dictionary(term,replacement) VALUES (?,?)",
+                         ("CFD", "mecanique des fluides numerique"))
+        member = self.sign_in("eleve@example.com", "poste-eleve")
+        shared = self.client.get("/api/vocabulary", headers=self.auth(member)).json()["shared"]
+        self.assertEqual({entry["term"] for entry in shared}, {"SSO", "CFD"})
+        ids = [entry["id"] for entry in shared]
+        self.assertTrue(all(type(i) is int for i in ids), ids)
+        self.assertEqual(len(set(ids)), len(ids))
+
     def test_a_published_vocabulary_reaches_the_prompt(self):
         self.publish_vocabulary([{"term": "SSO", "replacement": "single sign-on"}])
         self.assertIn("single sign-on", self.context())
