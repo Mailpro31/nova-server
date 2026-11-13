@@ -10,6 +10,11 @@ database_id = "8c90d9c1-0332-4bf3-b0c5-7eff32370e4d"
 
 [vars]
 GRAFANA_URL = "https://swiftalbatross2048.grafana.net"
+# Lecture de Grafana Cloud ; le jeton est le secret GRAFANA_READ_TOKEN.
+PROM_URL = "https://prometheus-prod-68-prod-eu-west-6.grafana.net/api/prom"
+PROM_USER = "3761874"
+LOKI_URL = "https://logs-prod-043.grafana.net"
+LOKI_USER = "1876605"
 # Remplis une fois Cloudflare Access activé sur nova-console (Zero Trust) :
 # tant qu'ils sont vides, la console refuse tout le monde.
 ACCESS_TEAM_DOMAIN = "divine-silence-3602.cloudflareaccess.com"

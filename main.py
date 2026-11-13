@@ -17066,6 +17066,14 @@ def business_metrics() -> list[tuple[str, str, dict[str, str], float]]:
     if "days_left" in state:
         series.append(("nova_licence_days_left", "Jours avant l'echeance de la licence.",
                        {}, state["days_left"]))
+    if state.get("ai_envelope_eur") is not None:
+        series.append(("nova_ai_envelope_eur", "Enveloppe d'IA annuelle de la licence, en euros.",
+                       {}, state["ai_envelope_eur"]))
+    with db() as conn:
+        spent = conn.execute("SELECT COALESCE(SUM(eur), 0) FROM ai_spend WHERE month = ?",
+                             (ai_envelope.month_of(time.time()),)).fetchone()[0]
+    series.append(("nova_ai_spend_eur_month", "Depense d'IA du mois en cours, en euros.",
+                   {}, round(spent, 4)))
     return series + school_sheet()
 
 

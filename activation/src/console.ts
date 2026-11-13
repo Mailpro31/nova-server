@@ -2,9 +2,10 @@
 // navigateur et liste ceux déjà donnés. Protégée par Cloudflare Access ; le
 // jeton d'Access est revérifié ici, pour qu'une erreur de réglage n'ouvre rien.
 
+import { dashboard, escape, type MetricsEnv } from "./dashboard";
 import { normalizeCode, sha256Hex } from "./index";
 
-export interface ConsoleEnv {
+export interface ConsoleEnv extends MetricsEnv {
   DB: D1Database;
   SIGNING_KEY: string; // clé privée Ed25519 (PKCS8, PEM), secret Cloudflare
   ACCESS_TEAM_DOMAIN: string; // ex. « nova-ecole.cloudflareaccess.com »
@@ -21,8 +22,6 @@ const b64url = (bytes: Uint8Array) =>
   btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 const fromB64url = (text: string) =>
   Uint8Array.from(atob(text.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
-const escape = (text: unknown) =>
-  String(text ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
 // ------------------------------------------------------------ Access
 
@@ -122,9 +121,9 @@ const claimsOf = (licence: string): Record<string, unknown> => {
 const day = (seconds: number | null) => (seconds ? new Date(seconds * 1000).toISOString().slice(0, 10) : "");
 
 async function page(env: ConsoleEnv, user: string, now: number, notice = ""): Promise<Response> {
-  const { results } = await env.DB.prepare(
+  const [{ results }, board] = await Promise.all([env.DB.prepare(
     "SELECT school, licence, expires_at, used_at FROM codes ORDER BY expires_at DESC LIMIT 200",
-  ).all<{ school: string; licence: string; expires_at: number; used_at: number | null }>();
+  ).all<{ school: string; licence: string; expires_at: number; used_at: number | null }>(), dashboard(env, now)]);
   const rows = results.map((row) => {
     const c = claimsOf(row.licence);
     const state = row.used_at ? `Activé le ${day(row.used_at)}` : row.expires_at > now ? `En attente (jusqu'au ${day(row.expires_at)})` : "Code expiré";
@@ -146,9 +145,14 @@ table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;p
 th{color:var(--muted);font-weight:500}.scroll{overflow-x:auto}
 .notice{background:var(--bg);border:1px solid var(--accent);border-radius:8px;padding:12px;margin-bottom:16px}
 code{font-size:20px;letter-spacing:1px}a{color:var(--accent)}
+h3{font-size:14px;margin:16px 0 8px}.charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+figure{margin:0}figcaption{font-size:13px;color:var(--muted);margin-bottom:4px}
+.chart{width:100%;height:auto}.chart rect{fill:var(--accent)}.axis{font-size:11px;fill:var(--muted)}
+.ok{color:#1f9d55}.bad{color:#d64545}.muted{color:var(--muted)}
 </style></head><body><main>
 <h1>Console Nova</h1><p>Connecté : ${escape(user)} · <a href="${escape(env.GRAFANA_URL)}/dashboards" target="_blank" rel="noopener">Graphiques (Grafana)</a></p>
 ${notice}
+${board}
 <section><h2>Nouveau code d'activation</h2><p>Le code sert une seule fois : la DSI le colle dans NOVA_ACTIVATION_CODE.</p>
 <form method="post" action="/codes">
 <label>Établissement<input name="organization" required maxlength="100"></label>
