@@ -58,16 +58,18 @@ const dayName = (t: number, long: boolean) => new Date(t * 1000).toLocaleDateStr
 /** Barres journalières en HTML : survol ou toucher d'une barre → jour et valeur exacts (CSS seul, la CSP interdit le JS). */
 export function bars(points: [number, number][], unit: string): string {
   if (!points.length) return `<p class="muted">Pas encore de mesure.</p>`;
-  const max = Math.max(...points.map(([, v]) => v), 0) || 1;
-  const value = (v: number) => `${num(v, unit === "s" ? 2 : 0)} ${unit}`;
+  const top = Math.max(...points.map(([, v]) => v), 0), max = top || 1;
+  const digits = unit === "s" ? 2 : 0, step = 10 ** -digits;
+  // Une valeur positive qui s'arrondirait à 0 reste lisible : « < 0,01 s ».
+  const value = (v: number) => `${v > 0 && v < step / 2 ? `< ${num(step, digits)}` : num(v, digits)} ${unit}`;
   const cols = points.map(([t, v], i) => {
     const side = i < points.length / 4 ? " l" : i >= (points.length * 3) / 4 ? " r" : "";
     const text = `${dayName(t, true)} : ${value(v)}`;
     return `<button type="button" class="col${side}" aria-label="${escape(text)}"><i style="height:${Math.max(v > 0 ? 2 : 0, (v / max) * 100).toFixed(1)}%"></i>`
       + `<span class="tip">${escape(dayName(t, true))}<b>${escape(value(v))}</b></span></button>`;
   }).join("");
-  return `<div class="bars"><div class="axis">max ${escape(value(max))}</div><div class="cols">${cols}</div>
-<div class="axis ends"><span>${escape(dayName(points[0][0], false))}</span><span>${escape(dayName(points[points.length - 1][0], false))}</span></div></div>`;
+  return `<div class="bars" style="--n:${points.length}"><div class="axis">max ${escape(value(top))}</div><div class="cols">${cols}</div>
+<div class="axis ends"><span>${escape(dayName(points[0][0], false))}</span>${points.length > 1 ? `<span>${escape(dayName(points[points.length - 1][0], false))}</span>` : ""}</div></div>`;
 }
 
 const points = (series: Series[] | null, school: string): [number, number][] =>

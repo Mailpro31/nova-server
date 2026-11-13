@@ -75,3 +75,13 @@ describe("barres", () => {
     expect(bars([[NOW, 1.234]], "s")).toContain("1,23 s");
   });
 });
+
+describe("bars : valeurs limites", () => {
+  it("axe à 0 quand tout est nul, seuil lisible pour une valeur minuscule, une seule date pour un point", () => {
+    expect(bars([[NOW, 0], [NOW + 86400, 0]], "dictées")).toContain("max 0 dictées");
+    const tiny = bars([[NOW, 0.004]], "s");
+    expect(tiny).toContain("max &#60; 0,01 s");
+    expect(tiny).toContain('style="--n:1"');
+    expect(tiny.match(/<span>/g)).toHaveLength(1);
+  });
+});

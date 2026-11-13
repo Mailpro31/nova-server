@@ -1,6 +1,6 @@
 // Activité : un seul fil chronologique, actions faites dans la console (console_audit) et actions de Claude (pilot_journal).
 import { escape } from "../dashboard";
-import { empty, pill, type Page } from "../shell";
+import { empty, eventRow, pill, type Page } from "../shell";
 
 const PER_PAGE = 50;
 const TZ = "Europe/Paris";
@@ -43,13 +43,12 @@ export const activite: Page = {
     let current = "", list = "";
     for (const r of rows) {
       const label = dayLabel(r.at, ctx.now);
-      if (label !== current) { list += `${current ? "</ul>" : ""}<h2>${escape(label)}</h2><ul class="list">`; current = label; }
+      if (label !== current) { list += `${current ? "</div>" : ""}<h2>${escape(label)}</h2><div class="card flush">`; current = label; }
       const [tone, text] = RESULT[r.result ?? ""] ?? ["neutral", r.result ?? ""];
       const claude = r.src === "claude";
-      list += `<li class="card"><header>${claude ? `<span class="chip">${escape(r.kind)}</span>${pill(tone, text)}` : ""}<strong>${escape(r.title)}</strong><time>${escape(time(r.at))}</time></header>
-<p class="muted">par ${escape(r.who)}${r.detail ? ` · ${escape(r.detail)}` : ""}${claude ? ` · <a href="/claude?vue=journal">voir le journal</a>` : ""}</p></li>`;
+      list += eventRow(`${claude ? `<span class="chip">${escape(r.kind)}</span> ${pill(tone, text)} ` : ""}<strong>${escape(r.title)}</strong> <span class="muted">par ${escape(r.who)}${r.detail ? ` · ${escape(r.detail)}` : ""}${claude ? ` · <a href="/claude?vue=journal">voir le journal</a>` : ""}</span>`, time(r.at));
     }
-    list = rows.length ? `${list}</ul>` : empty("Aucune activité.");
+    list = rows.length ? `${list}</div>` : empty("Aucune activité.");
 
     const pager = page > 1 || results.length > PER_PAGE
       ? `<div class="toolbar">${page > 1 ? `<a class="btn ghost small" href="${escape(href(page - 1))}">Plus récent</a>` : ""}<span class="muted">Page ${page}</span>${results.length > PER_PAGE ? `<a class="btn ghost small" href="${escape(href(page + 1))}">Plus ancien</a>` : ""}</div>`

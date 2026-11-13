@@ -1,6 +1,6 @@
 import { reportKey } from "./signalements";
 import { ago, escape, loadFleet, num, LICENCE_LABEL, type FleetResult, type Report } from "../dashboard";
-import { empty, kpi, pill, when, type Ctx, type Page } from "../shell";
+import { empty, eventRow, kpi, pill, when, type Ctx, type Page } from "../shell";
 
 type Tone = "bad" | "warn" | "accent" | "neutral";
 export interface Todo { tone: Tone; title: string; detail: string; href: string }
@@ -111,7 +111,7 @@ ${kpi("Signalements à traiter", f ? num(untreated(f.reports, treated, ctx.now).
     ...journal.map((j) => ({ at: j.at, html: `${pill(j.result === "ok" ? "ok" : j.result === "echec" ? "bad" : "neutral", j.result)} <strong>${escape(j.title)}</strong> <span class="muted">par Claude</span>` })),
   ].sort((a, b) => b.at - a.at).slice(0, 5);
   const activity = events.length
-    ? `<div class="card flush">${events.map((e) => `<div class="row-link"><div class="grow">${e.html}</div><time class="muted">${escape(when(e.at))}</time></div>`).join("")}</div>`
+    ? `<div class="card flush">${events.map((e) => eventRow(e.html, when(e.at))).join("")}</div>`
     : empty("Aucune activité pour l'instant.");
 
   return {

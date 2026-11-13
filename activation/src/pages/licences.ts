@@ -140,4 +140,5 @@ export const licences: Page = {
   path: "/licences",
   render: (ctx) => view(ctx),
   actions: { "/codes": create, "/codes/revoke": revoke },
+  css: ".grid{grid-template-columns:minmax(0,1fr)}", // le tableau des codes a besoin de toute la largeur
 };
