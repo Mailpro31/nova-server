@@ -3218,7 +3218,8 @@ def ai_envelope_state(now: float | None = None, email: str | None = None) -> dic
         "allowance_eur": round(allowance, 2),
         "spent_eur": round(spent, 2),
         "month_eur": round(month_eur, 3),
-        "percent": round(100 * spent / allowance) if allowance > 0 else 100,
+        # Rien d'ouvert (licence pas commencée) : 0 % tant que rien n'est dépensé.
+        "percent": round(100 * spent / allowance) if allowance > 0 else (100 if spent > 0 else 0),
         "empty": allowance - spent < ai_envelope.MARGIN_EUR,
         "mine_over": bool(email) and mine >= share * ai_envelope.STUDENT_MONTH_SHARE,
     }
