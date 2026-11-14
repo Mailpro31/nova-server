@@ -34,6 +34,7 @@ function list(ctx: Ctx, fleet: Fleet): View {
   };
 }
 
+const known = (v: string) => /^\d+(\.\d+)*$/.test(v); // « other » : forme non reconnue
 // Comparaison numérique des versions « 1.0.82 » ; shortcut: pas de suffixe de pré-version.
 const newer = (a: string, b: string) => {
   const [x, y] = [a, b].map((v) => v.split(".").map(Number));
@@ -48,7 +49,7 @@ async function detail(ctx: Ctx, fleet: Fleet, raw: string): Promise<View> {
   const back = `<p><a href="/ecoles">‹ Toutes les écoles</a></p>`;
   if (!s) return { title: "École inconnue", body: `${back}${empty("Aucune mesure ne remonte pour cette école.")}` };
 
-  const latest = fleet.schools.flatMap((x) => x.apps.map((a) => a.version)).reduce((m, v) => (newer(v, m) ? v : m), "0");
+  const latest = fleet.schools.flatMap((x) => x.apps.map((a) => a.version)).filter(known).reduce((m, v) => (newer(v, m) ? v : m), "0");
   const l = s.licence;
   const envelope = s.envelopeAnnual === undefined ? 0 : s.envelopeAnnual / 12;
   const part = envelope > 0 ? (s.spendMonth ?? 0) / envelope : 0;
@@ -68,7 +69,7 @@ async function detail(ctx: Ctx, fleet: Fleet, raw: string): Promise<View> {
   const body = `${back}<div class="stats">${stat("Comptes actifs", num(s.members))}${stat("Élèves actifs (mois)", num(s.activeMonth))}${stat("Dictées 24 h", num(s.dictations24h))}${stat("Jetons d'IA (30 j)", num(s.tokens30d))}</div>
 <div class="grid">
 ${card("Licence", l ? `<dl><dt>Statut</dt><dd>${pill(LICENCE_TONE[l.status] ?? "neutral", LICENCE_LABEL[l.status] ?? l.status)}</dd><dt>Offre</dt><dd>${escape(l.tier)}</dd><dt>Jours restants</dt><dd>${num(l.daysLeft)}</dd></dl>` : empty("Aucune licence reçue."))}
-${card("Postes", s.apps.length ? `<div class="chips">${s.apps.map((a) => `<span class="chip">${escape(a.version)} ×${num(a.count)}</span> ${a.version === latest ? pill("ok", "à jour") : pill("warn", "ancienne")}`).join("")}</div>` : empty("Aucun poste connu."))}
+${card("Postes", s.apps.length ? `<div class="chips">${s.apps.map((a) => `<span class="chip">${escape(a.version)} ×${num(a.count)}</span> ${!known(a.version) ? pill("neutral", "inconnue") : a.version === latest ? pill("ok", "à jour") : pill("warn", "ancienne")}`).join("")}</div>` : empty("Aucun poste connu."))}
 ${card("Coûts d'IA", envelope > 0 ? `<div class="meter ${tone}"><div style="width:${Math.min(100, part * 100).toFixed(1)}%"></div></div><p>${num(s.spendMonth, 2)} € sur ${num(envelope, 2)} € ce mois (${num(part * 100)} %).</p>` : `${empty("Pas d'enveloppe dans la licence")}<p>Dépensé ce mois : ${num(s.spendMonth, 2)} €.</p>`)}
 ${card("Codes d'activation", `${codes.length ? `<ul class="list">${codeRows}</ul>` : empty("Aucun code donné à ce nom.")}<p><a href="/licences">Licences</a></p>`)}
 </div>
