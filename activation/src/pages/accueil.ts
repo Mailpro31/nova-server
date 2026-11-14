@@ -26,9 +26,9 @@ const cmp = (a: string, b: string) => {
 };
 
 
-/** Signalements des 7 derniers jours pas encore traités. */
+/** Signalements pas encore traités, sur les 30 jours lus dans Loki (comme la page Signalements). */
 export const untreated = (reports: Report[] | null, treated: Set<string>, now: number) =>
-  (reports ?? []).filter((r) => r.at > now - 7 * DAY && !treated.has(reportKey(r)));
+  (reports ?? []).filter((r) => r.at > now - 30 * DAY && !treated.has(reportKey(r)));
 
 /** Liste « À faire », triée par gravité. Pure : aucune lecture réseau ni base. */
 export function todo(i: TodoInput): Todo[] {
@@ -56,7 +56,7 @@ export function todo(i: TodoInput): Todo[] {
       }
     }
     const n = untreated(reports, i.treated, i.now).length;
-    if (n) out.push({ tone: "warn", title: plural(n, "signalement à traiter", "signalements à traiter"), detail: "reçus ces 7 derniers jours", href: "/signalements" });
+    if (n) out.push({ tone: "warn", title: plural(n, "signalement à traiter", "signalements à traiter"), detail: "reçus ces 30 derniers jours", href: "/signalements" });
     const latest = schools.flatMap((s) => s.apps.map((a) => a.version)).sort(cmp).pop();
     if (latest) for (const s of schools) {
       const old = s.apps.filter((a) => cmp(a.version, latest) < 0).reduce((t, a) => t + a.count, 0);
