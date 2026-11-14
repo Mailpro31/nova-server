@@ -1,4 +1,4 @@
-import { escape, num } from "../dashboard";
+import { envelopeUse, escape, num } from "../dashboard";
 import { kpi, pill, type Page } from "../shell";
 import { fleetOrError } from "./ecoles";
 
@@ -22,20 +22,21 @@ export const ia: Page = {
     const envelopes = schools.reduce((a, s) => a + (s.envelopeAnnual ?? 0), 0);
     const tokens = schools.reduce((a, s) => a + (s.tokens30d ?? 0), 0);
     const rows = schools.map((s) => {
-      const share = s.envelopeAnnual ? s.envelopeAnnual / 12 : 0;
-      const part = share > 0 ? (s.spendMonth ?? 0) / share : undefined;
+      const use = envelopeUse(s);
+      const share = use ? use.available : 0;
+      const part = use ? use.part : undefined;
       const tone = part === undefined ? "neutral" : part <= 0.8 ? "ok" : part <= 1 ? "warn" : "bad";
       const used = part === undefined ? pill("neutral", "Pas d'enveloppe")
         : `<div class="meter ${tone}"><div style="width:${Math.min(100, part * 100).toFixed(1)}%"></div></div>${pill(tone, `${num(part * 100)} %`)}`;
       return `<tr><td data-label="École"><a href="/ecoles/${encodeURIComponent(s.id)}"><strong>${escape(s.id)}</strong></a></td>`
-        + `<td data-label="Dépensé ce mois">${eur(s.spendMonth)}</td><td data-label="Part du mois">${share > 0 ? eur(share) : "—"}</td>`
+        + `<td data-label="Dépensé ce mois">${eur(s.spendMonth)}</td><td data-label="Part du mois">${use ? eur(share) : "—"}</td>`
         + `<td data-label="Consommé">${used}</td><td data-label="Projection">${eur(projection(s.spendMonth ?? 0, ctx.now))}</td>`
         + `<td data-label="Jetons (30 j)">${num(s.tokens30d)}</td></tr>`;
     }).join("");
     return {
       title: "Coûts d'IA",
       body: `<div class="kpis">${kpi("Dépense du mois", eur(spent))}${kpi("Enveloppes annuelles", eur(envelopes))}${kpi("Projection fin de mois", eur(projection(spent, ctx.now)))}${kpi("Jetons sur 30 j", num(tokens))}</div>
-<p class="lead">Dépense du mois comparée au douzième de l'enveloppe annuelle.</p>
+<p class="lead">Dépense du mois comparée à l'enveloppe ouverte ce mois (report compris).</p>
 <div class="card"><div class="scroll"><table class="cards"><thead><tr><th>École</th><th>Dépensé ce mois</th><th>Part du mois</th><th>Consommé</th><th>Projection</th><th>Jetons (30 j)</th></tr></thead><tbody>${rows || `<tr><td colspan="6" class="muted">Aucune école.</td></tr>`}</tbody></table></div></div>`,
     };
   },

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { bars, loadFleet, type MetricsEnv } from "../src/dashboard";
+import { bars, envelopeUse, loadFleet, type MetricsEnv } from "../src/dashboard";
 
 const NOW = 1_800_000_000;
 const env: MetricsEnv = {
@@ -81,6 +81,23 @@ describe("données de la flotte", () => {
     vi.stubGlobal("fetch", vi.fn(async (url: string) => { if (new URL(url).host === "loki.test") seen = url; return f(url); }));
     await loadFleet(env, NOW);
     expect(new URL(seen).searchParams.get("limit")).toBe("1000");
+  });
+  it("enveloppe d'IA : lit allowance et spent du serveur, pas annual ÷ 12", async () => {
+    const f = grafana({ result: [] });
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      const q = new URL(url).searchParams.get("query") ?? "";
+      if (q.includes('kind="allowance"')) return new Response(JSON.stringify(vector([[{ school: "ipsa" }, 300]])));
+      if (q.includes('kind="spent"')) return new Response(JSON.stringify(vector([[{ school: "ipsa" }, 250]])));
+      return f(url);
+    }));
+    const r = await loadFleet(env, NOW);
+    if (!r.ok) throw new Error(r.reason);
+    const [ipsa] = r.fleet.schools;
+    expect(ipsa).toMatchObject({ allowance: 300, spentTotal: 250, spendMonth: 50 });
+    // disponible ce mois = 300 − (250 − 50) = 100 ; part = 250 / 300 (même critère que la pause du serveur)
+    expect(envelopeUse(ipsa)).toEqual({ available: 100, part: 250 / 300 });
+    // vieux serveur : repli sur annual ÷ 12 = 100, dépense du mois 50
+    expect(envelopeUse({ ...ipsa, allowance: undefined, spentTotal: undefined })).toEqual({ available: 100, part: 0.5 });
   });
   it("prévient sans jeton ni réponse", async () => {
     expect(await loadFleet({ ...env, GRAFANA_READ_TOKEN: "" }, NOW)).toEqual({ ok: false, reason: "token" });

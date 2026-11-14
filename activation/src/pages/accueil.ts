@@ -1,5 +1,5 @@
 import { reportKey } from "./signalements";
-import { ago, escape, loadFleet, num, plural, LICENCE_LABEL, type FleetResult, type Report } from "../dashboard";
+import { ago, envelopeUse, escape, loadFleet, num, plural, LICENCE_LABEL, type FleetResult, type Report } from "../dashboard";
 import { auditDetail, empty, eventRow, kpi, pill, when, type Ctx, type Page } from "../shell";
 
 type Tone = "bad" | "warn" | "accent" | "neutral";
@@ -49,10 +49,11 @@ export function todo(i: TodoInput): Todo[] {
           out.push({ tone: "warn", title: `Licence de ${s.id} : ${l.daysLeft !== undefined ? `${num(l.daysLeft)} j restants` : "bientôt échue"}`, detail: "à renouveler", href: to });
         }
       }
-      if (s.envelopeAnnual && s.spendMonth !== undefined) {
-        const ratio = s.spendMonth / (s.envelopeAnnual / 12);
+      const use = envelopeUse(s);
+      if (use && s.spendMonth !== undefined) {
+        const ratio = use.part;
         if (ratio > 0.8) out.push({ tone: ratio > 1 ? "bad" : "warn", title: `Enveloppe d'IA de ${s.id} : ${Math.round(ratio * 100)} % du mois`,
-          detail: `${num(s.spendMonth, 2)} € dépensés sur ${num(s.envelopeAnnual / 12, 2)} € par mois`, href: "/ia" });
+          detail: `${num(s.spendMonth, 2)} € dépensés sur ${num(use.available, 2)} € disponibles ce mois`, href: "/ia" });
       }
     }
     const n = untreated(reports, i.treated, i.now).length;
