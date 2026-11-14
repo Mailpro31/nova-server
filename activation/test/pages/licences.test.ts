@@ -241,3 +241,14 @@ describe("création de code : durée de validité", () => {
     expect(await days("7")).toBe(7);
   });
 });
+
+describe("création de code : jetons de formulaire", () => {
+  it("supprime les jetons de plus de 2 jours, garde les récents", async () => {
+    const h = await harness();
+    const now = Math.floor(Date.now() / 1000);
+    await h.env.DB.prepare("INSERT INTO form_nonces (nonce, at) VALUES ('vieux', ?), ('recent', ?)").bind(now - 3 * DAY, now - DAY).run();
+    await post(h, "/codes", { nonce: "neuf", organization: "IPSA", tier: "151-250", kind: "pilot", starts: "2026-11-13", ends: "2026-12-13" });
+    const left = (await h.env.DB.prepare("SELECT nonce FROM form_nonces ORDER BY nonce").all<{ nonce: string }>()).results.map((r) => r.nonce);
+    expect(left).toEqual(["neuf", "recent"]);
+  });
+});

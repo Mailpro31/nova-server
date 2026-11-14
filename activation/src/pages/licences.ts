@@ -119,6 +119,7 @@ async function create(ctx: Ctx, form: FormData): Promise<Response> {
   const licence = await signLicence(ctx.env.SIGNING_KEY, r); // avant le jeton : une signature qui échoue ne le brûle pas
   // Recharger la page renvoie le même jeton : aucun second code.
   const nonce = text("nonce").slice(0, 64);
+  await ctx.env.DB.prepare("DELETE FROM form_nonces WHERE at < ?").bind(ctx.now - 2 * DAY).run(); // table jamais vidée sinon
   if (nonce && !(await ctx.env.DB.prepare("INSERT OR IGNORE INTO form_nonces (nonce, at) VALUES (?, ?)").bind(nonce, ctx.now).run()).meta.changes)
     return show(notice("Ce code a déjà été créé ; il n'est pas affiché une seconde fois. S'il est perdu, révoquez-le et créez-en un autre."));
   const code = newCode();
