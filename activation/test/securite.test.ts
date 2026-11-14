@@ -5,7 +5,7 @@ import consoleWorker, { invalid } from "../src/console";
 import activation from "../src/index";
 import { loadFleet } from "../src/dashboard";
 import { lit } from "../scripts/pilot.mjs";
-import { demoGrafana, get, harness, NOW, ORIGIN, vector } from "./helpers";
+import { demoGrafana, get, harness, NOW, ORIGIN, post, vector } from "./helpers";
 import { fakeD1 } from "./fakeD1";
 
 const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite");
@@ -93,6 +93,16 @@ describe("Access", () => {
       expect((await call(h, await signed(h, { alg: "RS256", kid: "k4" }, claims))).status).toBe(403);
       expect(certCalls()).toBe(1); // k3 et k4 dans la même minute : pas de nouvelle lecture
     } finally { vi.restoreAllMocks(); }
+  });
+
+  it("erreurs provoquables par l'utilisateur connecté : 400, jamais 500", async () => {
+    const h = await harness();
+    const r = await post(h, "/pilot/answer", { id: "abc", answer: "ok" });
+    expect(r.status).toBe(400);
+    const raw = (body: string, type: string) =>
+      consoleWorker.fetch(new Request(`${ORIGIN}/pilot/answer`, { method: "POST", body, headers: { "cf-access-jwt-assertion": h.token, origin: ORIGIN, "content-type": type } }), h.env);
+    expect((await raw("{", "application/json")).status).toBe(400);
+    expect((await raw("x", "text/plain")).status).toBe(400);
   });
 
   it("certs injoignables : 403, pas d'exception", async () => {

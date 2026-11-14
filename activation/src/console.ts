@@ -74,7 +74,9 @@ export default {
       // Un formulaire posté depuis un autre site porterait le cookie d'Access : refusé.
       if (request.headers.get("origin") !== url.origin) return new Response("Origine refusée", { status: 403 });
       const action = PAGES.map((p) => p.actions?.[url.pathname]).find(Boolean);
-      return action ? action(ctx, await request.formData()) : new Response("Introuvable", { status: 404 });
+      if (!action) return new Response("Introuvable", { status: 404 });
+      const form = await request.formData().catch(() => null); // corps qui n'est pas un formulaire
+      return form ? action(ctx, form) : new Response("Formulaire invalide", { status: 400 });
     }
     const page = request.method === "GET" ? pageFor(url.pathname) : undefined;
     if (!page) return new Response("Introuvable", { status: 404 });

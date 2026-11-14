@@ -135,6 +135,7 @@ export async function pilotAction(path: string, form: FormData, db: D1Database, 
   } else if (path === "/pilot/answer") {
     if (!text("answer")) return new Response("Réponse vide", { status: 400 });
     const id = Number(text("id"));
+    if (!Number.isInteger(id) || id <= 0) return new Response("Question invalide", { status: 400 });
     const done = await run("UPDATE pilot_questions SET answer = ?, answered_at = ?, answered_by = ? WHERE id = ? AND answer IS NULL", text("answer"), now, user, id);
     if (done.meta.changes) await audit(db, user, now, "Question répondue", `question n° ${id}`);
     target = tabLink("questions");
