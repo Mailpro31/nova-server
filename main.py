@@ -7029,6 +7029,11 @@ def control_delete_group(
             "DELETE FROM organization_group_rules WHERE organization_id=? AND group_id=?",
             (organization_id, group_id),
         )
+        # Les reglages du groupe partent avec lui, dans la meme transaction.
+        conn.execute(
+            "DELETE FROM organization_group_policies WHERE organization_id=? AND group_id=?",
+            (organization_id, group_id),
+        )
         conn.execute(
             "UPDATE organization_groups SET deleted_at=?, updated_at=? "
             "WHERE organization_id=? AND group_id=?",
