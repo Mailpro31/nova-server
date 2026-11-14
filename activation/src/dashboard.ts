@@ -165,7 +165,8 @@ export interface SchoolData {
  */
 export function envelopeUse(s: SchoolData): { available: number; part: number } | undefined {
   const month = s.spendMonth ?? 0;
-  if (s.allowance && s.spentTotal !== undefined) return { available: s.allowance - (s.spentTotal - month), part: s.spentTotal / s.allowance };
+  if (s.allowance !== undefined && s.spentTotal !== undefined) // 0 = licence pas encore ouverte : le serveur ne coupe que s'il y a dépense
+    return { available: s.allowance - (s.spentTotal - month), part: s.allowance > 0 ? s.spentTotal / s.allowance : s.spentTotal > 0 ? 1 : 0 };
   if (!s.envelopeAnnual) return undefined;
   return { available: s.envelopeAnnual / 12, part: month / (s.envelopeAnnual / 12) };
 }

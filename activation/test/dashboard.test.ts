@@ -98,6 +98,8 @@ describe("données de la flotte", () => {
     expect(envelopeUse(ipsa)).toEqual({ available: 100, part: 250 / 300 });
     // vieux serveur : repli sur annual ÷ 12 = 100, dépense du mois 50
     expect(envelopeUse({ ...ipsa, allowance: undefined, spentTotal: undefined })).toEqual({ available: 100, part: 0.5 });
+    expect(envelopeUse({ ...ipsa, allowance: 0, spentTotal: 0, spendMonth: 0 })).toEqual({ available: 0, part: 0 }); // licence pas encore ouverte
+    expect(envelopeUse({ ...ipsa, allowance: 0, spentTotal: 5, spendMonth: 5 })).toEqual({ available: 0, part: 1 });
   });
   it("prévient sans jeton ni réponse", async () => {
     expect(await loadFleet({ ...env, GRAFANA_READ_TOKEN: "" }, NOW)).toEqual({ ok: false, reason: "token" });
