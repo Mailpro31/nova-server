@@ -46,8 +46,15 @@ def refine_cost() -> float:
     return _price("NOVA_AI_REFINE_EUR_PER_CALL")
 
 
+try:  # le mois des écoles est celui de Paris, pas celui de l'horloge du conteneur (UTC)
+    from zoneinfo import ZoneInfo
+    _PARIS = ZoneInfo("Europe/Paris")
+except Exception:  # base des fuseaux absente : UTC, comme avant
+    _PARIS = datetime.timezone.utc
+
+
 def month_of(stamp: float) -> str:
-    return datetime.datetime.fromtimestamp(stamp, datetime.timezone.utc).strftime("%Y-%m")
+    return datetime.datetime.fromtimestamp(stamp, _PARIS).strftime("%Y-%m")
 
 
 def _month_index(day: str) -> int:

@@ -6,6 +6,8 @@ httpx==0.28.1
 pydantic[email]==2.13.4
 python-multipart==0.0.32
 pyjwt[crypto]==2.13.0
+# Fuseau Europe/Paris (mois de l'enveloppe d'IA) même sans base système des fuseaux.
+tzdata==2025.2
 
 # Production. Importes paresseusement : le service tourne sans eux tant qu'il
 # reste sur SQLite sans limitation partagee, ce qui est le cas en dev et en

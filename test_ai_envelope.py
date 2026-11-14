@@ -29,6 +29,12 @@ def spent(email: str, eur: float, month: str = "2026-11"):
 
 
 class PureTests(unittest.TestCase):
+    def test_the_month_turns_at_midnight_in_paris(self):
+        # 1er décembre 2026, 0 h 30 à Paris = 30 novembre, 23 h 30 UTC.
+        self.assertEqual(ai_envelope.month_of(1796081400), "2026-12")
+        # 1er juillet 2026, 1 h 30 à Paris (heure d'été) = 30 juin, 23 h 30 UTC.
+        self.assertEqual(ai_envelope.month_of(1782862200), "2026-07")
+
     def test_call_cost_reads_the_tokens(self):
         with mock.patch.dict("os.environ", PRICES):
             cost = ai_envelope.call_cost({"prompt_tokens": 1_000_000, "completion_tokens": 500_000})
