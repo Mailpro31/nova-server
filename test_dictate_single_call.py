@@ -129,6 +129,7 @@ class OneGeminiCallTests(DictateSingleCallTests):
         self.assertEqual(refiner.prompts, [])
 
     def test_the_daily_cap_never_asks_gemini_for_the_style(self):
+        self.forget_policies()
         with main.db() as conn:
             conn.execute(
                 "INSERT INTO organization_policies(organization_id, schema_version, "
