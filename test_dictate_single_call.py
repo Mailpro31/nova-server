@@ -115,6 +115,32 @@ class OneGeminiCallTests(DictateSingleCallTests):
         self.assertEqual(len(self.seen_texts), 1)
         self.assertEqual(body["final"], self.reformulate(self.relue))
 
+    @staticmethod
+    def forget_policies():
+        with main.db() as conn:
+            conn.execute("DELETE FROM organization_policies")
+
+    def test_an_exam_never_asks_gemini_for_the_style(self):
+        """En examen, ni relecture ni Style : Gemini n'est jamais appelé."""
+        with patch.object(main, "exam_active", lambda settings: True):
+            body, refiner = self.combined("Je révise la dérivée d'une constante.")
+        self.assertEqual((body["relue"], body["final"], body.get("exam")),
+                         (self.heard, self.heard, True))
+        self.assertEqual(refiner.prompts, [])
+
+    def test_the_daily_cap_never_asks_gemini_for_the_style(self):
+        with main.db() as conn:
+            conn.execute(
+                "INSERT INTO organization_policies(organization_id, schema_version, "
+                "revision, settings, updated_at, updated_by_user_id) VALUES (?,?,?,?,?,?)",
+                (main.nova_organization_id(), main.POLICY_SCHEMA_VERSION, 1,
+                 '{"daily_rewrites_per_member": 1}', 0.0, None))
+        self.addCleanup(self.forget_policies)
+        with patch.object(main, "rewrites_today", lambda user: 1):
+            body, refiner = self.combined("Je révise la dérivée d'une constante.")
+        self.assertEqual((body["final"], body.get("capped")), (self.relue, True))
+        self.assertEqual(refiner.prompts, [])
+
     def test_plain_transcription_never_asks_for_a_style(self):
         refiner = FakeCombinedRefiner(self.relue, "x")
         with patch.object(main, "AUDIO_REFINER", refiner), \

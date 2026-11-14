@@ -15096,11 +15096,17 @@ async def dictate(
     `/api/reformulate` échouait : la dictée n'est jamais perdue.
     """
     request = ReformulateRequest(text="", style_id=style_id, style_prompt=style_prompt)
-    try:
-        context, _ = writing_context(user, account_organization(account))
-        prompt, _, _ = style_system_prompt(request, account, context)
-    except HTTPException:
-        prompt = ""
+    settings = member_policy(account)["settings"]
+    cap = settings["daily_rewrites_per_member"]
+    prompt = ""
+    # En examen ou au plafond du jour, `reformulate` ne rendra pas le Style :
+    # ne pas le demander à la relecture audio, il serait payé pour rien.
+    if not exam_active(settings) and not (cap and rewrites_today(user) >= cap):
+        try:
+            context, _ = writing_context(user, account_organization(account))
+            prompt, _, _ = style_system_prompt(request, account, context)
+        except HTTPException:
+            prompt = ""
     # La relecture audio rend aussi le texte du Style : un seul appel Gemini.
     token = SINGLE_CALL_STYLE.set({"prompt": prompt, "final": None} if prompt else None)
     try:
