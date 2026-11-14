@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { todo, type TodoInput } from "../../src/pages/accueil";
+import { todo, untreated, type TodoInput } from "../../src/pages/accueil";
 import type { Fleet, SchoolData } from "../../src/dashboard";
 import { demoGrafana, get, harness, NOW } from "../helpers";
 
@@ -41,11 +41,11 @@ describe("todo()", () => {
 
   it("signalements récents non traités : un seul élément", () => {
     const r = (at: number) => ({ at, school: "ecole-a", line: {} });
-    const reports = [r(NOW - 100), r(NOW - 200), r(NOW - 300), r(NOW - 8 * 86400)];
+    const reports = [r(NOW - 100), r(NOW - 200), r(NOW - 300), r(NOW - 8 * 86400), r(NOW - 31 * 86400)];
     const treated = new Set([`ecole-a:${Math.round((NOW - 300) * 1000)}`]);
     const items = todo(input([school()], { treated }, reports));
     expect(items).toHaveLength(1);
-    expect(items[0]).toMatchObject({ tone: "warn", title: "2 signalements à traiter", href: "/signalements" });
+    expect(items[0]).toMatchObject({ tone: "warn", title: "3 signalements à traiter", href: "/signalements" });
   });
 
   it("questions ouvertes et pause", () => {
@@ -126,5 +126,12 @@ describe("GET /etat", () => {
     const r = await get(h, "/etat");
     expect(r.status).toBe(200);
     expect(await r.text()).toContain("En panne");
+  });
+});
+
+describe("signalements à traiter", () => {
+  it("compte les 30 jours que montre la page Signalements, pas seulement 7", () => {
+    const at = (days: number) => ({ at: NOW - days * 86400, school: "ipsa", line: { event: "support.report" } });
+    expect(untreated([at(1), at(10), at(25)], new Set(), NOW)).toHaveLength(3);
   });
 });
