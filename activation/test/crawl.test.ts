@@ -188,7 +188,7 @@ describe("boutons dont le résultat est invisible au robot", () => {
 
   it("Renouveler pré-remplit le formulaire de création", async () => {
     const html = await page("/licences");
-    const link = hrefs(html).find((u) => u.startsWith(`/licences?renouveler=${hex(1)}`))!;
+    const link = hrefs(html).find((u) => u.startsWith(`/licences?renouveler=1#`))!;
     expect(link).toContain("#nouveau");
     const next = await page(link.split("#")[0]);
     expect(value(next, "organization")).toBe("IPSA");

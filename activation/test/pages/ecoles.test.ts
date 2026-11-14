@@ -35,6 +35,19 @@ describe("Écoles", () => {
     expect(await html(await get(await harness(demoGrafana), "/ecoles/ipsa"))).toContain("Aucun code donné à ce nom.");
   });
 
+  it("une version de poste « other » s'affiche comme inconnue, pas comme ancienne", async () => {
+    const h = await harness((url) => {
+      const base = demoGrafana(url);
+      if ((url.searchParams.get("query") ?? "").includes("nova_app_versions"))
+        return vector([[{ school: "ipsa", version: "1.0.82" }, 3], [{ school: "ipsa", version: "other" }, 2]]);
+      return base;
+    });
+    const t = await html(await get(h, "/ecoles/ipsa"));
+    expect(t).toContain("other ×2</span> <span");
+    expect(t).toContain("inconnue");
+    expect(t.match(/ancienne/g) ?? []).toHaveLength(0);
+  });
+
   it("signale une école inconnue", async () => {
     const t = await html(await get(await harness(demoGrafana), "/ecoles/inconnue"));
     expect(t).toContain("École inconnue");

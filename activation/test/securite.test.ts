@@ -5,7 +5,7 @@ import consoleWorker, { invalid } from "../src/console";
 import activation from "../src/index";
 import { loadFleet } from "../src/dashboard";
 import { lit } from "../scripts/pilot.mjs";
-import { demoGrafana, get, harness, NOW, ORIGIN, vector } from "./helpers";
+import { demoGrafana, get, harness, NOW, ORIGIN, post, vector } from "./helpers";
 import { fakeD1 } from "./fakeD1";
 
 const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite");
@@ -73,6 +73,36 @@ describe("Access", () => {
     expect((await call(h, h.token)).status).toBe(403);
     broken = false;
     expect((await call(h, h.token)).status).toBe(200);
+  });
+
+  it("après une rotation des clés, un kid inconnu relit les certs une fois (au plus une fois par minute)", async () => {
+    const h = await harness();
+    expect((await call(h, h.token)).status).toBe(200); // certs mis en cache avec k1
+    const rotated = { ...h.jwk, kid: "k2" };
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ keys: [rotated] })));
+    vi.stubGlobal("fetch", fetchMock);
+    const certCalls = () => (fetchMock.mock.calls as unknown as string[][]).filter(([u]) => u.includes("/cdn-cgi/access/certs")).length;
+    const claims = { aud: "aud-1", exp: NOW + 3600, email: "a@b.c" };
+    const real = Date.now();
+    vi.spyOn(Date, "now").mockReturnValue(real + 120_000);
+    try {
+      expect((await call(h, await signed(h, { alg: "RS256", kid: "k2" }, claims))).status).toBe(200);
+      expect(certCalls()).toBe(1);
+      expect((await call(h, await signed(h, { alg: "RS256", kid: "k3" }, claims))).status).toBe(403);
+      expect(certCalls()).toBe(1);
+      expect((await call(h, await signed(h, { alg: "RS256", kid: "k4" }, claims))).status).toBe(403);
+      expect(certCalls()).toBe(1); // k3 et k4 dans la même minute : pas de nouvelle lecture
+    } finally { vi.restoreAllMocks(); }
+  });
+
+  it("erreurs provoquables par l'utilisateur connecté : 400, jamais 500", async () => {
+    const h = await harness();
+    const r = await post(h, "/pilot/answer", { id: "abc", answer: "ok" });
+    expect(r.status).toBe(400);
+    const raw = (body: string, type: string) =>
+      consoleWorker.fetch(new Request(`${ORIGIN}/pilot/answer`, { method: "POST", body, headers: { "cf-access-jwt-assertion": h.token, origin: ORIGIN, "content-type": type } }), h.env);
+    expect((await raw("{", "application/json")).status).toBe(400);
+    expect((await raw("x", "text/plain")).status).toBe(400);
   });
 
   it("certs injoignables : 403, pas d'exception", async () => {

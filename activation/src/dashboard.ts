@@ -111,7 +111,7 @@ export interface Report { at: number; school: string; line: Record<string, unkno
 async function reports(env: MetricsEnv, now: number): Promise<Report[] | null> {
   const query = '{school=~".+"} |= "support.report"';
   const data = await get<{ result: { stream: Record<string, string>; values: [string, string][] }[] }>(
-    `${env.LOKI_URL}/loki/api/v1/query_range?query=${encodeURIComponent(query)}&start=${(now - 30 * DAY) * 1e9}&end=${now * 1e9}&limit=50&direction=backward`,
+    `${env.LOKI_URL}/loki/api/v1/query_range?query=${encodeURIComponent(query)}&start=${(now - 30 * DAY) * 1e9}&end=${now * 1e9}&limit=1000&direction=backward`,
     env.LOKI_USER, env.GRAFANA_READ_TOKEN,
   );
   if (!data) return null;
@@ -153,9 +153,22 @@ export interface SchoolData {
   licence?: { status: string; tier: string; daysLeft?: number };
   spendMonth?: number;             // € dépensés ce mois
   envelopeAnnual?: number;         // € par an, si la licence en porte une
+  allowance?: number;              // € ouverts à ce jour, report compris (kind="allowance" du serveur)
+  spentTotal?: number;             // € dépensés depuis le début de la licence (kind="spent")
   tokens30d?: number;
   dictSeries: [number, number][];  // dictées par jour de Paris, 13 jours finis + aujourd'hui
   latencySeries: [number, number][]; // p95 de la transcription (s) par jour, 14 jours
+}
+/**
+ * Enveloppe d'IA du mois : « disponible » et part consommée. Comme le serveur : allowance (report compris) et
+ * dépense depuis le début de la licence, bulle en pause quand spent >= allowance. Repli annual ÷ 12 pour un vieux serveur.
+ */
+export function envelopeUse(s: SchoolData): { available: number; part: number } | undefined {
+  const month = s.spendMonth ?? 0;
+  if (s.allowance !== undefined && s.spentTotal !== undefined) // 0 = licence pas encore ouverte : le serveur ne coupe que s'il y a dépense
+    return { available: s.allowance - (s.spentTotal - month), part: s.allowance > 0 ? s.spentTotal / s.allowance : s.spentTotal > 0 ? 1 : 0 };
+  if (!s.envelopeAnnual) return undefined;
+  return { available: s.envelopeAnnual / 12, part: month / (s.envelopeAnnual / 12) };
 }
 export interface Fleet { schools: SchoolData[]; reports: Report[] | null }
 export type FleetResult = { ok: true; fleet: Fleet } | { ok: false; reason: "token" | "grafana" };
@@ -164,7 +177,7 @@ export type FleetResult = { ok: true; fleet: Fleet } | { ok: false; reason: "tok
 export async function loadFleet(env: MetricsEnv, now: number): Promise<FleetResult> {
   if (!env.GRAFANA_READ_TOKEN) return { ok: false, reason: "token" };
   const midnight = parisMidnight(now), since = now - midnight;
-  const [seen, server, apps, members, active, dictations, licence, days, spend, envelope, tokens, dictSeries, latency, support, dictToday, latencyToday] =
+  const [seen, server, apps, members, active, dictations, licence, days, spend, envelope, tokens, dictSeries, latency, support, dictToday, latencyToday, allowance, spentAll] =
     await Promise.all([
       // Un instantané ne regarde que 5 min en arrière : sans sous-requête, une école muette disparaît de la liste au lieu d'être « Muet ».
       instant(env, "max by (school) (max_over_time(timestamp(nova_uptime_seconds)[7d:1m]))"),
@@ -183,10 +196,12 @@ export async function loadFleet(env: MetricsEnv, now: number): Promise<FleetResu
       reports(env, now),
       since >= 300 ? instant(env, `sum by (school) (increase(nova_events_total{event="inference_transcribe",outcome="allowed"}[${since}s]))`) : null,
       since >= 300 ? instant(env, `histogram_quantile(0.95, sum by (school, le) (rate(nova_stage_seconds_bucket{stage="transcription"}[${since}s])))`) : null,
+      instant(env, 'max by (school) (nova_ai_envelope_eur{kind="allowance"})'),
+      instant(env, 'max by (school) (nova_ai_envelope_eur{kind="spent"})'),
     ]);
   if (!seen) return { ok: false, reason: "grafana" };
   const last = bySchool(seen), m = bySchool(members), a = bySchool(active), d = bySchool(dictations), dl = bySchool(days);
-  const sp = bySchool(spend), en = bySchool(envelope), tk = bySchool(tokens);
+  const sp = bySchool(spend), en = bySchool(envelope), tk = bySchool(tokens), al = bySchool(allowance), st = bySchool(spentAll);
   const schools = Object.keys(last).sort().map((id): SchoolData => {
     const lic = licence?.find((s) => s.metric.school === id)?.metric;
     return {
@@ -196,7 +211,7 @@ export async function loadFleet(env: MetricsEnv, now: number): Promise<FleetResu
         .map((s) => ({ version: s.metric.version, count: Number(s.value[1]) })),
       members: m[id], activeMonth: a[id], dictations24h: d[id],
       licence: lic ? { status: lic.status, tier: lic.tier, daysLeft: dl[id] } : undefined,
-      spendMonth: sp[id], envelopeAnnual: en[id], tokens30d: tk[id],
+      spendMonth: sp[id], envelopeAnnual: en[id], allowance: al[id], spentTotal: st[id], tokens30d: tk[id],
       dictSeries: daily(dictSeries, dictToday, id, now), latencySeries: daily(latency, latencyToday, id, now),
     };
   });

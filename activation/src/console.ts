@@ -14,8 +14,10 @@ export { claimsOf, invalid, newCode, signLicence, type LicenceRequest } from "./
 
 let certsCache: { domain: string; keys: JsonWebKey[]; at: number } | null = null;
 
-async function accessKeys(domain: string, now: number): Promise<JsonWebKey[]> {
-  if (certsCache && certsCache.domain === domain && now - certsCache.at < 3600) return certsCache.keys;
+async function accessKeys(domain: string, now: number, refresh = false): Promise<JsonWebKey[]> {
+  const cached = certsCache && certsCache.domain === domain ? certsCache : null;
+  // Après une rotation, un kid inconnu relit les certs, au plus une fois par minute.
+  if (cached && now - cached.at < (refresh ? 60 : 3600)) return cached.keys;
   const response = await fetch(`https://${domain}/cdn-cgi/access/certs`);
   const keys = ((await response.json()) as { keys?: JsonWebKey[] }).keys;
   // Une réponse d'erreur n'est pas gardée : sinon tout le monde est refusé pendant une heure.
@@ -33,7 +35,9 @@ export async function accessUser(request: Request, env: ConsoleEnv, now: number)
   try {
     const header = JSON.parse(new TextDecoder().decode(fromB64url(head)));
     const claims = JSON.parse(new TextDecoder().decode(fromB64url(body)));
-    const jwk = (await accessKeys(env.ACCESS_TEAM_DOMAIN, now)).find((k) => (k as { kid?: string }).kid === header.kid);
+    const byKid = (keys: JsonWebKey[]) => keys.find((k) => (k as { kid?: string }).kid === header.kid);
+    const keys = await accessKeys(env.ACCESS_TEAM_DOMAIN, now);
+    const jwk = byKid(keys) ?? (keys.length ? byKid(await accessKeys(env.ACCESS_TEAM_DOMAIN, now, true)) : undefined);
     if (header.alg !== "RS256" || !jwk) return null;
     const key = await crypto.subtle.importKey("jwk", jwk, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["verify"]);
     const ok = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, fromB64url(signature), encoder.encode(`${head}.${body}`));
@@ -70,7 +74,9 @@ export default {
       // Un formulaire posté depuis un autre site porterait le cookie d'Access : refusé.
       if (request.headers.get("origin") !== url.origin) return new Response("Origine refusée", { status: 403 });
       const action = PAGES.map((p) => p.actions?.[url.pathname]).find(Boolean);
-      return action ? action(ctx, await request.formData()) : new Response("Introuvable", { status: 404 });
+      if (!action) return new Response("Introuvable", { status: 404 });
+      const form = await request.formData().catch(() => null); // corps qui n'est pas un formulaire
+      return form ? action(ctx, form) : new Response("Formulaire invalide", { status: 400 });
     }
     const page = request.method === "GET" ? pageFor(url.pathname) : undefined;
     if (!page) return new Response("Introuvable", { status: 404 });
