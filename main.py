@@ -6810,15 +6810,19 @@ def control_update_policy(
             return policy_view(organization_id)
 
         revision = current_revision + 1
-        conn.execute(
+        written = conn.execute(
             "INSERT INTO organization_policies(organization_id, schema_version, "
             "revision, settings, updated_at, updated_by_user_id) VALUES (?,?,?,?,?,?) "
             "ON CONFLICT(organization_id) DO UPDATE SET schema_version=excluded.schema_version, "
             "revision=excluded.revision, settings=excluded.settings, "
-            "updated_at=excluded.updated_at, updated_by_user_id=excluded.updated_by_user_id",
+            "updated_at=excluded.updated_at, updated_by_user_id=excluded.updated_by_user_id "
+            "WHERE organization_policies.revision=?",
             (organization_id, POLICY_SCHEMA_VERSION, revision, json.dumps(overrides),
-             now, principal.user_id),
+             now, principal.user_id, current_revision),
         )
+        if written.rowcount != 1:
+            # Un autre administrateur a ecrit entre la lecture et l'ecriture.
+            raise auth_error(409, "POLICY_REVISION_CONFLICT")
         # Meme transaction que la mutation : une policy changee sans trace
         # rendrait le journal menteur par omission.
         record_admin_action(
@@ -7205,15 +7209,18 @@ def control_update_group_policy(
 
         revision = current_revision + 1
         now = time.time()
-        conn.execute(
+        written = conn.execute(
             "INSERT INTO organization_group_policies(organization_id, group_id, revision, "
             "settings, updated_at, updated_by_user_id) VALUES (?,?,?,?,?,?) "
             "ON CONFLICT(organization_id, group_id) DO UPDATE SET revision=excluded.revision, "
             "settings=excluded.settings, updated_at=excluded.updated_at, "
-            "updated_by_user_id=excluded.updated_by_user_id",
+            "updated_by_user_id=excluded.updated_by_user_id "
+            "WHERE organization_group_policies.revision=?",
             (organization_id, group_id, revision, json.dumps(overrides), now,
-             principal.user_id),
+             principal.user_id, current_revision),
         )
+        if written.rowcount != 1:
+            raise auth_error(409, "GROUP_POLICY_REVISION_CONFLICT")
         # Des reglages, pas du contenu : les valeurs avant et apres disent
         # exactement ce qui a change pour les membres du groupe.
         record_admin_action(
@@ -7441,7 +7448,7 @@ async def control_update_ai_runtime(
             # eu lieu.
             else APPLY_STATUS_PENDING
         )
-        conn.execute(
+        written = conn.execute(
             "INSERT INTO organization_ai_runtime_config("
             "organization_id,schema_version,desired_revision,desired_profile,"
             "reasoning_allowed,max_concurrent_text,max_concurrent_speech,max_queue,"
@@ -7453,7 +7460,8 @@ async def control_update_ai_runtime(
             "max_concurrent_text=excluded.max_concurrent_text,"
             "max_concurrent_speech=excluded.max_concurrent_speech,max_queue=excluded.max_queue,"
             "apply_status=excluded.apply_status,updated_at=excluded.updated_at,"
-            "updated_by_user_id=excluded.updated_by_user_id",
+            "updated_by_user_id=excluded.updated_by_user_id "
+            "WHERE organization_ai_runtime_config.desired_revision=?",
             (
                 organization_id,
                 AI_RUNTIME_CONFIG_SCHEMA_VERSION,
@@ -7467,8 +7475,11 @@ async def control_update_ai_runtime(
                 apply_status,
                 now,
                 principal.user_id,
+                current_revision,
             ),
         )
+        if written.rowcount != 1:
+            raise auth_error(409, "AI_RUNTIME_REVISION_CONFLICT")
         record_admin_action(
             principal,
             "ai_runtime.desired_config.update",
@@ -15711,18 +15722,21 @@ def write_learning_lesson_settings(principal: AdminPrincipal, lesson_id: str,
             return learning_admin_lesson_view(lesson_id, entry, current)
         revision = current["revision"] + 1
         now = time.time()
-        conn.execute(
+        written = conn.execute(
             "INSERT INTO organization_learning_lesson_settings(organization_id, lesson_id, "
             "status, required, due_at, group_ids, revision, updated_at, updated_by_user_id) "
             "VALUES (?,?,?,?,?,?,?,?,?) "
             "ON CONFLICT(organization_id, lesson_id) DO UPDATE SET status=excluded.status, "
             "required=excluded.required, due_at=excluded.due_at, "
             "group_ids=excluded.group_ids, revision=excluded.revision, "
-            "updated_at=excluded.updated_at, updated_by_user_id=excluded.updated_by_user_id",
+            "updated_at=excluded.updated_at, updated_by_user_id=excluded.updated_by_user_id "
+            "WHERE organization_learning_lesson_settings.revision=?",
             (organization_id, lesson_id, after["status"], int(after["required"]),
              after["due_at"], json.dumps(after["group_ids"]), revision, now,
-             principal.user_id),
+             principal.user_id, current["revision"]),
         )
+        if written.rowcount != 1:
+            raise auth_error(409, "LEARNING_REVISION_CONFLICT")
         # Meme transaction que la mutation. Les reglages sont des decisions de
         # configuration, pas du contenu : les recopier avant et apres dit
         # exactement ce qui a change, sans rien exposer.
