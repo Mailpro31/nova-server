@@ -433,6 +433,8 @@ class OpenAICompatibleTextBackend:
             body = response.json()
         except (httpx.HTTPError, ValueError, json.JSONDecodeError):
             return None, None
+        if not isinstance(body, dict):
+            return None, None
         count = body.get("count")
         window = body.get("max_model_len")
         return (
@@ -455,7 +457,10 @@ class OpenAICompatibleTextBackend:
             body = response.json()
         except (httpx.HTTPError, ValueError, json.JSONDecodeError):
             return None
-        for item in body.get("data", []):
+        data = body.get("data", []) if isinstance(body, dict) else None
+        if not isinstance(data, list):
+            return None
+        for item in data:
             if not isinstance(item, dict):
                 continue
             window = item.get("max_model_len")

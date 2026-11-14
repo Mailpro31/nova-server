@@ -28,12 +28,31 @@ bord d'usage n'a pas besoin de devenir un outil de surveillance du poste.
 
 from __future__ import annotations
 
+import datetime
 import os
 import platform
 import shutil
 import subprocess
 import time
 from dataclasses import dataclass
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+
+try:
+    PARIS = ZoneInfo("Europe/Paris")
+except ZoneInfoNotFoundError:  # image sans base des fuseaux : UTC plutôt qu'une panne
+    PARIS = datetime.timezone.utc
+
+
+def month_start_hour(now: float) -> str:
+    """Clé horaire UTC (`AAAA-MM-JJTHH`, celle de `usage_hourly`) du 1er du mois à minuit, heure de Paris.
+
+    Seule la borne passe en heure de Paris : les clés gardées restent en UTC,
+    et Paris est décalé d'heures entières, donc la borne tombe pile sur une clé.
+    """
+    start = datetime.datetime.fromtimestamp(now, PARIS).replace(
+        day=1, hour=0, minute=0, second=0, microsecond=0)
+    return start.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H")
 
 
 # Une minute suffit a voir un pic d'usage et divise par deux le volume

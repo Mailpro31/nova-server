@@ -161,6 +161,16 @@ class EnvelopeTests(unittest.TestCase):
         full = main.ai_envelope_state(NOW)
         self.assertEqual((full["spent_eur"], full["percent"], full["empty"]), (30.0, 100, True))
 
+    def test_a_licence_not_started_reads_zero_percent_without_spend(self):
+        """Licence qui commence le mois prochain : rien d'ouvert, rien dépensé,
+        la jauge doit dire 0 %, pas 100 % ; une dépense la remet à 100 %."""
+        early = NOW - 70 * DAY  # fin août, avant le 1er septembre
+        self.assertEqual(main.ai_envelope_state(early)["percent"], 0)
+        spent("a@example.com", 1, "2026-08")
+        self.assertEqual(main.ai_envelope_state(early)["percent"], 0)  # avant le contrat
+        spent("a@example.com", 1, "2026-09")
+        self.assertEqual(main.ai_envelope_state(early)["percent"], 100)
+
     def test_the_subscription_page_shows_the_envelope(self):
         spent("a@example.com", 3)
         envelope = main.subscription_report(NOW)["ai_envelope"]

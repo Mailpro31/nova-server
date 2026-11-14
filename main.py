@@ -62,6 +62,7 @@ import production_config
 import learning
 import ratelimit
 import scim
+import usage_metrics
 import secrets_provider
 from ai_runtime import (
     ADVANCED_MINIMUM_VRAM_GB,
@@ -3218,7 +3219,8 @@ def ai_envelope_state(now: float | None = None, email: str | None = None) -> dic
         "allowance_eur": round(allowance, 2),
         "spent_eur": round(spent, 2),
         "month_eur": round(month_eur, 3),
-        "percent": round(100 * spent / allowance) if allowance > 0 else 100,
+        # Rien d'ouvert (licence pas commencée) : 0 % tant que rien n'est dépensé.
+        "percent": round(100 * spent / allowance) if allowance > 0 else (100 if spent > 0 else 0),
         "empty": allowance - spent < ai_envelope.MARGIN_EUR,
         "mine_over": bool(email) and mine >= share * ai_envelope.STUDENT_MONTH_SHARE,
     }
@@ -3476,7 +3478,7 @@ def count_usage(
     if is_bench_account(email):
         return
     day = time.strftime("%Y-%m-%d")
-    hour = time.strftime("%Y-%m-%dT%H")
+    hour = time.strftime("%Y-%m-%dT%H", time.gmtime())  # cles horaires en UTC, comme les lectures
     col = "transcriptions" if kind == "transcription" else "reformulations"
     with db() as conn:
         # Les colonnes sont qualifiees par leur table dans la clause `DO UPDATE`.
@@ -15128,11 +15130,17 @@ async def dictate(
     `/api/reformulate` échouait : la dictée n'est jamais perdue.
     """
     request = ReformulateRequest(text="", style_id=style_id, style_prompt=style_prompt)
-    try:
-        context, _ = writing_context(user, account_organization(account))
-        prompt, _, _ = style_system_prompt(request, account, context)
-    except HTTPException:
-        prompt = ""
+    settings = member_policy(account)["settings"]
+    cap = settings["daily_rewrites_per_member"]
+    prompt = ""
+    # En examen ou au plafond du jour, `reformulate` ne rendra pas le Style :
+    # ne pas le demander à la relecture audio, il serait payé pour rien.
+    if not exam_active(settings) and not (cap and rewrites_today(user) >= cap):
+        try:
+            context, _ = writing_context(user, account_organization(account))
+            prompt, _, _ = style_system_prompt(request, account, context)
+        except HTTPException:
+            prompt = ""
     # La relecture audio rend aussi le texte du Style : un seul appel Gemini.
     token = SINGLE_CALL_STYLE.set({"prompt": prompt, "final": None} if prompt else None)
     try:
@@ -17129,12 +17137,12 @@ def business_metrics() -> list[tuple[str, str, dict[str, str], float]]:
     Actifs du mois (adresses distinctes de `usage_hourly`, jamais listees),
     versions installees, palier et echeance de la licence.
     """
-    month = time.strftime("%Y-%m")
-    since = time.time() - METRICS_VERSION_WINDOW_SECONDS
+    now = time.time()
+    since = now - METRICS_VERSION_WINDOW_SECONDS
     with db() as conn:
         active = conn.execute(
             "SELECT COUNT(DISTINCT email) AS n FROM usage_hourly WHERE hour >= ?",
-            (f"{month}-01T00",)).fetchone()["n"]
+            (usage_metrics.month_start_hour(now),)).fetchone()["n"]
         rows = conn.execute(
             "SELECT app_version AS version, COUNT(*) AS n FROM users "
             "WHERE app_version IS NOT NULL AND last_seen >= ? "
