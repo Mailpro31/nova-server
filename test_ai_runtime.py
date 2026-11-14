@@ -1381,6 +1381,29 @@ class ContextWindowBoundTests(unittest.IsolatedAsyncioTestCase):
         await backend.generate(self._request("texte"))
         self.assertEqual(seen[0]["max_tokens"], 2048)
 
+    async def test_a_json_body_that_is_not_an_object_is_unreadable(self):
+        """`/tokenize` qui rend une liste, `/models` un nombre : réponse
+        illisible, le secours habituel sert, jamais une AttributeError."""
+        for tokenize_body, models_body in (([1, 2], 7), (3, [{"id": "engine-model"}]),
+                                           ({"count": 5}, {"data": 4})):
+            seen = []
+
+            def handler(request: httpx.Request, tokenize_body=tokenize_body,
+                        models_body=models_body, seen=seen):
+                if request.url.path == "/tokenize":
+                    return httpx.Response(200, json=tokenize_body)
+                if request.url.path == "/v1/models":
+                    return httpx.Response(200, json=models_body)
+                seen.append(json.loads(request.content))
+                return httpx.Response(200, json={
+                    "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]})
+
+            backend = OpenAICompatibleTextBackend(
+                "http://127.0.0.1:8001/v1", "engine-model",
+                transport=httpx.MockTransport(handler))
+            await backend.generate(self._request("texte"))
+            self.assertEqual(seen[0]["max_tokens"], 2048)
+
     async def test_an_api_without_tokenize_or_window_is_probed_once(self):
         """Mesure du PC fixe (24/10) : OpenRouter répond 404 à `/tokenize` et
         n'annonce pas de fenêtre ; les deux sondes revenaient à chaque appel,
