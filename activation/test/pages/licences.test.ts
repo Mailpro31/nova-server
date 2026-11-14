@@ -224,3 +224,20 @@ describe("licences : au-delà de 500 codes", () => {
     expect(page).toContain("20 codes de plus ne sont pas affichés");
   });
 });
+
+describe("création de code : durée de validité", () => {
+  const days = async (code_days: string) => {
+    const h = await harness();
+    await post(h, "/codes", { organization: "IPSA", tier: "151-250", kind: "pilot", starts: "2026-11-13", ends: "2026-12-13", code_days });
+    const row = await h.env.DB.prepare("SELECT expires_at FROM codes").first<{ expires_at: number }>();
+    return Math.round((row!.expires_at - Math.floor(Date.now() / 1000)) / DAY);
+  };
+  it("borne 0, négatif et trop grand à 1..90 ; vide ou illisible → 30", async () => {
+    expect(await days("0")).toBe(1);
+    expect(await days("-5")).toBe(1);
+    expect(await days("500")).toBe(90);
+    expect(await days("")).toBe(30);
+    expect(await days("abc")).toBe(30);
+    expect(await days("7")).toBe(7);
+  });
+});

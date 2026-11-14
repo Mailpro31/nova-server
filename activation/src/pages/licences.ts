@@ -110,7 +110,8 @@ async function create(ctx: Ctx, form: FormData): Promise<Response> {
     organization: text("organization"), tier: text("tier"), kind: text("kind"), starts: text("starts"), ends: text("ends"),
     ...(envelope ? { ai_envelope_eur: Number(envelope) } : {}),
   };
-  const days = Math.min(90, Math.max(1, Math.floor(Number(text("code_days")) || 30)));
+  const asked = Math.floor(Number(text("code_days").trim() || NaN));
+  const days = Number.isFinite(asked) ? Math.min(90, Math.max(1, asked)) : 30; // vide ou illisible → 30 ; hors 1..90 → borné
   const show = async (message: string) => layout(ctx, "licences", (await view(ctx, message)) as View, {});
   const problem = invalid(r);
   if (problem) return show(notice(escape(problem), "bad"));
