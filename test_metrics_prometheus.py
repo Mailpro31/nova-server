@@ -199,6 +199,21 @@ class MetricsPrometheusTests(unittest.TestCase):
         self.assertIn('nova_active_users{period="month"} 2', rendered)
         self.assertNotIn("example.com", rendered)
 
+    def test_the_month_of_active_users_starts_at_midnight_in_paris(self):
+        """1er novembre 2026, 0 h 30 à Paris = 31 octobre, 23 h 30 UTC : la
+        dictée de 0 h 10 (clé UTC « 10-31T23 ») est de novembre, celle de la
+        veille au soir (« 10-31T22 ») d'octobre."""
+        now = 1793489400.0
+        with main.db() as conn:
+            for email, hour in (("novembre@example.com", "2026-10-31T23"),
+                                ("octobre@example.com", "2026-10-31T22")):
+                conn.execute("INSERT INTO usage_hourly(email,hour,transcriptions) VALUES (?,?,1)",
+                             (email, hour))
+        with patch.object(main.time, "time", return_value=now):
+            series = main.business_metrics()
+        self.assertIn(("nova_active_users", "Personnes ayant dicte ou reformule ce mois-ci.",
+                       {"period": "month"}, 1), series)
+
     def test_installed_versions_are_counted_and_odd_ones_folded(self):
         now = time.time()
         versions = ("1.0.70", "1.0.70", "<script>1.0</script>")

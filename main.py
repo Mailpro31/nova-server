@@ -62,6 +62,7 @@ import production_config
 import learning
 import ratelimit
 import scim
+import usage_metrics
 import secrets_provider
 from ai_runtime import (
     ADVANCED_MINIMUM_VRAM_GB,
@@ -17100,12 +17101,12 @@ def business_metrics() -> list[tuple[str, str, dict[str, str], float]]:
     Actifs du mois (adresses distinctes de `usage_hourly`, jamais listees),
     versions installees, palier et echeance de la licence.
     """
-    month = time.strftime("%Y-%m")
-    since = time.time() - METRICS_VERSION_WINDOW_SECONDS
+    now = time.time()
+    since = now - METRICS_VERSION_WINDOW_SECONDS
     with db() as conn:
         active = conn.execute(
             "SELECT COUNT(DISTINCT email) AS n FROM usage_hourly WHERE hour >= ?",
-            (f"{month}-01T00",)).fetchone()["n"]
+            (usage_metrics.month_start_hour(now),)).fetchone()["n"]
         rows = conn.execute(
             "SELECT app_version AS version, COUNT(*) AS n FROM users "
             "WHERE app_version IS NOT NULL AND last_seen >= ? "

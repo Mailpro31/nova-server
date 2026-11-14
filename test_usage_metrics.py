@@ -56,6 +56,15 @@ class HostSampleTests(unittest.TestCase):
         self.assertEqual(sample.gpu_power_w, 74.5)
 
 
+class MonthStartTests(unittest.TestCase):
+    def test_the_month_starts_at_midnight_in_paris_summer_and_winter(self):
+        # 1er juillet 2026, 0 h 30 à Paris (UTC+2) ; 1er novembre, 0 h 30 (UTC+1).
+        self.assertEqual(usage_metrics.month_start_hour(1782858600.0), "2026-06-30T22")
+        self.assertEqual(usage_metrics.month_start_hour(1793489400.0), "2026-10-31T23")
+        # Le 21 novembre à midi : toujours la même borne.
+        self.assertEqual(usage_metrics.month_start_hour(1795262400.0), "2026-10-31T23")
+
+
 class UsageHistoryTests(unittest.TestCase):
     def setUp(self):
         with main.db() as conn:
