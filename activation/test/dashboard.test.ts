@@ -75,6 +75,13 @@ describe("données de la flotte", () => {
     const r = await loadFleet(env, NOW);
     expect(r.ok && r.fleet.reports).toHaveLength(1);
   });
+  it("demande à Loki assez de signalements (limite 1000, pas 50)", async () => {
+    const f = grafana({ result: [] });
+    let seen = "";
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => { if (new URL(url).host === "loki.test") seen = url; return f(url); }));
+    await loadFleet(env, NOW);
+    expect(new URL(seen).searchParams.get("limit")).toBe("1000");
+  });
   it("prévient sans jeton ni réponse", async () => {
     expect(await loadFleet({ ...env, GRAFANA_READ_TOKEN: "" }, NOW)).toEqual({ ok: false, reason: "token" });
     vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 503 })));

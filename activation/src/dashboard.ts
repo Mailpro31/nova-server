@@ -111,7 +111,7 @@ export interface Report { at: number; school: string; line: Record<string, unkno
 async function reports(env: MetricsEnv, now: number): Promise<Report[] | null> {
   const query = '{school=~".+"} |= "support.report"';
   const data = await get<{ result: { stream: Record<string, string>; values: [string, string][] }[] }>(
-    `${env.LOKI_URL}/loki/api/v1/query_range?query=${encodeURIComponent(query)}&start=${(now - 30 * DAY) * 1e9}&end=${now * 1e9}&limit=50&direction=backward`,
+    `${env.LOKI_URL}/loki/api/v1/query_range?query=${encodeURIComponent(query)}&start=${(now - 30 * DAY) * 1e9}&end=${now * 1e9}&limit=1000&direction=backward`,
     env.LOKI_USER, env.GRAFANA_READ_TOKEN,
   );
   if (!data) return null;
