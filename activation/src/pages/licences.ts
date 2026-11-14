@@ -47,17 +47,20 @@ function csv(rows: Row[], now: number): Response {
   });
 }
 
+const LIST_MAX = 500; // liste bornée ; le CSV et les compteurs couvrent tous les codes
 const SELECT = "SELECT code_hash, school, licence, expires_at, used_at FROM codes";
 
 async function view(ctx: Ctx, message = ""): Promise<View | Response> {
-  const { results } = await ctx.env.DB.prepare(`${SELECT} ORDER BY expires_at DESC LIMIT 500`).all<Row>();
+  const { results } = await ctx.env.DB.prepare(`${SELECT} ORDER BY expires_at DESC`).all<Row>();
   if (ctx.url.pathname.endsWith(".csv")) return csv(results, ctx.now);
 
   const asked = ctx.url.searchParams.get("etat") ?? "";
   const etat = ["attente", "actives", "expires"].includes(asked) ? asked : "tous";
   const q = (ctx.url.searchParams.get("q") ?? "").trim().slice(0, 100);
   const count = (e: Etat) => results.filter((r) => stateOf(r, ctx.now) === e).length;
-  const shown = results.filter((r) => (etat === "tous" || stateOf(r, ctx.now) === etat) && r.school.toLowerCase().includes(q.toLowerCase()));
+  const matching = results.filter((r) => (etat === "tous" || stateOf(r, ctx.now) === etat) && r.school.toLowerCase().includes(q.toLowerCase()));
+  const shown = matching.slice(0, LIST_MAX);
+  const hidden = matching.length - shown.length;
 
   // Pré-remplissage pour un renouvellement.
   const hash = ctx.url.searchParams.get("renouveler") ?? "";
@@ -96,7 +99,7 @@ async function view(ctx: Ctx, message = ""): Promise<View | Response> {
 <article class="card"><header><h3>Codes donnés</h3><a class="btn ghost small" href="/licences.csv">Exporter (CSV)</a></header>
 <div class="toolbar"><div class="seg">${link("Tous", "tous")}${link("En attente", "attente")}${link("Activés", "actives")}${link("Expirés", "expires")}</div>
 <form method="get" action="/licences" class="inline">${etat !== "tous" ? `<input type="hidden" name="etat" value="${escape(etat)}">` : ""}<input type="search" name="q" value="${escape(q)}" placeholder="Rechercher un établissement"><button type="submit" class="ghost small">Rechercher</button></form></div>
-${table}</article></div>`,
+${hidden ? `<p class="muted">${hidden} codes de plus ne sont pas affichés : affinez la recherche ou exportez le CSV.</p>` : ""}${table}</article></div>`,
   };
 }
 

@@ -212,3 +212,15 @@ describe("création de code", () => {
     expect(await h.env.DB.prepare("SELECT COUNT(*) AS n FROM codes").first()).toEqual({ n: 1 });
   });
 });
+
+describe("licences : au-delà de 500 codes", () => {
+  it("le CSV et les compteurs couvrent tous les codes, la liste annonce les codes masqués", async () => {
+    const h = await harness();
+    for (let i = 0; i < 520; i++) await addCode(h, `Ecole${i}`);
+    const csv = await text(h, "/licences.csv");
+    expect(csv.trim().split("\r\n")).toHaveLength(521); // en-tête + 520
+    const page = await text(h, "/licences");
+    expect(page).toContain(">520<");
+    expect(page).toContain("20 codes de plus ne sont pas affichés");
+  });
+});
