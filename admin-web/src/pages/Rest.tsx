@@ -543,7 +543,7 @@ export function AuditLog() {
   const mayRead = can(session, CAPABILITY.securityManage);
   const [moreFailure, setMoreFailure] = useState<string | null>(null);
   const [pages, setPages] = useState<AuditEntry[][]>([]);
-  const [cursor, setCursor] = useState<number | null>(null);
+  const [cursor, setCursor] = useState<{ before: number; id: string | null } | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
 
   const [state, retry] = useResource(
@@ -555,7 +555,10 @@ export function AuditLog() {
 
   // La premiere page vient de la ressource ; les suivantes s'empilent.
   const entries = [...(state.data?.entries ?? []), ...pages.flat()];
-  const nextBefore = cursor ?? state.data?.next_before ?? null;
+  const first = state.data;
+  const nextBefore =
+    cursor ??
+    (first?.next_before ? { before: first.next_before, id: first.next_before_id } : null);
 
   async function loadMore() {
     if (!nextBefore) return;
@@ -564,10 +567,11 @@ export function AuditLog() {
     try {
       const page = await control!.audit(organizationId, {
         limit: 25,
-        before: nextBefore,
+        before: nextBefore.before,
+        beforeId: nextBefore.id ?? undefined,
       });
       setPages((current) => [...current, page.entries]);
-      setCursor(page.next_before);
+      setCursor(page.next_before ? { before: page.next_before, id: page.next_before_id } : null);
     } catch (raised) {
       // Sans ce message, « Voir plus » ne produisait rien et ne disait pas pourquoi.
       setMoreFailure(reportFailure(raised));

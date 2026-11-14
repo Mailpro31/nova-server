@@ -210,5 +210,21 @@ class ConsoleTests(GroupPolicyTestCase):
         self.assertEqual(self.client.get(GROUPS, headers=reader).status_code, 200)
 
 
+class DeleteTests(GroupPolicyTestCase):
+    def test_deleting_a_group_deletes_its_policy_row(self):
+        base = f"/api/control/organizations/{main.nova_organization_id()}/groups"
+        created = self.client.post(base, headers=self.auth(self.admin), json={"display_name": "Ephemere"})
+        self.assertEqual(created.status_code, 201, created.text)
+        group_id = created.json()["group"]["id"]
+        self.assertEqual(self.set_group(group_id, {"ai_skills_enabled": False}).status_code, 200)
+        response = self.client.delete(f"{base}/{group_id}", headers=self.auth(self.admin))
+        self.assertEqual(response.status_code, 204, response.text)
+        with main.db() as conn:
+            left = conn.execute(
+                "SELECT COUNT(*) AS n FROM organization_group_policies WHERE group_id=?",
+                (group_id,)).fetchone()["n"]
+        self.assertEqual(left, 0)
+
+
 if __name__ == "__main__":
     unittest.main()

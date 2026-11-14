@@ -315,6 +315,8 @@ describe("journal d'audit", () => {
     const client = readFileSync("src/lib/controlPlane.ts", "utf8");
     expect(client).toContain('params.set("limit"');
     expect(client).toContain('params.set("before"');
+    // Curseur stable : l'horodatage seul saute des lignes quand plusieurs le partagent.
+    expect(client).toContain('params.set("before_id"');
   });
 
   test("l'integrite reelle est annoncee sans exageration", async () => {

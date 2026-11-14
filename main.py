@@ -6810,15 +6810,19 @@ def control_update_policy(
             return policy_view(organization_id)
 
         revision = current_revision + 1
-        conn.execute(
+        written = conn.execute(
             "INSERT INTO organization_policies(organization_id, schema_version, "
             "revision, settings, updated_at, updated_by_user_id) VALUES (?,?,?,?,?,?) "
             "ON CONFLICT(organization_id) DO UPDATE SET schema_version=excluded.schema_version, "
             "revision=excluded.revision, settings=excluded.settings, "
-            "updated_at=excluded.updated_at, updated_by_user_id=excluded.updated_by_user_id",
+            "updated_at=excluded.updated_at, updated_by_user_id=excluded.updated_by_user_id "
+            "WHERE organization_policies.revision=?",
             (organization_id, POLICY_SCHEMA_VERSION, revision, json.dumps(overrides),
-             now, principal.user_id),
+             now, principal.user_id, current_revision),
         )
+        if written.rowcount != 1:
+            # Un autre administrateur a ecrit entre la lecture et l'ecriture.
+            raise auth_error(409, "POLICY_REVISION_CONFLICT")
         # Meme transaction que la mutation : une policy changee sans trace
         # rendrait le journal menteur par omission.
         record_admin_action(
@@ -7025,6 +7029,11 @@ def control_delete_group(
             "DELETE FROM organization_group_rules WHERE organization_id=? AND group_id=?",
             (organization_id, group_id),
         )
+        # Les reglages du groupe partent avec lui, dans la meme transaction.
+        conn.execute(
+            "DELETE FROM organization_group_policies WHERE organization_id=? AND group_id=?",
+            (organization_id, group_id),
+        )
         conn.execute(
             "UPDATE organization_groups SET deleted_at=?, updated_at=? "
             "WHERE organization_id=? AND group_id=?",
@@ -7205,15 +7214,18 @@ def control_update_group_policy(
 
         revision = current_revision + 1
         now = time.time()
-        conn.execute(
+        written = conn.execute(
             "INSERT INTO organization_group_policies(organization_id, group_id, revision, "
             "settings, updated_at, updated_by_user_id) VALUES (?,?,?,?,?,?) "
             "ON CONFLICT(organization_id, group_id) DO UPDATE SET revision=excluded.revision, "
             "settings=excluded.settings, updated_at=excluded.updated_at, "
-            "updated_by_user_id=excluded.updated_by_user_id",
+            "updated_by_user_id=excluded.updated_by_user_id "
+            "WHERE organization_group_policies.revision=?",
             (organization_id, group_id, revision, json.dumps(overrides), now,
-             principal.user_id),
+             principal.user_id, current_revision),
         )
+        if written.rowcount != 1:
+            raise auth_error(409, "GROUP_POLICY_REVISION_CONFLICT")
         # Des reglages, pas du contenu : les valeurs avant et apres disent
         # exactement ce qui a change pour les membres du groupe.
         record_admin_action(
@@ -7441,7 +7453,7 @@ async def control_update_ai_runtime(
             # eu lieu.
             else APPLY_STATUS_PENDING
         )
-        conn.execute(
+        written = conn.execute(
             "INSERT INTO organization_ai_runtime_config("
             "organization_id,schema_version,desired_revision,desired_profile,"
             "reasoning_allowed,max_concurrent_text,max_concurrent_speech,max_queue,"
@@ -7453,7 +7465,8 @@ async def control_update_ai_runtime(
             "max_concurrent_text=excluded.max_concurrent_text,"
             "max_concurrent_speech=excluded.max_concurrent_speech,max_queue=excluded.max_queue,"
             "apply_status=excluded.apply_status,updated_at=excluded.updated_at,"
-            "updated_by_user_id=excluded.updated_by_user_id",
+            "updated_by_user_id=excluded.updated_by_user_id "
+            "WHERE organization_ai_runtime_config.desired_revision=?",
             (
                 organization_id,
                 AI_RUNTIME_CONFIG_SCHEMA_VERSION,
@@ -7467,8 +7480,11 @@ async def control_update_ai_runtime(
                 apply_status,
                 now,
                 principal.user_id,
+                current_revision,
             ),
         )
+        if written.rowcount != 1:
+            raise auth_error(409, "AI_RUNTIME_REVISION_CONFLICT")
         record_admin_action(
             principal,
             "ai_runtime.desired_config.update",
@@ -10477,7 +10493,9 @@ def _split_groups(cell: str) -> list[str]:
 
 def _read_csv(content: bytes) -> list[list[str]]:
     try:
-        text = content.decode("utf-8-sig")
+        # « Texte Unicode » d'Excel : UTF-16 avec BOM (le codec `utf-16` le lit et l'ote).
+        text = content.decode("utf-16" if content[:2] in (b"\xff\xfe", b"\xfe\xff")
+                              else "utf-8-sig")
     except UnicodeDecodeError:
         # Un tableur francais enregistre encore volontiers en Latin-1.
         try:
@@ -10487,7 +10505,8 @@ def _read_csv(content: bytes) -> list[list[str]]:
     # L'en-tete seul decide : les cellules d'un groupe peuvent contenir des « ; »
     # ou des « , » (« Aero 2; Club; Robotique ») sans changer le separateur.
     header = text.lstrip().splitlines()[0] if text.strip() else ""
-    delimiter = ";" if header.count(";") > header.count(",") else ","
+    # La tabulation (Texte Unicode d'Excel) l'emporte si l'en-tete n'a pas d'autre separateur.
+    delimiter = max(",;\t", key=lambda sep: (header.count(sep), sep == ","))
     return [row for row in csv.reader(io.StringIO(text), delimiter=delimiter)]
 
 
@@ -10746,10 +10765,16 @@ def control_set_member_group_display(
     return member_group_display_answer(organization_id, user_id)
 
 
+# Un libelle de promo et une remarque, pas un document : sans borne, une ligne
+# de la table users pouvait grossir sans limite.
+MAX_COHORT_CHARS = 200
+MAX_MEMBER_NOTE_CHARS = 2000
+
+
 class MemberCreateRequest(BaseModel):
     email: str
     member_role: str | None = None
-    cohort: str | None = None
+    cohort: str | None = Field(default=None, max_length=MAX_COHORT_CHARS)
 
 
 @app.post("/api/control/organizations/{organization_id}/members", status_code=201)
@@ -10846,8 +10871,8 @@ class MemberProfileRequest(BaseModel):
     """Metier et groupe. **Aucun privilege ne passe par ici.**"""
 
     member_role: str | None = None
-    cohort: str | None = None
-    note: str | None = None
+    cohort: str | None = Field(default=None, max_length=MAX_COHORT_CHARS)
+    note: str | None = Field(default=None, max_length=MAX_MEMBER_NOTE_CHARS)
 
 
 @app.post("/api/control/organizations/{organization_id}/members/{user_id}/profile")
@@ -11099,6 +11124,7 @@ def control_read_audit(
     organization_id: str,
     limit: int = AUDIT_PAGE_DEFAULT,
     before: float | None = None,
+    before_id: str | None = None,
     action: str | None = None,
     principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_SECURITY_MANAGE)),
 ):
@@ -11120,7 +11146,13 @@ def control_read_audit(
     limit = max(1, min(AUDIT_PAGE_MAX, limit))
     clauses = ["organization_id=?"]
     values: list = [organization_id]
-    if before is not None:
+    if before is not None and before_id:
+        # Curseur stable (created_at, id) : plus de `limit` lignes peuvent
+        # partager un horodatage, `created_at < ?` en sautait la fin.
+        clauses.append("(created_at < ? OR (created_at = ? AND id < ?))")
+        values.extend([before, before, before_id])
+    elif before is not None:
+        # Ancien parametre, garde pour les clients qui n'envoient pas `before_id`.
         clauses.append("created_at < ?")
         values.append(before)
     if action:
@@ -11131,7 +11163,7 @@ def control_read_audit(
     with db() as conn:
         rows = conn.execute(
             f"SELECT * FROM admin_audit_log WHERE {' AND '.join(clauses)} "
-            f"ORDER BY created_at DESC LIMIT ?",
+            f"ORDER BY created_at DESC, id DESC LIMIT ?",
             tuple(values),
         ).fetchall()
         # Les acteurs sont resolus en adresses pour que le journal se lise ;
@@ -11180,6 +11212,7 @@ def control_read_audit(
         # Curseur d'age : plus stable qu'un decalage numerique, que l'ecriture
         # d'une nouvelle ligne decalerait.
         "next_before": entries[-1]["created_at"] if has_more and entries else None,
+        "next_before_id": entries[-1]["id"] if has_more and entries else None,
         "limit": limit,
     }
 
@@ -15711,18 +15744,21 @@ def write_learning_lesson_settings(principal: AdminPrincipal, lesson_id: str,
             return learning_admin_lesson_view(lesson_id, entry, current)
         revision = current["revision"] + 1
         now = time.time()
-        conn.execute(
+        written = conn.execute(
             "INSERT INTO organization_learning_lesson_settings(organization_id, lesson_id, "
             "status, required, due_at, group_ids, revision, updated_at, updated_by_user_id) "
             "VALUES (?,?,?,?,?,?,?,?,?) "
             "ON CONFLICT(organization_id, lesson_id) DO UPDATE SET status=excluded.status, "
             "required=excluded.required, due_at=excluded.due_at, "
             "group_ids=excluded.group_ids, revision=excluded.revision, "
-            "updated_at=excluded.updated_at, updated_by_user_id=excluded.updated_by_user_id",
+            "updated_at=excluded.updated_at, updated_by_user_id=excluded.updated_by_user_id "
+            "WHERE organization_learning_lesson_settings.revision=?",
             (organization_id, lesson_id, after["status"], int(after["required"]),
              after["due_at"], json.dumps(after["group_ids"]), revision, now,
-             principal.user_id),
+             principal.user_id, current["revision"]),
         )
+        if written.rowcount != 1:
+            raise auth_error(409, "LEARNING_REVISION_CONFLICT")
         # Meme transaction que la mutation. Les reglages sont des decisions de
         # configuration, pas du contenu : les recopier avant et apres dit
         # exactement ce qui a change, sans rien exposer.

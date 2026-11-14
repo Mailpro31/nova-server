@@ -268,6 +268,16 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(rows, [{"line": 3, "email": "a@example.com",
                                  "groups": ["Aero 2"], "member_role": ""}])
 
+    def test_an_excel_unicode_text_file_is_read_as_utf16_with_tabs(self):
+        # « Texte Unicode » d'Excel : UTF-16 avec BOM, colonnes separees par des tabulations.
+        text = "Email\tGroupe\na@example.com\tAero 2\n"
+        for content in (text.encode("utf-16"),
+                        b"\xfe\xff" + text.encode("utf-16-be")):
+            with self.subTest(bom=content[:2]):
+                rows = main.read_member_rows(content, "x.txt")
+                self.assertEqual(rows, [{"line": 2, "email": "a@example.com",
+                                         "groups": ["Aero 2"], "member_role": ""}])
+
 
 if __name__ == "__main__":
     unittest.main()
