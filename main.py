@@ -11110,6 +11110,7 @@ def control_read_audit(
     organization_id: str,
     limit: int = AUDIT_PAGE_DEFAULT,
     before: float | None = None,
+    before_id: str | None = None,
     action: str | None = None,
     principal: AdminPrincipal = Depends(require_admin_capability(CAPABILITY_SECURITY_MANAGE)),
 ):
@@ -11131,7 +11132,13 @@ def control_read_audit(
     limit = max(1, min(AUDIT_PAGE_MAX, limit))
     clauses = ["organization_id=?"]
     values: list = [organization_id]
-    if before is not None:
+    if before is not None and before_id:
+        # Curseur stable (created_at, id) : plus de `limit` lignes peuvent
+        # partager un horodatage, `created_at < ?` en sautait la fin.
+        clauses.append("(created_at < ? OR (created_at = ? AND id < ?))")
+        values.extend([before, before, before_id])
+    elif before is not None:
+        # Ancien parametre, garde pour les clients qui n'envoient pas `before_id`.
         clauses.append("created_at < ?")
         values.append(before)
     if action:
@@ -11142,7 +11149,7 @@ def control_read_audit(
     with db() as conn:
         rows = conn.execute(
             f"SELECT * FROM admin_audit_log WHERE {' AND '.join(clauses)} "
-            f"ORDER BY created_at DESC LIMIT ?",
+            f"ORDER BY created_at DESC, id DESC LIMIT ?",
             tuple(values),
         ).fetchall()
         # Les acteurs sont resolus en adresses pour que le journal se lise ;
@@ -11191,6 +11198,7 @@ def control_read_audit(
         # Curseur d'age : plus stable qu'un decalage numerique, que l'ecriture
         # d'une nouvelle ligne decalerait.
         "next_before": entries[-1]["created_at"] if has_more and entries else None,
+        "next_before_id": entries[-1]["id"] if has_more and entries else None,
         "limit": limit,
     }
 

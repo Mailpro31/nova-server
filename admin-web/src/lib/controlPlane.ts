@@ -1330,14 +1330,16 @@ export class ControlPlane {
     );
   }
 
-  audit(organizationId: string, options: { limit?: number; before?: number } = {}) {
+  audit(organizationId: string, options: { limit?: number; before?: number; beforeId?: string } = {}) {
     const params = new URLSearchParams();
     if (options.limit) params.set("limit", String(options.limit));
     if (options.before) params.set("before", String(options.before));
+    if (options.beforeId) params.set("before_id", options.beforeId);
     const query = params.toString();
     return this.client.request<{
       entries: AuditEntry[];
       next_before: number | null;
+      next_before_id: string | null;
       limit: number;
     }>(
       `/api/control/organizations/${organizationId}/audit${query ? `?${query}` : ""}`,

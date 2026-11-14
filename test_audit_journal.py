@@ -96,5 +96,31 @@ class TargetTests(AdminTestCase):
         self.assertEqual(entry["target"], "Our report rules")
 
 
+class PaginationTests(AdminTestCase):
+    def test_many_rows_sharing_one_timestamp_are_all_reachable(self):
+        organization = main.nova_organization_id()
+        admin = self.auth(self.admin_session())
+        with main.db() as conn:
+            conn.execute("DELETE FROM admin_audit_log")
+            for index in range(7):
+                conn.execute(
+                    "INSERT INTO admin_audit_log(id, organization_id, actor_user_id, "
+                    "actor_role, action, target_type, target_id, request_id, metadata, "
+                    "created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (f"row{index}", organization, None, "connector", "member.delete",
+                     "user", None, None, None, 1000.0))
+        seen, params = [], {"limit": 3}
+        for _ in range(10):
+            page = self.client.get(f"/api/control/organizations/{organization}/audit",
+                                   headers=admin, params=params).json()
+            seen += [entry["id"] for entry in page["entries"]]
+            if page["next_before"] is None:
+                break
+            params = {"limit": 3, "before": page["next_before"],
+                      "before_id": page.get("next_before_id")}
+            params = {key: value for key, value in params.items() if value is not None}
+        self.assertEqual(sorted(seen), sorted(f"row{i}" for i in range(7)))
+
+
 if __name__ == "__main__":
     unittest.main()
