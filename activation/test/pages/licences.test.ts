@@ -66,7 +66,7 @@ describe("licences : renouvellement", () => {
   it("?renouveler pré-remplit le formulaire", async () => {
     const h = await harness();
     const hash = await addCode(h, "Lycée Hugo", { envelope: 900 });
-    const html = await text(h, `/licences?renouveler=${hash}`);
+    const html = await text(h, `/licences?renouveler=${await rowid(h)}`);
     expect(html).toContain('id="nouveau"');
     expect(html).toContain('value="Lycée Hugo"');
     expect(html).toContain('value="2027-09-01"');
@@ -76,11 +76,25 @@ describe("licences : renouvellement", () => {
   });
 });
 
+describe("licences : l'empreinte du code n'apparaît nulle part", () => {
+  it("ni dans les pages, ni dans les liens, ni dans le CSV", async () => {
+    const h = await harness();
+    const hash = await addCode(h, "Attente");
+    for (const path of ["/licences", "/licences?etat=attente", "/licences.csv", "/ecoles/attente"]) {
+      expect(await text(h, path)).not.toContain(hash);
+    }
+    const page = await text(h, "/licences");
+    const id = /\/licences\?renouveler=(\d+)#nouveau/.exec(page)![1];
+    expect(await text(h, `/licences?renouveler=${id}`)).toContain("Renouvellement de Attente");
+    expect(page).toMatch(/name="id" value="\d+"/);
+  });
+});
+
 describe("licences : révocation", () => {
   it("expire un code en attente et écrit l'audit", async () => {
     const h = await harness();
     const hash = await addCode(h, "Attente");
-    const res = await post(h, "/codes/revoke", { code_hash: hash });
+    const res = await post(h, "/codes/revoke", { id: String(await rowid(h)) });
     expect(res.status).toBe(303);
     const row = await h.env.DB.prepare("SELECT expires_at, used_at FROM codes").first<{ expires_at: number; used_at: number | null }>();
     expect(row!.expires_at).toBeLessThanOrEqual(Math.floor(Date.now() / 1000));
@@ -91,7 +105,7 @@ describe("licences : révocation", () => {
     const h = await harness();
     const hash = await addCode(h, "Active", { used: NOW - DAY });
     const before = await h.env.DB.prepare("SELECT * FROM codes").first();
-    expect((await post(h, "/codes/revoke", { code_hash: hash })).status).toBe(303);
+    expect((await post(h, "/codes/revoke", { id: String(await rowid(h)) })).status).toBe(303);
     expect(await h.env.DB.prepare("SELECT * FROM codes").first()).toEqual(before);
     expect(await h.env.DB.prepare("SELECT action FROM console_audit").first()).toEqual({ action: "Révocation sans effet" });
   });
@@ -105,8 +119,8 @@ describe("licences : révocation", () => {
   it("refuse une origine étrangère et un identifiant invalide", async () => {
     const h = await harness();
     const hash = await addCode(h, "Attente");
-    expect((await post(h, "/codes/revoke", { code_hash: hash }, "https://ailleurs.test")).status).toBe(403);
-    expect((await post(h, "/codes/revoke", { code_hash: "x" })).status).toBe(400);
+    expect((await post(h, "/codes/revoke", { id: String(await rowid(h)) }, "https://ailleurs.test")).status).toBe(403);
+    expect((await post(h, "/codes/revoke", { id: "x" })).status).toBe(400);
   });
 });
 
@@ -252,3 +266,5 @@ describe("création de code : jetons de formulaire", () => {
     expect(left).toEqual(["neuf", "recent"]);
   });
 });
+
+const rowid = async (h: Harness) => (await h.env.DB.prepare("SELECT rowid AS id FROM codes ORDER BY rowid DESC").first<{ id: number }>())!.id;

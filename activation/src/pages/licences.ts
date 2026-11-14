@@ -5,9 +5,9 @@ import { audit, empty, kpi, layout, notice, pill, redirect, type Ctx, type Page,
 
 const DAY = 86400;
 const day = (seconds: number | null) => (seconds ? new Date(seconds * 1000).toISOString().slice(0, 10) : "");
-const HASH = /^[0-9a-f]{64}$/;
+const ID = /^\d{1,15}$/; // rowid D1 : l'empreinte du code ne sort jamais de la base
 
-interface Row { code_hash: string; school: string; licence: string; expires_at: number; used_at: number | null }
+interface Row { id: number; school: string; licence: string; expires_at: number; used_at: number | null }
 type Etat = "attente" | "actives" | "expires";
 const stateOf = (r: Row, now: number): Etat => (r.used_at ? "actives" : r.expires_at > now ? "attente" : "expires");
 
@@ -48,7 +48,7 @@ function csv(rows: Row[], now: number): Response {
 }
 
 const LIST_MAX = 500; // liste bornée ; le CSV et les compteurs couvrent tous les codes
-const SELECT = "SELECT code_hash, school, licence, expires_at, used_at FROM codes";
+const SELECT = "SELECT rowid AS id, school, licence, expires_at, used_at FROM codes";
 
 async function view(ctx: Ctx, message = ""): Promise<View | Response> {
   const { results } = await ctx.env.DB.prepare(`${SELECT} ORDER BY expires_at DESC`).all<Row>();
@@ -63,8 +63,8 @@ async function view(ctx: Ctx, message = ""): Promise<View | Response> {
   const hidden = matching.length - shown.length;
 
   // Pré-remplissage pour un renouvellement.
-  const hash = ctx.url.searchParams.get("renouveler") ?? "";
-  const old = HASH.test(hash) ? results.find((r) => r.code_hash === hash) : undefined;
+  const askedId = ctx.url.searchParams.get("renouveler") ?? "";
+  const old = ID.test(askedId) ? results.find((r) => r.id === Number(askedId)) : undefined;
   const renew = old ? renewal(claimsOf(old.licence)) : null;
   const v: LicenceRequest = renew ?? { organization: "", tier: "", kind: "subscription", starts: "", ends: "" };
   const renewNotice = renew ? notice(`Renouvellement de ${escape(renew.organization)} : vérifiez puis créez le code.`) : "";
@@ -75,8 +75,8 @@ async function view(ctx: Ctx, message = ""): Promise<View | Response> {
     const s = stateOf(row, ctx.now);
     const state = s === "actives" ? pill("ok", `Activé le ${day(row.used_at)}`)
       : s === "attente" ? pill("warn", `En attente · jusqu'au ${day(row.expires_at)}`) : pill("neutral", "Code expiré");
-    const actions = `<a class="btn ghost small" href="/licences?renouveler=${row.code_hash}#nouveau">Renouveler</a>`
-      + (s === "attente" ? ` <form method="post" action="/codes/revoke" class="inline"><input type="hidden" name="code_hash" value="${escape(row.code_hash)}"><button type="submit" class="small danger">Révoquer</button></form>` : "");
+    const actions = `<a class="btn ghost small" href="/licences?renouveler=${row.id}#nouveau">Renouveler</a>`
+      + (s === "attente" ? ` <form method="post" action="/codes/revoke" class="inline"><input type="hidden" name="id" value="${row.id}"><button type="submit" class="small danger">Révoquer</button></form>` : "");
     return `<tr><td data-label="Établissement"><strong>${escape(row.school)}</strong></td><td data-label="Offre">${escape(c.tier)}</td><td data-label="Type">${escape(c.kind === "pilot" ? "Pilote" : "Abonnement")}</td><td data-label="Licence">${escape(c.starts)} → ${escape(c.ends)}</td><td data-label="Enveloppe d'IA">${c.ai_envelope_eur === undefined ? "—" : `${escape(c.ai_envelope_eur)} €`}</td><td data-label="État">${state}</td><td data-label="Actions">${actions}</td></tr>`;
   }).join("");
   const table = rows ? `<div class="scroll"><table class="cards"><thead><tr><th>Établissement</th><th>Offre</th><th>Type</th><th>Licence</th><th>Enveloppe d'IA</th><th>État</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>`
@@ -131,12 +131,12 @@ async function create(ctx: Ctx, form: FormData): Promise<Response> {
 }
 
 async function revoke(ctx: Ctx, form: FormData): Promise<Response> {
-  const hash = String(form.get("code_hash") ?? "");
-  if (!HASH.test(hash)) return new Response("Code invalide", { status: 400 });
-  const row = await ctx.env.DB.prepare(`${SELECT} WHERE code_hash = ?`).bind(hash).first<Row>();
+  const id = String(form.get("id") ?? "");
+  if (!ID.test(id)) return new Response("Code invalide", { status: 400 });
+  const row = await ctx.env.DB.prepare(`${SELECT} WHERE rowid = ?`).bind(Number(id)).first<Row>();
   // Un code déjà utilisé ou expiré n'est jamais modifié.
-  const done = row && (await ctx.env.DB.prepare("UPDATE codes SET expires_at = ? WHERE code_hash = ? AND used_at IS NULL AND expires_at > ?")
-    .bind(ctx.now, hash, ctx.now).run()).meta.changes;
+  const done = row && (await ctx.env.DB.prepare("UPDATE codes SET expires_at = ? WHERE rowid = ? AND used_at IS NULL AND expires_at > ?")
+    .bind(ctx.now, Number(id), ctx.now).run()).meta.changes;
   await audit(ctx.env.DB, ctx.user, ctx.now, done ? "Code révoqué" : "Révocation sans effet", row?.school ?? "code inconnu");
   return redirect("/licences");
 }

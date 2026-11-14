@@ -104,10 +104,10 @@ const pagesFor = (schools: string[], hash: string): [string, string][] => [
 ];
 
 const sets: { name: string; grafana?: (u: URL) => unknown; db: false | "demo" | "extreme"; schools: string[]; hash: string }[] = [
-  { name: "a-demo", grafana: demoGrafana, db: "demo", schools: ["ipsa", "lycee-test"], hash: hex(1) },
-  { name: "b-vide", db: false, schools: ["ipsa"], hash: hex(1) },
-  { name: "b2-flotte-vide", grafana: () => vector([]), db: false, schools: ["ipsa"], hash: hex(1) },
-  { name: "c-extremes", grafana: extremeGrafana, db: "extreme", schools: [ids[0], ids[1], ids[2], ids[3], ids[4], ids[5], ids[29]], hash: hex(100) },
+  { name: "a-demo", grafana: demoGrafana, db: "demo", schools: ["ipsa", "lycee-test"], hash: "1" },
+  { name: "b-vide", db: false, schools: ["ipsa"], hash: "1" },
+  { name: "b2-flotte-vide", grafana: () => vector([]), db: false, schools: ["ipsa"], hash: "1" },
+  { name: "c-extremes", grafana: extremeGrafana, db: "extreme", schools: [ids[0], ids[1], ids[2], ids[3], ids[4], ids[5], ids[29]], hash: "100" },
 ];
 
 describe.skipIf(!DIR)("rendu des pages", () => {
