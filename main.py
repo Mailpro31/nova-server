@@ -10488,7 +10488,9 @@ def _split_groups(cell: str) -> list[str]:
 
 def _read_csv(content: bytes) -> list[list[str]]:
     try:
-        text = content.decode("utf-8-sig")
+        # « Texte Unicode » d'Excel : UTF-16 avec BOM (le codec `utf-16` le lit et l'ote).
+        text = content.decode("utf-16" if content[:2] in (b"\xff\xfe", b"\xfe\xff")
+                              else "utf-8-sig")
     except UnicodeDecodeError:
         # Un tableur francais enregistre encore volontiers en Latin-1.
         try:
@@ -10498,7 +10500,8 @@ def _read_csv(content: bytes) -> list[list[str]]:
     # L'en-tete seul decide : les cellules d'un groupe peuvent contenir des « ; »
     # ou des « , » (« Aero 2; Club; Robotique ») sans changer le separateur.
     header = text.lstrip().splitlines()[0] if text.strip() else ""
-    delimiter = ";" if header.count(";") > header.count(",") else ","
+    # La tabulation (Texte Unicode d'Excel) l'emporte si l'en-tete n'a pas d'autre separateur.
+    delimiter = max(",;\t", key=lambda sep: (header.count(sep), sep == ","))
     return [row for row in csv.reader(io.StringIO(text), delimiter=delimiter)]
 
 
