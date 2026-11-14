@@ -86,6 +86,21 @@ class MemberCreateTests(AdminTestCase):
         self.assertEqual(json.loads(row["metadata"])["member_role"], "staff")
         self.assertIn("member.create", main.AUDIT_ACTION_LABELS)
 
+    def test_a_cohort_or_note_too_long_is_refused(self):
+        refused = self.add({"email": "long@example.com", "cohort": "x" * 201})
+        self.assertEqual(refused.status_code, 422, refused.text)
+        created = self.add({"email": "ok@example.com", "cohort": "x" * 200})
+        self.assertEqual(created.status_code, 201, created.text)
+        profile = (f"/api/control/organizations/{self.organization}/members/"
+                   f"{created.json()['member']['user_id']}/profile")
+        for field, limit in (("cohort", 200), ("note", 2000)):
+            too_long = self.client.post(profile, headers=self.auth(self.admin),
+                                        json={field: "x" * (limit + 1)})
+            self.assertEqual(too_long.status_code, 422, too_long.text)
+            fits = self.client.post(profile, headers=self.auth(self.admin),
+                                    json={field: "x" * limit})
+            self.assertEqual(fits.status_code, 200, fits.text)
+
 
 if __name__ == "__main__":
     unittest.main()

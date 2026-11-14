@@ -10760,10 +10760,16 @@ def control_set_member_group_display(
     return member_group_display_answer(organization_id, user_id)
 
 
+# Un libelle de promo et une remarque, pas un document : sans borne, une ligne
+# de la table users pouvait grossir sans limite.
+MAX_COHORT_CHARS = 200
+MAX_MEMBER_NOTE_CHARS = 2000
+
+
 class MemberCreateRequest(BaseModel):
     email: str
     member_role: str | None = None
-    cohort: str | None = None
+    cohort: str | None = Field(default=None, max_length=MAX_COHORT_CHARS)
 
 
 @app.post("/api/control/organizations/{organization_id}/members", status_code=201)
@@ -10860,8 +10866,8 @@ class MemberProfileRequest(BaseModel):
     """Metier et groupe. **Aucun privilege ne passe par ici.**"""
 
     member_role: str | None = None
-    cohort: str | None = None
-    note: str | None = None
+    cohort: str | None = Field(default=None, max_length=MAX_COHORT_CHARS)
+    note: str | None = Field(default=None, max_length=MAX_MEMBER_NOTE_CHARS)
 
 
 @app.post("/api/control/organizations/{organization_id}/members/{user_id}/profile")
