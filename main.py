@@ -3478,7 +3478,7 @@ def count_usage(
     if is_bench_account(email):
         return
     day = time.strftime("%Y-%m-%d")
-    hour = time.strftime("%Y-%m-%dT%H")
+    hour = time.strftime("%Y-%m-%dT%H", time.gmtime())  # cles horaires en UTC, comme les lectures
     col = "transcriptions" if kind == "transcription" else "reformulations"
     with db() as conn:
         # Les colonnes sont qualifiees par leur table dans la clause `DO UPDATE`.
