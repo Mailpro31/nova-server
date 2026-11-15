@@ -10,6 +10,7 @@ import type { Messages } from "./messages";
 export const fr: Messages = {
   product: "Nova Admin",
   skipToContent: "Aller au contenu",
+  tabs: { label: "Rubriques principales", more: "Plus" },
   moreActions: "Plus d’actions",
 
   nav: {
