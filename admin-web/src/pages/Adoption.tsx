@@ -9,7 +9,7 @@
  * tableau se lit au lecteur d'écran.
  */
 
-import { AsyncSection, Facts, Notice, Panel } from "../components/primitives";
+import { AsyncSection, Facts, Notice, Panel, TableScroll } from "../components/primitives";
 import {
   adoptionCsv,
   latestWeek,
@@ -97,7 +97,7 @@ export function Adoption() {
               </Notice>
 
               <h4>{t.adoption.byWeek}</h4>
-              <table className="usage-members" aria-label={t.adoption.byWeek}>
+              <TableScroll label={t.adoption.byWeek}><table className="usage-members" aria-label={t.adoption.byWeek}>
                 <thead>
                   <tr>
                     <th scope="col">{t.adoption.week}</th>
@@ -118,13 +118,13 @@ export function Adoption() {
                     </tr>
                   ))}
                 </tbody>
-              </table>
+              </table></TableScroll>
 
               <h4>{t.adoption.byMonth}</h4>
               {report.months.length === 0 ? (
                 <Notice>{t.adoption.empty}</Notice>
               ) : (
-                <table className="usage-members" aria-label={t.adoption.byMonth}>
+                <TableScroll label={t.adoption.byMonth}><table className="usage-members" aria-label={t.adoption.byMonth}>
                   <thead>
                     <tr>
                       <th scope="col">{t.adoption.month}</th>
@@ -148,7 +148,7 @@ export function Adoption() {
                       </tr>
                     ))}
                   </tbody>
-                </table>
+                </table></TableScroll>
               )}
 
               <h4>{t.adoption.retentionTitle}</h4>
@@ -167,7 +167,7 @@ export function Adoption() {
               {report.survey.length === 0 ? (
                 <Notice>{t.adoption.noSurvey}</Notice>
               ) : (
-                <table className="usage-members" aria-label={t.adoption.surveyTitle}>
+                <TableScroll label={t.adoption.surveyTitle}><table className="usage-members" aria-label={t.adoption.surveyTitle}>
                   <thead>
                     <tr>
                       <th scope="col">{t.adoption.month}</th>
@@ -191,7 +191,7 @@ export function Adoption() {
                       ),
                     )}
                   </tbody>
-                </table>
+                </table></TableScroll>
               )}
 
               <h4>{t.adoption.versions}</h4>
@@ -199,7 +199,7 @@ export function Adoption() {
               {report.versions.length === 0 ? (
                 <Notice>{t.adoption.noVersions}</Notice>
               ) : (
-                <table className="usage-members" aria-label={t.adoption.versions}>
+                <TableScroll label={t.adoption.versions}><table className="usage-members" aria-label={t.adoption.versions}>
                   <thead>
                     <tr>
                       <th scope="col">{t.adoption.version}</th>
@@ -214,7 +214,7 @@ export function Adoption() {
                       </tr>
                     ))}
                   </tbody>
-                </table>
+                </table></TableScroll>
               )}
 
               <div className="usage-actions">
