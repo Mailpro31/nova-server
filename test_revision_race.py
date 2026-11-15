@@ -15,6 +15,9 @@ import main
 import test_group_policies as groups
 import test_learning_organization as learning_org
 
+# Le module demande son schema lui-meme, comme les autres (garde-fou de test_migrations).
+main.init_db()
+
 
 @contextlib.contextmanager
 def concurrent_write(table: str, bump_sql: str):
