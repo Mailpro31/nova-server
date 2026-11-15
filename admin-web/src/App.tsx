@@ -7,7 +7,7 @@
  * redirection.
  */
 
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   NavLink,
   Navigate,
@@ -68,10 +68,29 @@ const PAGES = [
 
 const PAGE_BY_PATH = new Map(PAGES.map((page) => [page.path, page]));
 
+/** Téléphone : les rubriques de la barre du bas ; le reste est sous « Plus ». */
+const TAB_PATHS = ["overview", "members", "groups", "usage"] as const;
+
 function Console() {
   const { session, signOutAdmin, signOutCompletely } = useSession();
   const remaining = session.admin ? secondsRemaining(session.admin) : 0;
   const location = useLocation();
+  // Téléphone : « Plus » ouvre la barre latérale en feuille. Elle se ferme avec
+  // Échap, par un toucher ailleurs, ou dès que la page change.
+  const [menuOpen, setMenuOpen] = useState(false);
+  const plusRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => setMenuOpen(false), [location.pathname]);
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setMenuOpen(false);
+      plusRef.current?.focus();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [menuOpen]);
+  const inTabs = TAB_PATHS.some((path) => location.pathname.endsWith(`/${path}`));
 
   return (
     <div className="shell">
@@ -79,7 +98,7 @@ function Console() {
       <a className="skip-link" href="#contenu">
         {t.skipToContent}
       </a>
-      <nav className="sidebar" aria-label={t.product}>
+      <nav className="sidebar" id="menu-complet" data-open={menuOpen || undefined} aria-label={t.product}>
         <div className="brand">
           {t.product}
           <small>{session.organizationName}</small>
@@ -126,6 +145,24 @@ function Console() {
             );
           })}
         </div>
+      </nav>
+      {menuOpen && <div className="menu-backdrop" onClick={() => setMenuOpen(false)} />}
+      <nav className="tabs" aria-label={t.tabs.label}>
+        {TAB_PATHS.map((path) => (
+          <NavLink key={path} to={path} end>
+            {PAGE_BY_PATH.get(path)?.label}
+          </NavLink>
+        ))}
+        <button
+          type="button"
+          ref={plusRef}
+          className={inTabs ? undefined : "on"}
+          aria-expanded={menuOpen}
+          aria-controls="menu-complet"
+          onClick={() => setMenuOpen((open) => !open)}
+        >
+          {t.tabs.more}
+        </button>
       </nav>
       <div className="main">
         <header className="header">

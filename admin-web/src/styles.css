@@ -930,3 +930,164 @@ input[aria-invalid="true"] {
 .usage-members td:not(:first-child) {
   font-family: var(--mono);
 }
+
+/* ── Téléphone (< 760 px) ──────────────────────────────────────────────
+   Barre d'onglets en bas (4 rubriques + « Plus »). « Plus » ouvre la barre
+   latérale en feuille. Toute cible tactile fait au moins 44 × 44 px, et rien
+   ne déborde de la page : les tableaux défilent dans leur propre cadre. */
+.tabs,
+.menu-backdrop {
+  display: none;
+}
+@media (max-width: 760px) {
+  .shell {
+    display: block;
+    padding-bottom: calc(56px + env(safe-area-inset-bottom));
+  }
+  a,
+  button,
+  summary,
+  select,
+  textarea,
+  input:not([type="hidden"]) {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  a {
+    display: inline-flex;
+    align-items: center;
+  }
+  /* Cases et boutons radio : la zone tactile fait 44 px, le dessin 22. */
+  input[type="checkbox"],
+  input[type="radio"] {
+    appearance: none;
+    width: 44px;
+    height: 44px;
+    margin: 0;
+    border: 11px solid transparent;
+    background: var(--surface) content-box;
+    outline: 1.5px solid var(--border-strong);
+    outline-offset: -11px;
+    border-radius: 0;
+  }
+  input[type="checkbox"] {
+    outline-offset: -11px;
+  }
+  input[type="radio"] {
+    border-radius: 50%;
+  }
+  input[type="checkbox"]:checked {
+    background: var(--accent)
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m5 12 5 5 9-10'/%3E%3C/svg%3E")
+      center / 16px no-repeat content-box;
+    outline-color: var(--accent);
+  }
+  input[type="radio"]:checked {
+    background: radial-gradient(circle, #fff 28%, var(--accent) 32%) content-box;
+    outline-color: var(--accent);
+  }
+  input,
+  textarea,
+  select,
+  button {
+    font-size: 16px; /* en dessous, iOS zoome la page au focus */
+  }
+  .header {
+    flex-wrap: wrap;
+    padding: 8px 16px;
+  }
+  .header-meta {
+    flex-wrap: wrap;
+    gap: 4px 10px;
+  }
+  .content {
+    padding: 16px;
+  }
+  /* Un tableau large défile dans son cadre, jamais avec la page. */
+  table {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+  }
+  .sidebar {
+    display: none;
+  }
+  .sidebar[data-open] {
+    display: flex;
+    position: fixed;
+    z-index: 21;
+    left: 0;
+    right: 0;
+    bottom: calc(56px + env(safe-area-inset-bottom));
+    max-height: calc(100dvh - 96px);
+    overflow-y: auto;
+    border: 0;
+    border-top: 1px solid var(--border-strong);
+    border-radius: var(--radius) var(--radius) 0 0;
+    box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.18);
+  }
+  .nav,
+  .nav-section {
+    flex-direction: column;
+    flex-wrap: nowrap;
+    gap: 1px;
+  }
+  .nav-section-title {
+    display: block;
+  }
+  .nav a,
+  .nav-advanced > summary {
+    min-height: 44px;
+    height: auto;
+    display: flex;
+    align-items: center;
+  }
+  .menu-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 20;
+    background: rgba(0, 0, 0, 0.4);
+  }
+  .tabs {
+    display: flex;
+    position: fixed;
+    z-index: 22;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    padding-bottom: env(safe-area-inset-bottom);
+    background: var(--sidebar);
+    border-top: 1px solid var(--border);
+  }
+  .tabs a,
+  .tabs button {
+    flex: 1 1 0;
+    min-width: 0;
+    height: 56px;
+    padding: 0 2px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    font-size: 12px;
+    line-height: 1.2;
+    color: var(--text-muted);
+    text-decoration: none;
+    overflow-wrap: anywhere;
+  }
+  .tabs a[aria-current="page"],
+  .tabs button.on,
+  .tabs button[aria-expanded="true"] {
+    color: var(--text);
+    font-weight: 600;
+    box-shadow: inset 0 2px 0 var(--accent);
+  }
+  .tabs a:focus-visible,
+  .tabs button:focus-visible {
+    outline-offset: -4px;
+  }
+}
