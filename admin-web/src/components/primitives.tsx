@@ -181,3 +181,12 @@ export function MoreActions({ children }: { children: ReactNode }) {
     </details>
   );
 }
+
+/** Cadre à défilement d'un tableau : la page ne déborde pas, le tableau garde sa sémantique, le cadre se parcourt au clavier. */
+export function TableScroll({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="table-scroll" tabIndex={0} role="region" aria-label={label}>
+      {children}
+    </div>
+  );
+}

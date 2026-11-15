@@ -1004,8 +1004,7 @@ input[aria-invalid="true"] {
     padding: 16px;
   }
   /* Un tableau large défile dans son cadre, jamais avec la page. */
-  table {
-    display: block;
+  .table-scroll {
     max-width: 100%;
     overflow-x: auto;
   }

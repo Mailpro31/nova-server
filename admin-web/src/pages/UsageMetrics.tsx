@@ -21,7 +21,7 @@
  */
 
 import { useState } from "react";
-import { AsyncSection, Facts, Notice, Panel, Tag } from "../components/primitives";
+import { AsyncSection, Facts, Notice, Panel, Tag, TableScroll } from "../components/primitives";
 import { t } from "../lib/messages";
 import { CAPABILITY, can } from "../lib/session";
 import { useSession } from "../lib/useAdminSession";
@@ -282,7 +282,7 @@ export function UsageMetrics() {
               {named && maySeeNames && (
                 <>
                   <Notice>{t.usageMetrics.namesAreJournalled}</Notice>
-                  <table className="usage-members" aria-label={t.usageMetrics.member}>
+                  <TableScroll label={t.usageMetrics.member}><table className="usage-members" aria-label={t.usageMetrics.member}>
                     <thead>
                       <tr>
                         <th scope="col">{t.usageMetrics.member}</th>
@@ -299,7 +299,7 @@ export function UsageMetrics() {
                         </tr>
                       ))}
                     </tbody>
-                  </table>
+                  </table></TableScroll>
                   <div className="usage-actions">
                     <button
                       type="button"

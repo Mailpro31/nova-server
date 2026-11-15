@@ -22,6 +22,7 @@ import {
   Notice,
   Panel,
   Tag,
+  TableScroll,
 } from "../components/primitives";
 
 function date(value: number | null): string {
@@ -507,7 +508,7 @@ export function Provisioning() {
               {view.managed_groups.length === 0 ? (
                 <p>{t.provisioning.noGroups}</p>
               ) : (
-                <table aria-label={t.provisioning.groupsTitle}>
+                <TableScroll label={t.provisioning.groupsTitle}><table aria-label={t.provisioning.groupsTitle}>
                   <thead>
                     <tr>
                       <th scope="col">{t.provisioning.group}</th>
@@ -524,7 +525,7 @@ export function Provisioning() {
                       </tr>
                     ))}
                   </tbody>
-                </table>
+                </table></TableScroll>
               )}
             </Panel>
           </div>
