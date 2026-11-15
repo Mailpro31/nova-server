@@ -4,6 +4,7 @@
 
 import { layout, type Ctx, type ConsoleEnv, type Page, type PageId } from "./shell";
 import { PAGES } from "./pages";
+import { ICONS } from "./icons";
 
 export type { ConsoleEnv } from "./shell";
 
@@ -63,6 +64,21 @@ async function badges(env: ConsoleEnv): Promise<Partial<Record<PageId, number>>>
   }
 }
 
+// Application installable : manifeste et icônes, servis derrière le même contrôle d'Access que les pages.
+const MANIFEST = JSON.stringify({
+  name: "Console Nova", short_name: "Nova", start_url: "/", scope: "/", display: "standalone",
+  background_color: "#1f1f22", theme_color: "#1f1f22", lang: "fr",
+  icons: [
+    { src: "/icon-192.png", sizes: "192x192", type: "image/png" },
+    { src: "/icon-512.png", sizes: "512x512", type: "image/png" },
+    { src: "/icon-512-maskable.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
+  ],
+});
+const staticFile = (pathname: string): Response | null => {
+  if (pathname === "/manifest.webmanifest") return new Response(MANIFEST, { headers: { "content-type": "application/manifest+json", "cache-control": "no-store" } });
+  return ICONS[pathname] ? new Response(Uint8Array.from(atob(ICONS[pathname]), (c) => c.charCodeAt(0)), { headers: { "content-type": "image/png", "cache-control": "private, max-age=86400" } }) : null;
+};
+
 export default {
   async fetch(request: Request, env: ConsoleEnv): Promise<Response> {
     const now = Math.floor(Date.now() / 1000);
@@ -78,6 +94,8 @@ export default {
       const form = await request.formData().catch(() => null); // corps qui n'est pas un formulaire
       return form ? action(ctx, form) : new Response("Formulaire invalide", { status: 400 });
     }
+    const file = request.method === "GET" ? staticFile(url.pathname) : null;
+    if (file) return file;
     const page = request.method === "GET" ? pageFor(url.pathname) : undefined;
     if (!page) return new Response("Introuvable", { status: 404 });
     const [view, counts] = await Promise.all([page.render(ctx), badges(env)]);

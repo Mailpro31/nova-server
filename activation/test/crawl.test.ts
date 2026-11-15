@@ -123,7 +123,8 @@ describe("crawl GET", () => {
       const current = (side.match(/aria-current="page"/g) ?? []).length;
       if (current !== 1) problems.push(`${path} : ${current} entrées aria-current`);
       const total = (p.html.match(/aria-current="page"/g) ?? []).length;
-      if (total !== 1) problems.push(`${path} : ${total} aria-current="page" dans la page`);
+      // barre latérale + feuille « Plus » (+ barre du bas si la page en fait partie)
+      if (total < 2 || total > 3) problems.push(`${path} : ${total} aria-current="page" dans la page`);
       if (!/<title>[^<]+<\/title>/.test(p.html)) problems.push(`${path} : pas de <title>`);
       for (const bad of visibleText(p.html).match(/undefined|\bNaN\b|\[object Object\]|\bnull\b/g) ?? []) problems.push(`${path} : « ${bad} » affiché`);
       if (p.referrer !== "same-origin") problems.push(`${path} : referrer-policy ${p.referrer}`);
@@ -249,7 +250,7 @@ describe("sans Grafana ni données", () => {
       const html = await r.text();
       expect(r.status, i.href).toBe(200);
       expect(visibleText(html).match(/undefined|NaN|\[object Object\]|null/g), i.href).toBeNull();
-      expect(html.match(/aria-current="page"/g), i.href).toHaveLength(1);
+      expect(html.match(/aria-current="page"/g)!.length, i.href).toBeGreaterThanOrEqual(2);
     }
   });
 });

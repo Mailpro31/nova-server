@@ -50,6 +50,9 @@ const ICON: Record<PageId, string> = {
 export const icon = (id: PageId, size = 18) =>
   `<svg class="ico" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[id]}</svg>`;
 
+/** Les 4 rubriques de la barre du bas sur téléphone ; le reste est sous « Plus ». */
+const TABS: PageId[] = ["accueil", "claude", "ecoles", "licences"];
+
 /** La barre latérale : catégories et pages, dans l'ordre d'affichage. */
 export const NAV: { group: string; items: { id: PageId; label: string; href: string }[] }[] = [
   { group: "Pilotage", items: [
@@ -103,22 +106,30 @@ const HEADERS = {
   "x-frame-options": "DENY",
   // same-origin et non no-referrer : avec no-referrer, Chrome envoie « Origin: null » sur les formulaires, refusés.
   "referrer-policy": "same-origin",
-  "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; img-src data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+  "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; manifest-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
 };
 
 /** Page complète : barre latérale + en-tête + contenu. `badges` : petits compteurs à côté d'une entrée. */
 export function layout(ctx: Ctx, active: PageId, view: View, badges: Partial<Record<PageId, number>>, pageCss = ""): Response {
   const nav = NAV.map((g) => `<div class="nav-group"><div class="nav-title">${escape(g.group)}</div>${g.items.map((it) =>
     `<a href="${it.href}" class="nav-item${it.id === active ? " active" : ""}"${it.id === active ? ' aria-current="page"' : ""}>${icon(it.id)}<span>${escape(it.label)}</span>${badges[it.id] ? `<b class="badge">${badges[it.id]}</b>` : ""}</a>`).join("")}</div>`).join("");
+  const foot = `<div class="side-foot"><span class="who" title="${escape(ctx.user)}">${escape(ctx.user)}</span><a href="${escape(ctx.env.GRAFANA_URL)}/dashboards" target="_blank" rel="noopener">Grafana ↗</a></div>`;
+  // Téléphone : 4 rubriques en barre du bas + « Plus » (feuille popover : Échap, toucher ailleurs ; aucun JS, la CSP l'interdit).
+  const label = (id: PageId) => NAV.flatMap((g) => g.items).find((i) => i.id === id)!;
+  const tabs = TABS.map((id) => `<a href="${label(id).href}"${id === active ? ' aria-current="page"' : ""}>${icon(id, 22)}<span>${escape(label(id).label)}</span>${badges[id] ? `<b class="badge">${badges[id]}</b>` : ""}</a>`).join("");
+  const dots = '<svg class="ico" width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>';
   const html = `<!doctype html><html lang="fr"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#f5f5f7" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#1f1f22" media="(prefers-color-scheme: dark)">
+<link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials"><link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <title>${escape(view.title)} · Console Nova</title><style>${CSS}${pageCss}</style></head><body>
 <div class="app"><aside class="side"><div class="brand"><i class="orb"></i><span>Console Nova</span></div>
 <nav aria-label="Sections">${nav}</nav>
-<div class="side-foot"><span class="who" title="${escape(ctx.user)}">${escape(ctx.user)}</span><a href="${escape(ctx.env.GRAFANA_URL)}/dashboards" target="_blank" rel="noopener">Grafana ↗</a></div></aside>
+${foot}</aside>
 <main class="main"><header class="head"><h1>${escape(view.title)}</h1>${view.subtitle ? `<p class="sub">${view.subtitle}</p>` : ""}</header>
-${view.notice ?? ""}${view.body}</main></div></body></html>`;
+${view.notice ?? ""}${view.body}</main></div>
+<nav id="tabs" aria-label="Rubriques principales">${tabs}<button type="button" id="plus" class="${TABS.includes(active) ? "" : "on"}" popovertarget="more" aria-controls="more" aria-haspopup="true">${dots}<span>Plus</span></button></nav>
+<div id="more" popover aria-label="Navigation complète"><nav aria-label="Toutes les rubriques">${nav}</nav>${foot}</div></body></html>`;
   return new Response(html, { headers: HEADERS });
 }
 
@@ -209,19 +220,30 @@ th{color:var(--muted);font-weight:500;font-size:12.5px}tr:last-child td{border-b
 .row-link{display:flex;align-items:center;gap:12px;padding:12px 14px;border-bottom:1px solid var(--line);color:inherit}.row-link:last-child{border-bottom:0}
 .row-link:hover{background:var(--neutral-soft);text-decoration:none}.row-link .grow{flex:1;min-width:0}.row-link time{flex-shrink:0;white-space:nowrap;font-size:12.5px}.row-link .chev{color:var(--muted)}
 .card.flush{padding:0;overflow:hidden}
-/* Téléphone (iPhone 14 Pro, 393 px) : la barre latérale devient une barre d'onglets défilante en haut. */
+#tabs{display:none}@media (min-width:761px){#more{display:none}}
+/* Téléphone : barre d'onglets en bas (4 rubriques + « Plus »), « Plus » ouvre la navigation complète en feuille.
+   Toute cible tactile (lien, bouton, résumé, champ) fait au moins 44 × 44 px. */
 @media (max-width:760px){
-.app{flex-direction:column}
-.side{position:sticky;top:0;z-index:5;height:auto;width:auto;flex-direction:row;align-items:center;padding:8px max(12px,env(safe-area-inset-left));gap:8px;overflow-x:auto;border-right:0;border-bottom:1px solid var(--line);scrollbar-width:none}
-.side::-webkit-scrollbar{display:none}.brand{padding:0 6px 0 0}.brand span,.nav-title,.side-foot{display:none}
-nav{display:flex;gap:4px}.nav-group{flex-direction:row;margin:0}.nav-item{height:34px;white-space:nowrap}.nav-item span{overflow:visible}
-.main{padding:18px max(12px,env(safe-area-inset-left)) calc(40px + env(safe-area-inset-bottom))}.head h1{font-size:21px}
+.side{display:none}.app{display:block}
+a,button,summary,input,select,.btn{min-height:44px;min-width:44px}
+a:not(.kpi):not(.row-link):not(.nav-item){display:inline-flex;align-items:center}
+.main{padding:18px max(16px,env(safe-area-inset-left)) calc(88px + env(safe-area-inset-bottom))}.head h1{font-size:21px}
 .kpis{grid-template-columns:1fr 1fr;gap:10px}.kpi{padding:12px}.kpi-value{font-size:22px}
 .grid{grid-template-columns:1fr}.card{padding:12px}.stats{grid-template-columns:1fr 1fr}
-input,select,textarea,button{font-size:16px}form button{width:100%}
+input,select,textarea,button{font-size:16px}form button{width:100%}button.small,.btn.small{height:2.75rem}
+.seg a{justify-content:center}
+#tabs{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:5;background:var(--sidebar);border-top:1px solid var(--line);padding:0 env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+#tabs>a,#tabs>button{all:unset;box-sizing:border-box;flex:1 1 0;min-width:0;height:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;position:relative;color:var(--muted);font-size:11.5px;font-weight:500;cursor:pointer;text-align:center}
+#tabs>a:focus-visible,#tabs>button:focus-visible{outline:2px solid var(--link);outline-offset:-4px}
+#tabs>a[aria-current],#tabs>button.on{color:var(--text);font-weight:600}#tabs>a[aria-current] .ico,#tabs>button.on .ico{color:var(--accent)}
+#tabs span{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 2px}
+#tabs .badge{position:absolute;top:4px;left:calc(50% + 6px)}
+#more:popover-open{display:block;position:fixed;inset:auto 0 calc(56px + env(safe-area-inset-bottom)) 0;margin:0;width:auto;max-height:calc(100dvh - 120px);overflow-y:auto;border:0;border-top:1px solid var(--line-strong);border-radius:var(--r-card) var(--r-card) 0 0;background:var(--sidebar);color:var(--text);padding:8px 12px 12px;box-shadow:var(--shadow-float)}
+#more::backdrop{background:rgba(0,0,0,.4)}
+#more .nav-item{height:44px}#more .side-foot{margin-top:4px;padding:8px 10px 0}#more .who{display:flex;align-items:center;min-height:44px}
+.bars{max-width:none;overflow-x:auto}.bars .cols{min-width:calc(var(--n,14)*44px);margin-top:0;padding-top:46px;height:176px}.bars .ends{min-width:calc(var(--n,14)*44px)}.bars .col{max-width:none;min-width:44px}
 table.cards,table.cards tbody,table.cards tr,table.cards td{display:block}table.cards thead{display:none}
 table.cards tr{padding:10px 0;border-bottom:1px solid var(--line)}table.cards tr:last-child{border-bottom:0}
-table.cards td{border:0;padding:3px 0;display:flex;justify-content:space-between;gap:12px;text-align:right}
-table.cards td a{display:inline-block;padding:2px 0}
+table.cards td{border:0;padding:3px 0;display:flex;justify-content:space-between;align-items:center;gap:12px;text-align:right}
 table.cards td::before{content:attr(data-label);color:var(--muted);text-align:left}table.cards td[colspan]{justify-content:center}table.cards td[colspan]::before{content:none}}
 `;
