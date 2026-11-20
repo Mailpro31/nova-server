@@ -13,7 +13,9 @@ le dossier `nova-server` du serveur** (celui qui contient `docker-compose.yml`).
 | `prepare` | prépare la base puis s'arrête : **« Exited (0) » est normal** |
 
 Selon l'installation, d'autres services peuvent tourner (`alloy`, `connector`,
-`voice`). La référence est ce que montre `docker compose ps`.
+`voice`, `directory-sync`). Si le dossier utilise `docker-compose.production.yml`
+plutôt que `docker-compose.yml`, ajouter `--file docker-compose.production.yml`
+juste après `docker compose` dans chaque commande. La référence est ce que montre `docker compose ps`.
 
 ## 1. Vérifier que le service marche
 
@@ -21,8 +23,11 @@ Selon l'installation, d'autres services peuvent tourner (`alloy`, `connector`,
 docker compose ps
 curl http://localhost:8080/api/livez     # {"status":"ok"} : le processus vit
 curl http://localhost:8080/api/health    # {"status":"ok", ..., "version": ...}
-curl http://localhost:8080/api/readyz    # 200 : prêt ; 503 : base ou compteur absent
+curl http://localhost:8080/api/readyz    # 200 : prêt ; 503 : base, schéma ou compteur
 ```
+
+`/api/readyz` est indicatif : un 503 seul, avec `/api/health` à `"ok"`, ne
+justifie pas un appel.
 
 Sous PowerShell, écrire `curl.exe`. Tout va bien si les services sont « running »
 (ou « Up ») et si `/api/health` répond `"status":"ok"`.
@@ -36,15 +41,23 @@ docker compose restart api
 docker compose restart speech-gguf      # ou whisper, ou llm
 ```
 
-Arrêt complet puis relance, si un redémarrage simple ne suffit pas :
-
-```
-docker compose down
-docker compose up -d
-```
-
 Puis refaire le point 1. Au démarrage, la transcription peut mettre quelques
-minutes à charger son modèle : attendre avant de conclure.
+minutes à charger son modèle : attendre avant de conclure. Si un redémarrage ne
+suffit pas, appeler Sash (point 5) : ne pas lancer `docker compose down` ni
+`docker compose up`, qui ne relancent pas les mêmes services que l'installation.
+
+**La machine a redémarré** (coupure de courant, mise à jour Windows) : `api`,
+`llm` et la transcription ne repartent pas seuls. Lister les conteneurs, puis
+démarrer ceux qui sont arrêtés (« Exited »), en les nommant :
+
+```
+docker compose ps -a
+docker compose start api llm speech-gguf
+```
+
+Si `speech-gguf` figure dans la liste, démarrer `speech-gguf` et **jamais**
+`whisper` (les deux ensemble saturent la carte graphique). Sinon, démarrer
+`whisper` à sa place. `prepare` arrêté est normal. Puis refaire le point 1.
 
 ## 3. Regarder les journaux
 
@@ -53,8 +66,9 @@ docker compose logs --tail 200 api
 docker compose logs -f api              # en direct ; Ctrl+C pour sortir
 ```
 
-Remplacer `api` par le nom du service à examiner. Les journaux ne contiennent
-ni texte dicté ni mot de passe : ils sont caviardés.
+Les journaux de `api` sont caviardés : ni texte dicté ni mot de passe. Ceux des
+autres services (`llm`, `speech-gguf`, `whisper`) ne le sont pas forcément : les
+lire sur place, et ne les envoyer à Sash que s'il les demande.
 
 ## 4. Espace disque et mémoire de la carte graphique
 
@@ -79,7 +93,8 @@ Lui envoyer, en texte copié :
 
 1. la sortie de `docker compose ps` ;
 2. la réponse de `curl http://localhost:8080/api/health` ;
-3. `docker compose logs --tail 200 <service>` du service en cause ;
+3. `docker compose logs --tail 200 api` (les autres services seulement s'il
+   les demande) ;
 4. la sortie de `nvidia-smi` et de `docker system df` ;
 5. l'heure du début du problème et ce qui a déjà été tenté.
 
