@@ -38,8 +38,11 @@ Redémarrer seulement le service en cause, en le nommant :
 
 ```
 docker compose restart api
-docker compose restart speech-gguf      # ou whisper, ou llm
+docker compose restart speech-gguf      # ou llm
 ```
+
+Ne redémarrer `whisper` que s'il tournait déjà et que `speech-gguf` n'existe
+pas : les deux ensemble saturent la carte graphique.
 
 Puis refaire le point 1. Au démarrage, la transcription peut mettre quelques
 minutes à charger son modèle : attendre avant de conclure. Si un redémarrage ne
